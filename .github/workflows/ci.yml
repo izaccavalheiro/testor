@@ -73,9 +73,7 @@ jobs:
           $null = New-Item -ItemType Directory -Force $src
           # The tracked files only, as `task testor:deploy` uploads them: a recursive copy of the
           # working tree also walks what the tests leave in orchestrator/ (tmp/, _build/), and
-          # looped forever on a symbolic link there.
-          "== symbolic links in orchestrator/ (outside deps/)"
-          find orchestrator -type l -not -path "orchestrator/deps/*" -exec ls -l {} +
+          # hung there.
           $archive = Join-Path $env:RUNNER_TEMP "src.tar"
           git archive --format=tar -o $archive HEAD orchestrator runner
           tar -xf $archive -C $src
