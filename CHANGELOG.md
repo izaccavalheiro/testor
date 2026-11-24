@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-24
+
 ### Added
 
 - **Versioned API** (`/api/v1`): runs filtered and paged, a run's log searched with context,
@@ -35,6 +37,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 - **Documentation site** (`website/`, Docusaurus): concepts, guides for every feature, real
   deployment scenarios, caveats, configuration and operations, the reference pages from
   `docs/`, the roadmap; published to GitHub Pages from `main`.
+  Production builds of the site load the Monoid analytics tracker; its origin is the only
+  one the site's Content Security Policy allows besides its own.
 - **Semantic versioning** ([VERSIONING.md](VERSIONING.md)): the public surfaces a version covers,
   Conventional Commits checked on pull requests, `scripts/release.mjs` (`next`, `bump`, `check`,
   `notes`, `lint-commits`), and a release workflow that builds and attests per-OS archives and
