@@ -5,17 +5,19 @@ import { themes as prismThemes } from "prism-react-renderer";
 const repository = "https://github.com/izaccavalheiro/testor";
 
 /**
- * The site is static and loads nothing from another origin: no analytics, no fonts, no search
- * service. Docusaurus inlines a small script that sets the colour mode before the page paints,
- * hence 'unsafe-inline' for scripts. Production only: the development server needs a WebSocket.
+ * The site is static. The only other origin it talks to is the Monoid analytics tracker
+ * (production only); no fonts, no search service. Docusaurus inlines a small script that sets
+ * the colour mode before the page paints, hence 'unsafe-inline' for scripts. Production only: the development server needs a WebSocket.
  */
+const ANALYTICS_ORIGIN = "https://api.monoid.website";
+
 const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'",
+  `script-src 'self' 'unsafe-inline' ${ANALYTICS_ORIGIN}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data:",
   "font-src 'self' data:",
-  "connect-src 'self'",
+  `connect-src 'self' ${ANALYTICS_ORIGIN}`,
   "form-action 'none'",
   "frame-src 'none'",
   "object-src 'none'",
@@ -54,6 +56,19 @@ const config: Config = {
           attributes: { "http-equiv": "Content-Security-Policy", content: CONTENT_SECURITY_POLICY },
         },
         { tagName: "meta", attributes: { name: "referrer", content: "no-referrer" } },
+      ]
+    : [],
+
+  // Monoid analytics, production builds only, so local previews are not counted.
+  scripts: production
+    ? [
+        {
+          src: `${ANALYTICS_ORIGIN}/tracker.min.js`,
+          async: true,
+          defer: true,
+          "data-site-id": "4rkpfa49f8",
+          "data-autotrack": "true",
+        },
       ]
     : [],
 
@@ -120,7 +135,7 @@ const config: Config = {
         },
       ],
       copyright:
-        "testor is MIT licensed, free for everyone, with no paid tier and no telemetry. This site loads nothing from other sites.",
+        "testor is MIT licensed, free for everyone, with no paid tier and no telemetry. This site uses Monoid analytics to count page views.",
     },
     prism: {
       theme: prismThemes.github,
