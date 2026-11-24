@@ -1,6 +1,15 @@
 # testor
 
-Run your test suites on another machine over SSH, and watch them live from any browser.
+[![CI](https://github.com/izaccavalheiro/testor/actions/workflows/ci.yml/badge.svg)](https://github.com/izaccavalheiro/testor/actions/workflows/ci.yml)
+[![Docs](https://img.shields.io/badge/docs-izaccavalheiro.github.io%2Ftestor-1d4ed8)](https://izaccavalheiro.github.io/testor/)
+[![SemVer](https://img.shields.io/badge/semver-2.0.0-blue)](VERSIONING.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+The free, open-source test orchestrator: run your test suites on another machine over SSH, and
+watch them live from any browser, a script or an AI agent.
+
+**Documentation: [izaccavalheiro.github.io/testor](https://izaccavalheiro.github.io/testor/)**
+(quick start, every feature, real scenarios, caveats, configuration, the API and the roadmap).
 
 testor turns a spare machine (an old laptop, a mini PC, a Mac on a shelf) into a test runner
 for your workstation. Windows, Linux and macOS all work, on either side. You keep editing and
@@ -163,7 +172,9 @@ CI builds, tests and smoke-tests the release on all three.
 | `taskfiles/remote.yml`   | workstation tasks a project includes to run its checks on the runner         |
 | `examples/node-project/` | a Vitest project wired to a runner                                           |
 | `scripts/smoke.ps1`      | an end-to-end check of a built release                                       |
-| `docs/`                  | [architecture](docs/architecture.md), [runner setup](docs/runner-setup.md), [workstation and projects](docs/workstation.md), [HTTP and SSE API](docs/api.md) |
+| `scripts/release.mjs`    | versions: the next one from the commits, bump, check, release notes ([VERSIONING.md](VERSIONING.md)) |
+| `docs/`                  | reference: [architecture](docs/architecture.md), [runner setup](docs/runner-setup.md), [workstation and projects](docs/workstation.md), [HTTP and SSE API](docs/api.md), [MCP](docs/mcp.md), [security](docs/security.md) |
+| `website/`               | the [documentation site](https://izaccavalheiro.github.io/testor/) (Docusaurus); `docs/` and the root Markdown files are synced into it |
 
 ## Security
 
@@ -200,6 +211,20 @@ adapters (`Testor.OS`, `Testor.Device`, `Testor.Device.Unix`), whose Windows, Li
 branches cannot all run on one machine, are left out of the coverage gate and checked end to
 end by the smoke test on each OS.
 
+## Versions and releases
+
+testor follows [Semantic Versioning](https://semver.org). [VERSIONING.md](VERSIONING.md) says
+which surfaces a version covers (the `/api/v1` API, MCP tools, run records, `run.ps1`, the
+Taskfiles' variables, configuration files), how Conventional Commits decide the next version,
+and how a release is cut from a tag. While testor is 0.x, patch releases are always safe and
+breaking changes come only in minor releases, listed under **Breaking** in the
+[changelog](CHANGELOG.md). Where it is going: [ROADMAP.md](ROADMAP.md).
+
+## Contributing
+
+Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities privately ([SECURITY.md](SECURITY.md)).
+
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Free for everyone: no paid edition, no account, no telemetry.

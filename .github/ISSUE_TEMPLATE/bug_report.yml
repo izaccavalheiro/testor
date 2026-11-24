@@ -1,0 +1,41 @@
+name: Bug report
+description: Something testor does wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. For a security problem, do not open an issue: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: testor version
+      description: "`version` from http://<runner>:6767/api/health, or the commit you deployed"
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: dropdown
+    id: runner
+    attributes:
+      label: Runner OS
+      options: [Windows, Linux, macOS]
+    validations:
+      required: true
+  - type: input
+    id: workstation
+    attributes:
+      label: Workstation OS, and Task version
+      placeholder: "Ubuntu 24.04, Task 3.54"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what you expected
+      description: The task or request you ran, what you saw, and what should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`task testor:logs`, the run's output, or the failing request and its answer. Remove anything private."
+      render: text
