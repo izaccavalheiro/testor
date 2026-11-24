@@ -39,7 +39,10 @@ defmodule Testor.MaintenanceTest do
     test "measure/1 does not follow symbolic links, even in a cycle", %{tmp_dir: root} do
       File.mkdir_p!(Path.join(root, "pkg"))
       File.write!(Path.join(root, "pkg/index.js"), "1234567890")
-      :ok = File.ln_s(root, Path.join(root, "pkg/loop"))
+      loop = Path.join(root, "pkg/loop")
+      :ok = File.ln_s(root, loop)
+      # ExUnit keeps tmp_dir; a cycle left there trips tools that walk the repository.
+      on_exit(fn -> File.rm(loop) end)
       assert %{files: 2} = Maintenance.measure(root)
     end
   end
