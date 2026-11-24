@@ -203,8 +203,10 @@ defmodule Testor.SpecParser do
       ansi: ~S"\e\[[0-9;?]*[ -/]*[@-~]",
       spec_ext: ~S"\.(?:test|spec)\.[cm]?[jt]sx?$",
       # " ✓ tests/a.test.ts (12 tests) 34ms", " ❯ |web| src/b.test.ts (3 tests | 1 failed) 8ms"
+      # With projects, Vitest labels each file: "|web|" without colours, a coloured " web " badge
+      # (a bare word once the colours are stripped) with them.
       vitest:
-        ~S"^\s*([✓√✔×✗✘❯>↓])\s+(?:\|[^|]+\|\s+)?(" <>
+        ~S"^\s*([✓√✔×✗✘❯>↓])\s+(?:\|[^|]+\|\s+|\S+\s+)?(" <>
           spec <> ~S")(?:\s+\(([^)]*)\))?(?:\s+(\d+(?:\.\d+)?m?s))?\s*$",
       # "  ok 3 [chromium] › e2e/auth.spec.ts:12:3 › signs in (1.2s)"
       playwright:

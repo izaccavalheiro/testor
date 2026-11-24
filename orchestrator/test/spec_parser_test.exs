@@ -20,6 +20,27 @@ defmodule Testor.SpecParserTest do
       assert map_size(specs) == 3
     end
 
+    test "reads Vitest project labels, coloured or not" do
+      # As Vitest prints them in a workspace with projects (Windows line endings included).
+      text =
+        " \e[32m✓\e[39m \e[30m\e[42m worker-unit \e[49m\e[39m src/__tests__/capacity.test.ts " <>
+          "\e[2m(\e[22m\e[2m11 tests\e[22m\e[2m)\e[22m\e[32m 73\e[2mms\e[22m\e[39m\r\n" <>
+          " \e[31m❯\e[39m \e[30m\e[45m web-unit \e[49m\e[39m src/__tests__/AuthAndContact.test.tsx " <>
+          "\e[2m(\e[22m\e[2m5 tests\e[22m\e[2m | \e[22m\e[31m5 failed\e[39m\e[2m)\e[22m\e[33m 3632\e[2mms\e[22m\e[39m\r\n" <>
+          " ✓ |worker-integration| src/__tests__/schemas.integration.test.ts (47 tests) 49ms\n"
+
+      specs = text |> SpecParser.parse() |> by_file()
+
+      assert %{"tests" => 11, "status" => "passed", "durationMs" => 73} =
+               specs["src/__tests__/capacity.test.ts"]
+
+      assert %{"tests" => 5, "failed" => 5, "status" => "failed"} =
+               specs["src/__tests__/AuthAndContact.test.tsx"]
+
+      assert %{"tests" => 47, "status" => "passed"} = specs["src/__tests__/schemas.integration.test.ts"]
+      assert map_size(specs) == 3
+    end
+
     test "aggregates Playwright list-reporter lines per spec file (ok/x on Windows)" do
       text = """
       Running 3 tests using 1 worker
