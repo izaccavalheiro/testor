@@ -1,10 +1,12 @@
 defmodule Testor.Config do
-  @moduledoc "Paths of the data folder and the retention policy (defaults, overridden by config.json)."
+  @moduledoc "Paths of the data folder, the retention policy and maintenance settings (defaults, overridden by config.json)."
 
   @defaults %{
     "screenshots" => %{"maxAgeDays" => 7, "maxTotalMB" => 1024},
+    "artifacts" => %{"maxAgeDays" => 7, "maxTotalMB" => 2048, "maxRunMB" => 256},
     "runs" => %{"maxRuns" => 500, "maxAgeDays" => 30},
-    "cleanupIntervalMinutes" => 30
+    "cleanupIntervalMinutes" => 30,
+    "maintenance" => %{"enabled" => false, "tempMinAgeDays" => 7, "snapshotIdleDays" => 14}
   }
 
   def data_dir, do: Application.fetch_env!(:testor, :data_dir)
@@ -17,6 +19,7 @@ defmodule Testor.Config do
   def runs_dir, do: Path.join(data_dir(), "runs")
   def logs_dir, do: Path.join(data_dir(), "logs")
   def shots_dir, do: Path.join(data_dir(), "screenshots")
+  def artifacts_dir, do: Path.join(data_dir(), "artifacts")
   def run_file(id), do: Path.join(runs_dir(), id <> ".json")
   def log_file(id), do: Path.join(logs_dir(), id <> ".log")
 

@@ -23,7 +23,8 @@ Then, as things happen:
 | `live`          | `{id, summary, currentSpec, logTail, logBytes}` of a running run, at most once a second |
 | `run_removed`   | `{id}`                                                                |
 | `sessions`      | `[{pid, startedAt, project, command}]`: PowerShell sessions in the workspace that run.ps1 did not start |
-| `stats`         | `{disk: {free, total}, screenshots: {count, bytes, oldest}, lastCleanup}` |
+| `stats`         | `{disk: {free, total}, screenshots: {count, bytes, oldest}, artifacts: {runs, files, bytes}, lastCleanup}` |
+| `maintenance`   | the maintenance state (see `GET /api/maintenance`), when a scan or a cleaning starts or ends |
 | `device`        | `{sample, point}`: a device sample and its history point              |
 | `device_static` | the static device facts (at start and hourly)                         |
 
@@ -31,8 +32,10 @@ Then, as things happen:
 
 One run. First event:
 
-- `snapshot`: `{run, specs[], screenshots[], log, logBytes, truncated}`: `log` is the end of
-  the output (up to 256 KB) as text, up to byte `logBytes`
+- `snapshot`: `{run, specs[], screenshots[], artifacts[], log, logBytes, truncated}`: `log` is
+  the end of the output (up to 256 KB) as text, up to byte `logBytes`; `artifacts[]` is
+  `[{path, kind, url, bytes, files, modifiedAt}]`, where `kind` is `report` (a folder with an
+  `index.html`, whose `url` opens it), `video`, `image`, `html`, `text` or `file`
 
 Then:
 
@@ -42,6 +45,7 @@ Then:
 | `specs`       | `[{file, runner, tests, failed, skipped, durationMs, status}]`          |
 | `run`         | the run record (when it ends or is settled)                             |
 | `screenshots` | `[{path, url, bytes, takenAt, spec}]` (when it ends)                    |
+| `artifacts`   | `[{path, kind, url, bytes, files, modifiedAt}]` (when it ends)          |
 | `removed`     | `{id}`: the run was deleted                                             |
 
 Both streams send a comment every 15 s and ask the browser to reconnect after 3 s if the
@@ -60,11 +64,16 @@ curl -N http://my-runner:6767/events
 | `GET /api/runs/:id`           | the `/events/runs/:id` snapshot                                 |
 | `GET /api/runs/:id/log?tail=N`| the last `N` bytes of the output (default 512 KB) as `text/plain`; headers `X-Log-Size`, `X-Log-Truncated` |
 | `GET /api/screenshots`        | every screenshot, newest first, with `runId`, `project`, `kind`, `status`, `spec` |
+| `GET /api/artifacts`          | every run that kept artifacts, newest first: `[{runId, project, kind, status, startedAt, artifacts[]}]` |
 | `GET /api/device`             | `{static, sample, history[]}`                                   |
 | `GET /shots/<run>/<path>`     | a screenshot (image)                                            |
+| `GET /artifacts/<run>/<path>` | an artifact: shown when browsers show its type, a download otherwise; honours a single `Range`; served with `Content-Security-Policy: sandbox allow-scripts allow-popups allow-downloads`, `X-Content-Type-Options: nosniff` and `Access-Control-Allow-Origin: *` |
 | `POST /api/runs/:id/cancel`   | kills a running run's process tree; the settled record (409 if it is not running) |
 | `DELETE /api/runs/:id`        | deletes a finished run, its log and screenshots (409 while it runs) |
-| `POST /api/cleanup`           | runs the janitor; `{at, reason, removed: {runs, screenshotFolders, looseFiles, bytes}}` |
+| `POST /api/cleanup`           | runs the janitor; `{at, reason, removed: {runs, screenshotFolders, artifactFolders, looseFiles, bytes}}` |
+| `GET /api/maintenance`        | `{enabled, settings, scanning, cleaning, scan, lastClean, error}`; `scan` is `{id, at, targets[]}`, a target `{id, kind, label, path, bytes, files, lastUsed, suggested, note}` |
+| `POST /api/maintenance/scan`  | measures the targets in the background (202); the result comes as a `maintenance` event |
+| `POST /api/maintenance/clean` | body `{scanId, targets: [id, ...]}`: deletes those targets of that scan in the background, then scans again (202). 403 while `maintenance.enabled` is off, 409 while a run, a session, a scan or a cleaning is in progress or when `scanId` is not the last scan, 400 for an id the scan does not have |
 
 ```sh
 curl -s http://my-runner:6767/api/state | jq '.history[0]'

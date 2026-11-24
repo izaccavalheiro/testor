@@ -36,6 +36,14 @@ editor; or to give an idle machine a job.
 - **Screenshots.** Images a run writes under `test-results/`, `__screenshots__/`,
   `screenshots/` or to `$env:SCREENSHOT_DIR` are kept with the run, matched to their spec
   file and previewed. Old ones are cleaned up automatically, by age and by total size.
+- **Artifacts.** Reports and other files a run writes (coverage, Playwright and Vitest HTML
+  reports, Markdown, JUnit XML, ...), named with `ARTIFACTS` in the task, are kept with the run
+  and opened from the dashboard, as are Playwright's videos. HTML reports run in a sandbox, so
+  their scripts cannot use the dashboard's API. Kept by age and total size, like screenshots.
+- **Maintenance.** The dashboard measures the space testing leaves on the runner (project
+  snapshots no run used lately, old temporary files, the npm, pip, Go and Cargo caches, old
+  Playwright browsers) and, once enabled in `config.json`, deletes the targets you choose and
+  confirm, never while something runs.
 - **Control.** Cancel a run from the dashboard (its whole process tree is killed). A run whose
   SSH session died is marked aborted. Two runs of the same project at once (they would share
   one snapshot folder) are flagged.
@@ -156,7 +164,11 @@ testor has no authentication: anyone who can reach its port can read logs, delet
 cancel them. On Windows the installer's firewall rule opens the port only to the Tailscale
 range (`100.64.0.0/10`) and the local subnet (`ALLOW_FROM` changes that); on Linux and macOS,
 restrict it with the system's firewall if the network is not yours. State-changing requests
-need an `X-Testor: 1` header, which a cross-site form cannot send. SSH is the only way
+need an `X-Testor: 1` header, which a cross-site form cannot send. Artifacts are served with
+`Content-Security-Policy: sandbox`: an HTML report runs with an opaque origin, so it cannot
+send that header either. Maintenance deletes only a fixed list of targets (never a path from
+a request), is off until `maintenance.enabled` is set in `config.json` (anyone who can reach
+the port could otherwise use it), and waits until nothing runs. SSH is the only way
 commands reach the runner, and testor runs as the installing user (on Windows with a limited
 token).
 

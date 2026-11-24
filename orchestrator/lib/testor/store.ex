@@ -53,7 +53,7 @@ defmodule Testor.Store do
   @doc "Kills a running run's PowerShell and everything it started."
   def cancel(id), do: GenServer.call(__MODULE__, {:cancel, id}, 30_000)
 
-  @doc "Deletes a finished run: its record, log and screenshots."
+  @doc "Deletes a finished run: its record, log, screenshots and artifacts."
   def delete(id), do: GenServer.call(__MODULE__, {:delete, id}, 30_000)
 
   # --- server --------------------------------------------------------------------------------
@@ -62,7 +62,12 @@ defmodule Testor.Store do
   def init(nil) do
     :ets.new(@table, [:named_table, :public, read_concurrency: true])
     :ets.new(@live, [:named_table, :public, read_concurrency: true])
-    Enum.each([Config.runs_dir(), Config.logs_dir(), Config.shots_dir()], &File.mkdir_p!/1)
+
+    Enum.each(
+      [Config.runs_dir(), Config.logs_dir(), Config.shots_dir(), Config.artifacts_dir()],
+      &File.mkdir_p!/1
+    )
+
     state = scan(%{sigs: %{}})
     Logger.info("store: #{map_size(state.sigs)} runs in #{Config.runs_dir()}")
     Process.send_after(self(), :scan, @scan_ms)
@@ -122,6 +127,7 @@ defmodule Testor.Store do
         File.rm(Config.run_file(id))
         File.rm(Config.log_file(id))
         File.rm_rf(Path.join(Config.shots_dir(), id))
+        File.rm_rf(Path.join(Config.artifacts_dir(), id))
         {:reply, :ok, forget(state, id)}
     end
   end
@@ -252,12 +258,15 @@ defmodule Testor.Store do
     id = run["id"]
     specs = Files.log_specs(id)
     shots = Files.screenshots(id, specs)
+    artifacts = Files.artifacts(id)
     Logger.info("store: #{id} #{run["status"]} in #{run["durationMs"]} ms")
     Events.broadcast("global", "run", run)
     Events.broadcast({"run", id}, "run", run)
     Events.broadcast({"run", id}, "specs", with_shot_counts(specs, shots))
     Events.broadcast({"run", id}, "screenshots", shots)
+    Events.broadcast({"run", id}, "artifacts", artifacts)
     if shots != [], do: Stats.refresh_screenshots()
+    if artifacts != [], do: Stats.refresh_artifacts()
   end
 
   @doc false

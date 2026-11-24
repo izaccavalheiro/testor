@@ -21,6 +21,7 @@ defmodule Testor.Application do
           Testor.Stats,
           Testor.Janitor,
           Testor.Device,
+          Testor.Maintenance,
           {Bandit, plug: Testor.Web.Router, ip: {0, 0, 0, 0}, port: port}
         ]
       else

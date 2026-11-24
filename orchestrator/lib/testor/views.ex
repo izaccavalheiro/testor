@@ -20,7 +20,7 @@ defmodule Testor.Views do
     }
   end
 
-  @doc "A run, its specs, screenshots and the end of its log, with the log offset it reaches."
+  @doc "A run, its specs, screenshots, artifacts and the end of its log, with the log offset it reaches."
   def run_snapshot(id) do
     case Store.get(id) do
       nil ->
@@ -44,6 +44,7 @@ defmodule Testor.Views do
           "run" => Store.with_live(run),
           "specs" => Store.with_shot_counts(specs, shots),
           "screenshots" => shots,
+          "artifacts" => Files.artifacts(id),
           "log" => log.text,
           "logBytes" => log.size,
           "truncated" => log.truncated
@@ -98,6 +99,39 @@ defmodule Testor.Views do
       end
     end)
     |> Enum.sort_by(& &1["takenAt"], :desc)
+  end
+
+  @doc "Every run that kept artifacts, newest first: the run and its artifacts."
+  def artifacts_all do
+    names =
+      case File.ls(Config.artifacts_dir()) do
+        {:ok, names} -> names
+        _ -> []
+      end
+
+    names
+    |> Enum.filter(&File.dir?(Path.join(Config.artifacts_dir(), &1)))
+    |> Enum.sort(:desc)
+    |> Enum.flat_map(fn id ->
+      case Files.artifacts(id) do
+        [] ->
+          []
+
+        list ->
+          run = Store.get(id) || %{}
+
+          [
+            %{
+              "runId" => id,
+              "project" => run["project"],
+              "kind" => run["kind"],
+              "status" => run["status"],
+              "startedAt" => run["startedAt"],
+              "artifacts" => list
+            }
+          ]
+      end
+    end)
   end
 
   def host do

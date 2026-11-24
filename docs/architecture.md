@@ -20,8 +20,9 @@ is up, and the orchestrator picks up whatever happened while it was down.
    output with the console code page once PowerShell handles it.
 4. The orchestrator's `Store` sees the new record within 300 ms and starts a `RunTracker`,
    which tails the log every 250 ms, feeds new lines to the `SpecParser` and publishes them.
-5. When the command ends, `run.ps1` copies the images it produced into `screenshots\<id>\`
-   and rewrites the record with `endedAt`, `status`, `exitCode` and `durationMs`. Its own
+5. When the command ends, `run.ps1` copies the images it produced into `screenshots\<id>\`,
+   and the artifacts the task named (`-Artifacts`, from `ARTIFACTS` in `remote.yml`) and the
+   videos it produced into `artifacts\<id>\`, then rewrites the record with `endedAt`, `status`, `exitCode` and `durationMs`. Its own
    failures are only warnings; the command's error is rethrown, so the SSH session, and the
    `task` on the workstation, exit as they would without testor.
 6. The store sees the final record, stores the spec summary in it, and publishes the run's
@@ -63,6 +64,8 @@ where `tar` reads it from stdin.
 | `status`      | both         | `running`, `passed`, `failed`; the orchestrator adds `aborted` and `cancelled` |
 | `endedAt`, `durationMs`, `exitCode`, `error` | run.ps1 (or the orchestrator when it settles a run) | how it ended |
 | `screenshots` | run.ps1      | how many images were kept                                        |
+| `artifacts`, `artifactsBytes` | run.ps1 | how many artifact files were kept, and their size     |
+| `artifactsSkipped` | run.ps1 | artifacts not kept because they would pass `artifacts.maxRunMB`     |
 | `summary`     | orchestrator | spec files and tests passed, failed, skipped                     |
 | `warning`     | orchestrator | set when another run of the same project overlapped              |
 
@@ -76,9 +79,10 @@ Testor.Supervisor
 ├── TrackerSupervisor   ── RunTracker (one per running run)
 ├── Store               run index in ETS; scans runs\, settles, publishes
 ├── Sessions            pwsh sessions in the workspace that run.ps1 did not start
-├── Stats               disk space of the data drive, screenshots folder size, last cleanup
+├── Stats               disk space of the data drive, screenshots and artifacts folder sizes, last cleanup
 ├── Janitor             retention: runs by count and age, screenshots by age and size
 ├── Device              device stats (Windows: a PowerShell port; Linux, macOS: Elixir) and their history
+├── Maintenance         measures and, when asked, deletes what testing leaves on the runner
 └── Bandit              HTTP: the page, the JSON API, the SSE streams
 ```
 
@@ -137,14 +141,53 @@ The last 360 points feed the sparklines.
 The janitor runs at start, every `cleanupIntervalMinutes` and on demand. It keeps the newest
 `runs.maxRuns` runs, none older than `runs.maxAgeDays`; then deletes screenshot folders older
 than `screenshots.maxAgeDays` and the oldest ones until the folder fits
-`screenshots.maxTotalMB`. A running run is never touched. Override the defaults in
-`<home>\config.json`:
+`screenshots.maxTotalMB`, and does the same for artifact folders (`artifacts.*`). A running
+run is never touched. Override the defaults in `<home>\config.json` (any key may be left out):
 
 ```json
 { "screenshots": { "maxAgeDays": 7, "maxTotalMB": 1024 },
+  "artifacts": { "maxAgeDays": 7, "maxTotalMB": 2048, "maxRunMB": 256 },
   "runs": { "maxRuns": 500, "maxAgeDays": 30 },
-  "cleanupIntervalMinutes": 30 }
+  "cleanupIntervalMinutes": 30,
+  "maintenance": { "enabled": false, "tempMinAgeDays": 7, "snapshotIdleDays": 14 } }
 ```
+
+## Artifacts
+
+A task names what to keep with `ARTIFACTS` (space-separated paths relative to the project,
+wildcards allowed); `run.ps1` receives them as `-Artifacts`. At the end of the run it copies
+each one the run wrote (a folder counts when any of its files is new: reports copy their
+assets with the original dates) into `artifacts\<id>\`, at its path in the project, in order
+until `artifacts.maxRunMB` is reached; the rest is listed in the record's `artifactsSkipped`
+and in a warning. Videos (`.webm`, `.mp4`) under the screenshot folders are kept the same way,
+and a command may write into `$env:TESTOR_ARTIFACT_DIR` directly.
+
+The dashboard lists a run's artifacts with every folder that holds an `index.html` (coverage,
+Playwright's and Vitest's HTML reports) as one report. `/artifacts/...` serves them with
+`Content-Security-Policy: sandbox`, so a report's scripts run with an opaque origin and cannot
+reach the API with the `X-Testor` header; `Access-Control-Allow-Origin: *` lets them fetch
+their own data files. Videos are served by byte ranges, so they seek.
+
+## Maintenance
+
+Testing fills the runner's disk outside testor's folder too: every project snapshot keeps its
+dependencies and build caches, and the tools keep download and build caches. `Maintenance`
+measures, on demand and in a task, a fixed list of targets:
+
+| Target                | What                                                                      |
+| --------------------- | ------------------------------------------------------------------------- |
+| `snapshot:<project>`  | a snapshot folder in the workspaces; suggested when no run of the project started for `snapshotIdleDays` |
+| `temp`                | entries of the user's temporary folder older than `tempMinAgeDays` (on Unix only the user's own) |
+| `cache:npm`, `cache:pip`, `cache:go`, `cache:cargo` | the npm cache (`_cacache`), pip's cache, the Go build cache, Cargo's downloaded crates (their environment variables are honoured) |
+| `browsers:playwright` | Playwright browser builds a newer build of the same browser replaces       |
+
+Sizes are measured without following symbolic links. Cleaning takes the scan's id and target
+ids, never paths; it is refused unless `maintenance.enabled` is true, while a recorded run or a
+PowerShell session in the workspaces is running, and when the scan is not the last one. It
+deletes in a task (a snapshot's `.lockhash` first, so a half-deleted snapshot reinstalls its
+dependencies), reports what it freed and what it could not delete, and scans again. Browser
+caches, installed programs and system folders are out of its reach by design: testor runs as
+the user, without elevation.
 
 ## Folders on the runner
 
@@ -152,7 +195,7 @@ than `screenshots.maxAgeDays` and the oldest ones until the folder fits
 | ------------------------------- | ------------------------------------------------------------ |
 | `~/test-run/<project>`          | a project's snapshot, where its commands run                 |
 | `~/test-run/.testor/run.ps1`    | the wrapper the Taskfiles call                               |
-| `~/test-run/.testor/runs/`, `logs/`, `screenshots/` | the data                                 |
+| `~/test-run/.testor/runs/`, `logs/`, `screenshots/`, `artifacts/` | the data                   |
 | `~/test-run/.testor/src/`       | the uploaded sources, with `deps` and `_build` kept between deploys |
 | `~/test-run/.testor/app/`       | the release the service runs                                 |
 | `~/test-run/.testor/testor.log` | the orchestrator's log                                       |

@@ -4,9 +4,9 @@ defmodule Testor.Janitor do
   `cleanupIntervalMinutes` and on demand:
 
     1. history: keeps the newest `runs.maxRuns` runs, none older than `runs.maxAgeDays`;
-    2. screenshots: deletes run folders (and loose files) older than
-       `screenshots.maxAgeDays`, then the oldest folders until the folder fits
-       `screenshots.maxTotalMB`. A running run's folder is never touched.
+    2. screenshots and artifacts, each on its own: deletes run folders (and loose files)
+       older than `maxAgeDays`, then the oldest folders until the folder fits `maxTotalMB`
+       (`screenshots.*`, `artifacts.*`). A running run's folder is never touched.
   """
   use GenServer
   require Logger
@@ -69,21 +69,46 @@ defmodule Testor.Janitor do
 
     removed_runs = Enum.count(doomed, &(Store.delete(&1) == :ok))
 
-    # 2. Screenshots.
-    shots = Config.shots_dir()
-    File.mkdir_p!(shots)
-    max_age = config["screenshots"]["maxAgeDays"] * @day
-    limit = config["screenshots"]["maxTotalMB"] * 1024 * 1024
+    # 2. Screenshots and artifacts.
+    shots = prune(Config.shots_dir(), config["screenshots"], running, now)
+    artifacts = prune(Config.artifacts_dir(), config["artifacts"], running, now)
+
+    result = %{
+      "at" => now_iso(),
+      "reason" => reason,
+      "removed" => %{
+        "runs" => removed_runs,
+        "screenshotFolders" => shots.folders,
+        "artifactFolders" => artifacts.folders,
+        "looseFiles" => shots.loose + artifacts.loose,
+        "bytes" => shots.bytes + artifacts.bytes
+      }
+    }
+
+    if removed_runs + shots.folders + shots.loose + artifacts.folders + artifacts.loose > 0 do
+      Logger.info("janitor (#{reason}): #{inspect(result["removed"])}")
+    end
+
+    Stats.cleaned(result)
+    result
+  end
+
+  # Deletes loose files and run folders under `dir` older than `maxAgeDays`, then the oldest
+  # folders until the rest fits `maxTotalMB`. A running run's folder is never touched.
+  defp prune(dir, limits, running, now) do
+    File.mkdir_p!(dir)
+    max_age = limits["maxAgeDays"] * @day
+    limit = limits["maxTotalMB"] * 1024 * 1024
 
     {folders, loose} =
-      case File.ls(shots) do
-        {:ok, names} -> Enum.split_with(names, &File.dir?(Path.join(shots, &1)))
+      case File.ls(dir) do
+        {:ok, names} -> Enum.split_with(names, &File.dir?(Path.join(dir, &1)))
         _ -> {[], []}
       end
 
     {loose_removed, loose_bytes} =
       Enum.reduce(loose, {0, 0}, fn name, {n, bytes} ->
-        path = Path.join(shots, name)
+        path = Path.join(dir, name)
 
         case File.stat(path, time: :posix) do
           {:ok, %{mtime: mtime, size: size}} when now - mtime > max_age ->
@@ -98,13 +123,16 @@ defmodule Testor.Janitor do
     folders =
       folders
       |> Enum.map(fn name ->
-        files = Files.walk(Path.join(shots, name))
+        path = Path.join(dir, name)
+        files = Files.walk(path)
 
         %{
           name: name,
           bytes: files |> Enum.map(& &1.size) |> Enum.sum(),
           newest: files |> Enum.map(& &1.mtime) |> Enum.max(fn -> 0 end),
-          empty: files == []
+          # run.ps1 creates a run's folders before the store sees the run: an empty folder
+          # is left alone for an hour.
+          empty: files == [] and now - (Files.mtime(path) || 0) > 3600
         }
       end)
       |> Enum.sort_by(& &1.newest)
@@ -113,33 +141,17 @@ defmodule Testor.Janitor do
 
     {_, folders_removed, folder_bytes} =
       Enum.reduce(folders, {total, 0, 0}, fn folder, {total, n, bytes} ->
-        old = folder.empty or now - folder.newest > max_age
+        old = folder.empty or (folder.newest > 0 and now - folder.newest > max_age)
 
         if MapSet.member?(running, folder.name) or (not old and total <= limit) do
           {total, n, bytes}
         else
-          File.rm_rf(Path.join(shots, folder.name))
+          File.rm_rf(Path.join(dir, folder.name))
           {total - folder.bytes, n + 1, bytes + folder.bytes}
         end
       end)
 
-    result = %{
-      "at" => now_iso(),
-      "reason" => reason,
-      "removed" => %{
-        "runs" => removed_runs,
-        "screenshotFolders" => folders_removed,
-        "looseFiles" => loose_removed,
-        "bytes" => loose_bytes + folder_bytes
-      }
-    }
-
-    if removed_runs + folders_removed + loose_removed > 0 do
-      Logger.info("janitor (#{reason}): #{inspect(result["removed"])}")
-    end
-
-    Stats.cleaned(result)
-    result
+    %{folders: folders_removed, loose: loose_removed, bytes: loose_bytes + folder_bytes}
   end
 
   defp now_iso, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()

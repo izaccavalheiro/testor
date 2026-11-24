@@ -14,6 +14,11 @@
 #         - task: runner:npm-ci          # optional: npm ci when package-lock.json changed
 #         - task: runner:exec
 #           vars: { KIND: test, CMD: "npm test -- {{.CLI_ARGS}}" }
+#     coverage:
+#       cmds:
+#         - task: runner:sync
+#         - task: runner:exec
+#           vars: { KIND: coverage, CMD: "npm run test:coverage", ARTIFACTS: "coverage" }
 #
 # sync uploads the working tree as git sees it (tracked and untracked files, uncommitted
 # changes included, minus what .gitignore excludes) to ~/<WORKSPACES>/<PROJECT> on the runner,
@@ -21,6 +26,9 @@
 # CMD there in PowerShell 7, stopping at the first failing command, whatever the runner's
 # operating system or login shell. With KIND, the command runs through testor's run.ps1, so
 # the run shows on the dashboard; output, stderr and exit code are passed through unchanged.
+# ARTIFACTS (with KIND): space-separated files and folders, relative to the project, wildcards
+# allowed, unquoted (coverage playwright-report reports/*.md), that the run writes and the dashboard
+# keeps with it: HTML reports, coverage, Markdown, JUnit XML, ...
 #
 # Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
 # ROOT (default: the git root of the directory `task` was called from), WORKSPACES
@@ -96,7 +104,7 @@ tasks:
             {{if .KIND}}$body = {
             {{.CMD}}
             }
-            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}" -Body $body } else { & $body }
+            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}"{{if .ARTIFACTS}} -Artifacts @({{range $i, $a := splitList " " (.ARTIFACTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}} -Body $body } else { & $body }
             {{else}}{{.CMD}}
             {{end}}
 
