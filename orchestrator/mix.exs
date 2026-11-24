@@ -12,7 +12,7 @@ defmodule Testor.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       releases: [
-        testor: [include_executables_for: [:windows]]
+        testor: [include_executables_for: [:unix, :windows]]
       ]
     ]
   end

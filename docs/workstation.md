@@ -1,7 +1,14 @@
 # Workstation and projects
 
-The workstation needs `ssh`, `tar`, `git` and [Task](https://taskfile.dev) 3.x. Clone testor
-somewhere stable (the examples use `~/git/testor`); the Taskfiles are used from there.
+The workstation can run any OS. It needs `ssh`, `tar`, `git` and [Task](https://taskfile.dev)
+3.x; the Taskfiles use nothing else (no `sed`, no `base64` binary). Clone testor somewhere
+stable (the examples use `~/git/testor`); the Taskfiles are used from there.
+
+| Workstation | Notes                                                                             |
+| ----------- | --------------------------------------------------------------------------------- |
+| Linux       | GNU tar, OpenSSH: nothing to add                                                  |
+| macOS       | the built-in bsdtar and OpenSSH work; `brew install go-task`                      |
+| Windows     | the built-in OpenSSH client (`ssh.exe`) and `tar.exe`, Git for Windows, and Task (`winget install Task.Task`); Task runs the commands with its own shell, so no WSL is needed |
 
 ## Managing testor
 
@@ -69,24 +76,26 @@ tasks:
 
 | Task            | Does                                                                         |
 | --------------- | ---------------------------------------------------------------------------- |
-| `runner:sync`   | uploads the working tree to `~\test-run\<project>`; runs once per `task` call, so `check` uploads once |
+| `runner:sync`   | uploads the working tree to `~/test-run/<project>`; runs once per `task` call, so `check` uploads once |
 | `runner:npm-ci` | `npm ci` when `package-lock.json` changed since the last install (or `node_modules` is missing) |
 | `runner:exec`   | runs `CMD` in the snapshot, in PowerShell 7; with `KIND`, recorded by testor  |
 
-Commands are PowerShell: chain them with `;`. The session stops at the first failing native
-command (`$PSNativeCommandUseErrorActionPreference`), so `npm run a; npm run b` behaves like
-`npm run a && npm run b`.
+Commands are PowerShell 7 on every runner (Windows, Linux, macOS): chain them with `;`. The
+session stops at the first failing native command (`$PSNativeCommandUseErrorActionPreference`),
+so `npm run a; npm run b` behaves like `npm run a && npm run b`. Use `$IsWindows`, `$IsLinux`
+and `$IsMacOS` for the rare command that differs. `CMD` may span several lines and hold any
+quotes: it reaches the runner base64-encoded.
 
 `remote.yml` vars: `RUNNER` (required); `PROJECT` (the git root's folder name), `ROOT` (the git
 root of the directory you ran `task` in), `WORKSPACES` (`test-run`), `HOME_DIR`
-(`<WORKSPACES>\.testor`), `KEEP` (what a new snapshot does not delete: `node_modules .lockhash
+(`<WORKSPACES>/.testor`), `KEEP` (what a new snapshot does not delete: `node_modules .lockhash
 target .venv`).
 
 ### Things to know
 
 - **One run per project at a time.** Every task of a project uses the same snapshot folder; a
   second upload while a run is going rewrites its files. testor flags overlapping runs.
-- **Paths.** Tests run on Windows: build paths with `path.join` / `new URL(..., import.meta.url)`
+- **Paths.** On a Windows runner, build paths with `path.join` / `new URL(..., import.meta.url)`
   (or your language's equivalent), not by concatenating `/`.
 - **Line endings.** The snapshot is your working tree as it is; a `.gitattributes` with
   `* text=auto eol=lf` keeps checks such as Prettier's consistent between machines.

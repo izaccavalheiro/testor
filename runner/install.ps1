@@ -42,8 +42,9 @@ if ($IsWindows) {
   foreach ($dir in "C:\Program Files\Erlang OTP\bin", "C:\Program Files\Elixir\bin") {
     if ((Test-Path $dir) -and ($env:Path -notlike "*$dir*")) { $env:Path = "$dir;$env:Path" }
   }
-} elseif ($IsMacOS) {
-  foreach ($dir in "/opt/homebrew/bin", "/usr/local/bin") {
+} else {
+  # Homebrew, and mise's or asdf's shims: SSH sessions often start without them on the PATH.
+  foreach ($dir in "/opt/homebrew/bin", "/usr/local/bin", (Join-Path $HOME ".local/share/mise/shims"), (Join-Path $HOME ".asdf/shims")) {
     if ((Test-Path $dir) -and ($env:PATH -notlike "*$dir*")) { $env:PATH = "${dir}:$env:PATH" }
   }
 }

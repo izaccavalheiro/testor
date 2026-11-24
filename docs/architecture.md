@@ -10,9 +10,9 @@ is up, and the orchestrator picks up whatever happened while it was down.
 
 1. `task test` on the workstation runs `runner:sync`: `git ls-files` lists the working tree
    (tracked and untracked files, minus what `.gitignore` excludes), `tar` packs it and `ssh`
-   unpacks it in `~\test-run\<project>` on the runner, after deleting the previous snapshot's
+   unpacks it in `~/test-run/<project>` on the runner, after deleting the previous snapshot's
    files except dependencies and build caches (`node_modules`, `target`, ...).
-2. `runner:exec` opens one SSH session (PowerShell 7) in that folder and runs the command
+2. `runner:exec` opens one SSH session in that folder and runs the command in PowerShell 7
    through `run.ps1 -Project <project> -Kind <task> -Body { <command> }`.
 3. `run.ps1` writes `runs\<id>.json` (`status: running`, with the session's pid), runs the
    command, and copies every line to `logs\<id>.log` while passing stdout to stdout and stderr
@@ -29,7 +29,23 @@ is up, and the orchestrator picks up whatever happened while it was down.
 
 If the SSH session dies (a closed laptop lid, a killed terminal), `run.ps1` never writes the
 end: the tracker notices the pid is gone and settles the run as `aborted`. Cancelling from the
-dashboard kills the session's process tree (`taskkill /T`) and settles it as `cancelled`.
+dashboard kills the session's process tree (`taskkill /T` on Windows; on Unix every
+descendant `ps` lists is stopped, then killed) and settles it as `cancelled`.
+
+## Remote scripts
+
+Every remote step is a PowerShell script: a shared prelude (stop on errors, UTF-8 output,
+the workspace path; on Windows, the machine PATH that sshd's sessions miss) followed by the
+step. The Taskfile encodes it with go-task's `b64enc` and runs
+
+```text
+ssh <runner> "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"<base64>\"))))'"
+```
+
+The single quotes survive both kinds of login shell a runner may have (a POSIX shell on Linux
+and macOS, PowerShell on Windows), so nothing depends on quoting rules, and the workstation
+needs no tool beyond `ssh`, `git` and `tar`. `sync` pipes the snapshot into the same session,
+where `tar` reads it from stdin.
 
 ## The run record
 
@@ -62,7 +78,7 @@ Testor.Supervisor
 ├── Sessions            pwsh sessions in the workspace that run.ps1 did not start
 ├── Stats               disk space of the data drive, screenshots folder size, last cleanup
 ├── Janitor             retention: runs by count and age, screenshots by age and size
-├── Device              the device sampler (a PowerShell port) and its history
+├── Device              device stats (Windows: a PowerShell port; Linux, macOS: Elixir) and their history
 └── Bandit              HTTP: the page, the JSON API, the SSE streams
 ```
 
@@ -96,10 +112,16 @@ path contains: Playwright names its result folders after the spec.
 
 ## Device stats
 
-`Device` keeps one PowerShell running `priv/sysinfo.ps1` as an Erlang port and sends it one
-command per line (`static`, `sample light`, `sample full <pids>`); each answer is one JSON
-line. Rates come from raw performance counters and the previous sample: the formatted
+On Windows, `Device` keeps one PowerShell running `priv/sysinfo.ps1` as an Erlang port and
+sends it one command per line (`static`, `sample light`, `sample full <pids>`); each answer is
+one JSON line. Rates come from raw performance counters and the previous sample: the formatted
 counters take a second per query, and `Get-Counter` paths are localized.
+
+On Linux and macOS, `Testor.Device.Unix` samples in a task, in the same shape: Linux reads
+`/proc` and `/sys` (CPU per core from `/proc/stat`, processes from `/proc/<pid>/stat`, disks
+from `/proc/diskstats`; `nvidia-smi` and `lsblk` when present); macOS asks `sysctl`,
+`vm_stat`, `ps`, `netstat`, `iostat`, `df` and `pmset`. A value a platform cannot give is null,
+and the dashboard leaves it out.
 
 | Sample | Every                          | Holds                                                            |
 | ------ | ------------------------------ | ---------------------------------------------------------------- |
@@ -128,12 +150,12 @@ than `screenshots.maxAgeDays` and the oldest ones until the folder fits
 
 | Path (defaults)                 | What                                                         |
 | ------------------------------- | ------------------------------------------------------------ |
-| `~\test-run\<project>`          | a project's snapshot, where its commands run                 |
-| `~\test-run\.testor\run.ps1`    | the wrapper the Taskfiles call                               |
-| `~\test-run\.testor\runs\`, `logs\`, `screenshots\` | the data                                 |
-| `~\test-run\.testor\src\`       | the uploaded sources, with `deps` and `_build` kept between deploys |
-| `~\test-run\.testor\app\`       | the release the scheduled task `Testor` runs                 |
-| `~\test-run\.testor\testor.log` | the orchestrator's log                                       |
+| `~/test-run/<project>`          | a project's snapshot, where its commands run                 |
+| `~/test-run/.testor/run.ps1`    | the wrapper the Taskfiles call                               |
+| `~/test-run/.testor/runs/`, `logs/`, `screenshots/` | the data                                 |
+| `~/test-run/.testor/src/`       | the uploaded sources, with `deps` and `_build` kept between deploys |
+| `~/test-run/.testor/app/`       | the release the service runs                                 |
+| `~/test-run/.testor/testor.log` | the orchestrator's log                                       |
 
 `TESTOR_WORKSPACES`, `TESTOR_HOME` and `TESTOR_PORT` change them for the orchestrator;
 `WORKSPACES`, `HOME_DIR` and `PORT` for the Taskfiles.

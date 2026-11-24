@@ -84,4 +84,10 @@ busiest processes by CPU and by memory: `{pid, parent, name, cpu, mem, ws, threa
 run}`) and `runs` (by run pid: `{processes, cpu, mem, top[]}`). Rates are per second, CPU in
 percent of the whole machine, sizes in bytes.
 
+Linux and macOS fill the same fields where they can and leave the rest null: `handles`; on
+macOS `cores` (empty), `threads`, `queue`, `disk.read`/`write`/`active` (the combined
+`disk.io` instead) and GPU load; GPU load on Linux only for NVIDIA GPUs. A Unix battery's
+`status` is text (`charging`, `discharging`, ...) where Windows gives a `Win32_Battery` code.
+`static.platform` is `linux` or `macos` (absent on Windows).
+
 `point` (history): `{t, cpu, mem, gpu, diskRead, diskWrite, diskActive, netRx, netTx}`.
