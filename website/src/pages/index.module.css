@@ -1,0 +1,82 @@
+.hero {
+  padding: 4.5rem 1rem 3.5rem;
+  text-align: center;
+  border-bottom: 1px solid var(--testor-border);
+}
+
+.title {
+  font-size: clamp(2.2rem, 6vw, 3.4rem);
+  margin-bottom: 0.75rem;
+}
+
+.tagline {
+  font-size: 1.25rem;
+  max-width: 46rem;
+  margin: 0 auto 1.75rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.buttons {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.badges {
+  margin-top: 1.25rem;
+  font-size: 0.9rem;
+  color: var(--ifm-color-emphasis-600);
+}
+
+.section {
+  padding: 3rem 0;
+}
+
+.section h2 {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1.25rem;
+}
+
+.card {
+  border: 1px solid var(--testor-border);
+  border-radius: 10px;
+  padding: 1.25rem 1.25rem 0.5rem;
+  background: var(--testor-panel);
+}
+
+.card h3 {
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+}
+
+.terminal {
+  max-width: 52rem;
+  margin: 0 auto;
+}
+
+.split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.pass {
+  color: var(--testor-pass);
+  font-weight: 600;
+}
+
+.planned {
+  color: var(--ifm-color-emphasis-600);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

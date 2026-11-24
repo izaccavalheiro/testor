@@ -1,0 +1,7 @@
+node_modules/
+build/
+.docusaurus/
+.cache-loader/
+# Written by scripts/sync.mjs from docs/ and the repository's root files.
+docs/reference/
+docs/project/

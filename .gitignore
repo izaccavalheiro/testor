@@ -4,3 +4,6 @@ erl_crash.dump
 node_modules/
 .lockhash
 /orchestrator/tmp/
+/website/node_modules/
+/website/build/
+/website/.docusaurus/
