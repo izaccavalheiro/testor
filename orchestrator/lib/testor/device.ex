@@ -13,7 +13,8 @@ defmodule Testor.Device do
   """
   use GenServer
   require Logger
-  alias Testor.{Events, Store}
+  alias Testor.{Events, OS, Store}
+  alias Testor.Device.Unix
 
   @watched_ms 3_000
   @idle_ms 15_000
@@ -45,7 +46,11 @@ defmodule Testor.Device do
       static: nil,
       sample: nil,
       history: [],
-      timer: nil
+      timer: nil,
+      # Linux and macOS: Testor.Device.Unix runs in a task; `busy` is its monitor ref.
+      unix: not OS.windows?(),
+      baseline: %{},
+      busy: nil
     }
 
     send(self(), :open)
@@ -59,6 +64,12 @@ defmodule Testor.Device do
   end
 
   @impl true
+  def handle_info(:open, %{unix: true} = state) do
+    Process.send_after(self(), :static, @static_ms)
+    send(self(), :tick)
+    {:noreply, run_unix(state, :static)}
+  end
+
   def handle_info(:open, state) do
     script = Application.app_dir(:testor, "priv/sysinfo.ps1")
 
@@ -84,7 +95,7 @@ defmodule Testor.Device do
 
   def handle_info(:static, state) do
     Process.send_after(self(), :static, @static_ms)
-    {:noreply, request(state, "static")}
+    {:noreply, if(state.unix, do: run_unix(state, :static), else: request(state, "static"))}
   end
 
   def handle_info(:tick, state) do
@@ -94,15 +105,25 @@ defmodule Testor.Device do
     interval = if(length(state.history) < 2, do: 1_000, else: if(watched, do: @watched_ms, else: @idle_ms))
     timer = Process.send_after(self(), :tick, interval)
 
-    command =
-      if watched do
-        pids = for run <- Store.all(), run["status"] == "running", is_integer(run["pid"]), do: run["pid"]
-        "sample full #{Enum.join(pids, ",")}"
-      else
-        "sample light"
-      end
+    pids = for run <- Store.all(), run["status"] == "running", is_integer(run["pid"]), do: run["pid"]
+    state = %{state | timer: timer}
 
-    {:noreply, request(%{state | timer: timer}, command)}
+    cond do
+      state.unix -> {:noreply, run_unix(state, {:sample, watched, pids})}
+      watched -> {:noreply, request(state, "sample full #{Enum.join(pids, ",")}")}
+      true -> {:noreply, request(state, "sample light")}
+    end
+  end
+
+  def handle_info({ref, {:unix, result, baseline}}, %{busy: ref} = state) do
+    Process.demonitor(ref, [:flush])
+    state = %{state | busy: nil, baseline: baseline || state.baseline}
+    {:noreply, accept(state, result)}
+  end
+
+  def handle_info({:DOWN, ref, :process, _, reason}, %{busy: ref} = state) do
+    Logger.warning("device: sampler task failed: #{inspect(reason)}")
+    {:noreply, %{state | busy: nil}}
   end
 
   def handle_info({port, {:data, {:noeol, chunk}}}, %{port: port} = state),
@@ -114,19 +135,8 @@ defmodule Testor.Device do
 
     state =
       case JSON.decode(line) do
-        {:ok, %{"type" => "static"} = static} ->
-          Events.broadcast("global", "device_static", static)
-          %{state | static: static}
-
-        {:ok, %{"type" => "sample"} = sample} ->
-          sample = merge_light(sample, state.sample)
-          point = point(sample, state.static)
-          Events.broadcast("global", "device", %{"sample" => sample, "point" => point})
-          %{state | sample: sample, history: Enum.take([point | state.history], @history)}
-
-        {:ok, other} ->
-          Logger.warning("device: #{inspect(other)}")
-          state
+        {:ok, result} ->
+          accept(state, result)
 
         {:error, _} ->
           Logger.warning("device: not JSON: #{String.slice(line, 0, 200)}")
@@ -163,6 +173,40 @@ defmodule Testor.Device do
   end
 
   def terminate(_, _), do: :ok
+
+  defp accept(state, %{"type" => "static"} = static) do
+    Events.broadcast("global", "device_static", static)
+    %{state | static: static}
+  end
+
+  defp accept(state, %{"type" => "sample"} = sample) do
+    sample = merge_light(sample, state.sample)
+    point = point(sample, state.static)
+    Events.broadcast("global", "device", %{"sample" => sample, "point" => point})
+    %{state | sample: sample, history: Enum.take([point | state.history], @history)}
+  end
+
+  defp accept(state, other) do
+    Logger.warning("device: #{inspect(other)}")
+    state
+  end
+
+  # Linux and macOS: one sampling task at a time; a request while one runs is dropped.
+  defp run_unix(%{busy: ref} = state, _job) when is_reference(ref), do: state
+
+  defp run_unix(state, job) do
+    baseline = state.baseline
+
+    task =
+      Task.Supervisor.async_nolink(Testor.TaskSupervisor, fn ->
+        case job do
+          :static -> {:unix, Unix.static(), nil}
+          {:sample, full, pids} -> Unix.sample(full, pids, baseline) |> then(fn {s, b} -> {:unix, s, b} end)
+        end
+      end)
+
+    %{state | busy: task.ref}
+  end
 
   # One command at a time; a sample asked for while one runs replaces any queued sample.
   defp request(%{port: nil} = state, _command), do: state

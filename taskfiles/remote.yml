@@ -1,5 +1,5 @@
-# Runs a project's checks on a Windows runner over SSH. Include it from the project's
-# Taskfile (internal: its tasks are building blocks, not commands of their own):
+# Runs a project's checks on a testor runner (Windows, Linux or macOS, with PowerShell 7) over
+# SSH. Include it from the project's Taskfile (internal: its tasks are building blocks):
 #
 #   includes:
 #     runner:
@@ -16,15 +16,18 @@
 #           vars: { KIND: test, CMD: "npm test -- {{.CLI_ARGS}}" }
 #
 # sync uploads the working tree as git sees it (tracked and untracked files, uncommitted
-# changes included, minus what .gitignore excludes) to $HOME\<WORKSPACES>\<PROJECT> on the
-# runner, deleting the previous snapshot's files except KEEP (dependencies and build caches).
-# exec runs CMD there in PowerShell 7, stopping at the first failing command. With KIND, the
-# command runs through testor's run.ps1, so the run shows on the dashboard: output, stderr
-# and exit code are passed through unchanged. Without testor installed, it just runs.
+# changes included, minus what .gitignore excludes) to ~/<WORKSPACES>/<PROJECT> on the runner,
+# deleting the previous snapshot's files except KEEP (dependencies and build caches). exec runs
+# CMD there in PowerShell 7, stopping at the first failing command, whatever the runner's
+# operating system or login shell. With KIND, the command runs through testor's run.ps1, so
+# the run shows on the dashboard; output, stderr and exit code are passed through unchanged.
 #
 # Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
 # ROOT (default: the git root of the directory `task` was called from), WORKSPACES
-# (test-run), HOME_DIR (<WORKSPACES>\.testor), KEEP (node_modules .lockhash target .venv).
+# (test-run), HOME_DIR (<WORKSPACES>/.testor), KEEP (node_modules .lockhash target .venv).
+#
+# The workstation needs ssh, git and tar (GNU tar, bsdtar or Windows' tar.exe). Scripts reach
+# the runner base64-encoded, so no quoting depends on the runner's shell.
 version: "3"
 
 # go-task gives an included Taskfile's own vars precedence over the ones passed to it, so the
@@ -34,9 +37,17 @@ vars:
     sh: '{{if .ROOT}}echo "{{.ROOT}}"{{else}}git -C "{{.USER_WORKING_DIR}}" rev-parse --show-toplevel{{end}}'
   _PROJECT: '{{.PROJECT | default (base ._ROOT)}}'
   _WORKSPACES: '{{.WORKSPACES | default "test-run"}}'
-  _HOME_DIR: '{{.HOME_DIR | default (printf "%s\\.testor" ._WORKSPACES)}}'
-  _KEEP:
-    sh: echo '{{.KEEP | default "node_modules .lockhash target .venv"}}' | sed 's/[^ ][^ ]*/"&"/g; s/ /, /g'
+  _HOME_DIR: '{{.HOME_DIR | default (printf "%s/.testor" ._WORKSPACES)}}'
+  _KEEP: '{{range $i, $k := splitList " " (.KEEP | default "node_modules .lockhash target .venv")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
+  # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
+  # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
+  _PRELUDE: |
+    $ErrorActionPreference = "Stop"
+    $PSNativeCommandUseErrorActionPreference = $true
+    try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
+    if ($IsWindows) { $env:Path += ";" + [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User") }
+    $workspace = Join-Path (Join-Path $HOME "{{._WORKSPACES}}") "{{._PROJECT}}"
+    $testorRun = Join-Path (Join-Path $HOME "{{._HOME_DIR}}") "run.ps1"
 
 tasks:
   sync:
@@ -44,16 +55,21 @@ tasks:
     requires:
       vars: [RUNNER]
     cmds:
-      # Folders are passed explicitly: a task-level dir: in an included Taskfile does not see
-      # the vars passed to the include.
-      - >-
-        git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
-        tar -C "{{._ROOT}}" --null --ignore-failed-read -T - -czf - |
-        ssh {{.RUNNER}}
-        '$dir = "$HOME\{{._WORKSPACES}}\{{._PROJECT}}";
-        function Clear-Snapshot($p) { Get-ChildItem -LiteralPath $p -Force | Where-Object { $_.Name -notin {{._KEEP}} } | ForEach-Object { if ($_.PSIsContainer) { Clear-Snapshot $_.FullName } else { Remove-Item -LiteralPath $_.FullName -Force } } };
-        if (Test-Path $dir) { Clear-Snapshot $dir };
-        $null = New-Item -ItemType Directory -Force -Path $dir; tar -xzf - -C $dir'
+      - task: ps
+        vars:
+          LABEL: "sync {{._ROOT}} -> ~/{{._WORKSPACES}}/{{._PROJECT}}"
+          STDIN: >-
+            git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
+            tar -czf - -C "{{._ROOT}}" --null -T -
+          SCRIPT: |
+            function Clear-Snapshot($p) {
+              Get-ChildItem -LiteralPath $p -Force | Where-Object { $_.Name -notin {{._KEEP}} } | ForEach-Object {
+                if ($_.PSIsContainer) { Clear-Snapshot $_.FullName } else { Remove-Item -LiteralPath $_.FullName -Force }
+              }
+            }
+            if (Test-Path $workspace) { Clear-Snapshot $workspace }
+            $null = New-Item -ItemType Directory -Force -Path $workspace
+            tar -xzf - -C $workspace
 
   npm-ci:
     run: once
@@ -61,23 +77,39 @@ tasks:
       # .lockhash is written last, so a failed install is retried on the next run.
       - task: exec
         vars:
-          CMD: >-
+          CMD: |
             if (Test-Path package-lock.json) {
-            $hash = (Get-FileHash package-lock.json -Algorithm SHA256).Hash;
-            $prev = if (Test-Path .lockhash) { (Get-Content .lockhash -Raw).Trim() } else { "" };
-            if ($hash -ne $prev -or -not (Test-Path node_modules)) {
-            npm ci; Set-Content -NoNewline -Path .lockhash -Value $hash } }
+              $hash = (Get-FileHash package-lock.json -Algorithm SHA256).Hash
+              $prev = if (Test-Path .lockhash) { (Get-Content .lockhash -Raw).Trim() } else { "" }
+              if ($hash -ne $prev -or -not (Test-Path node_modules)) { npm ci; Set-Content -NoNewline -Path .lockhash -Value $hash }
+            }
 
   exec:
     requires:
       vars: [RUNNER, CMD]
     cmds:
-      # sshd hands each session the PATH it had when the service started, so programs
-      # installed since are appended from the registry.
-      - >-
-        ssh {{.RUNNER}}
-        '$ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true;
-        $env:Path += ";" + [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User");
-        Set-Location "$HOME\{{._WORKSPACES}}\{{._PROJECT}}";
-        {{if .KIND}}$body = { {{.CMD}} }; $run = "$HOME\{{._HOME_DIR}}\run.ps1";
-        if (Test-Path $run) { & $run -Project "{{._PROJECT}}" -Kind "{{.KIND}}" -Body $body } else { & $body }{{else}}{{.CMD}}{{end}}'
+      - task: ps
+        vars:
+          LABEL: "{{.KIND | default \"exec\"}}: {{.CMD | trim}}"
+          SCRIPT: |
+            Set-Location $workspace
+            {{if .KIND}}$body = {
+            {{.CMD}}
+            }
+            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}" -Body $body } else { & $body }
+            {{else}}{{.CMD}}
+            {{end}}
+
+  ps:
+    internal: true
+    requires:
+      vars: [RUNNER, SCRIPT]
+    cmds:
+      - cmd: 'echo "[{{.RUNNER}}] {{.LABEL | default "script" | replace "\"" "''" | replace "\n" " " | trunc 200}}"'
+        silent: true
+      # The prelude and the script travel base64-encoded inside single quotes, which both a POSIX
+      # shell and PowerShell (whichever is the runner's login shell) pass on as they are.
+      - cmd: >-
+          {{if .STDIN}}{{.STDIN}} | {{end}}ssh {{.RUNNER}}
+          "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"{{b64enc (print ._PRELUDE .SCRIPT)}}\"))))'"
+        silent: true

@@ -1,5 +1,6 @@
-# Manages testor on a Windows runner, from the workstation. Include it from a Taskfile of
-# your own (for example ~/Taskfile.yml) and name the runner, an SSH host:
+# Manages testor on a runner (Windows, Linux or macOS, with PowerShell 7) from the
+# workstation. Include it from a Taskfile of your own (for example ~/Taskfile.yml) and name
+# the runner, an SSH host:
 #
 #   includes:
 #     testor:
@@ -12,7 +13,7 @@
 #   task testor:status / testor:logs / testor:uninstall
 #
 # Optional vars: PORT (6767), WORKSPACES (test-run, under the runner user's home), HOME_DIR
-# (<WORKSPACES>\.testor), ALLOW_FROM (the firewall's remote addresses, comma separated;
+# (<WORKSPACES>/.testor), ALLOW_FROM (Windows firewall: remote addresses, comma separated;
 # 100.64.0.0/10 is Tailscale's range).
 version: "3"
 
@@ -22,70 +23,98 @@ vars:
   _ROOT: "{{.TASKFILE_DIR}}/.."
   _PORT: '{{.PORT | default "6767"}}'
   _WORKSPACES: '{{.WORKSPACES | default "test-run"}}'
-  _HOME_DIR: '{{.HOME_DIR | default (printf "%s\\.testor" ._WORKSPACES)}}'
-  _ALLOW_FROM:
-    sh: echo '{{.ALLOW_FROM | default "100.64.0.0/10,LocalSubnet"}}' | sed 's/[^,]*/"&"/g'
+  _HOME_DIR: '{{.HOME_DIR | default (printf "%s/.testor" ._WORKSPACES)}}'
+  _ALLOW_FROM: '{{range $i, $a := splitList "," (.ALLOW_FROM | default "100.64.0.0/10,LocalSubnet")}}{{if $i}}, {{end}}"{{$a}}"{{end}}'
+  _PRELUDE: |
+    $ErrorActionPreference = "Stop"
+    $PSNativeCommandUseErrorActionPreference = $true
+    try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
+    $testorHome = Join-Path $HOME "{{._HOME_DIR}}"
+    $src = Join-Path $testorHome "src"
+    $installer = Join-Path (Join-Path $src "runner") "install.ps1"
 
 tasks:
   upload:
     internal: true
-    requires:
-      vars: [RUNNER]
     cmds:
-      # The orchestrator and runner folders go to <home>\src; deps and _build stay there, so
+      # The orchestrator and runner folders go to <home>/src; deps and _build stay there, so
       # builds are incremental. Sources removed here are removed there too.
-      - >-
-        tar -C "{{._ROOT}}" --exclude=_build --exclude=deps -czf - orchestrator runner |
-        ssh {{.RUNNER}}
-        '$src = "$HOME\{{._HOME_DIR}}\src"; $null = New-Item -ItemType Directory -Force -Path $src;
-        foreach ($d in "runner", "orchestrator\lib", "orchestrator\priv", "orchestrator\test", "orchestrator\config", "orchestrator\rel") {
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $src $d) };
-        tar -xzf - -C $src'
+      - task: ps
+        vars:
+          LABEL: upload orchestrator/ and runner/
+          STDIN: tar -czf - -C "{{._ROOT}}" --exclude=_build --exclude=deps orchestrator runner
+          SCRIPT: |
+            $null = New-Item -ItemType Directory -Force -Path $src
+            foreach ($d in "runner", "orchestrator/lib", "orchestrator/priv", "orchestrator/test", "orchestrator/config", "orchestrator/rel") {
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $src $d)
+            }
+            tar -xzf - -C $src
 
   check:
     desc: Report what the runner still lacks (runner/setup.ps1 -Check)
-    requires:
-      vars: [RUNNER]
     cmds:
-      - >-
-        tar -C "{{._ROOT}}/runner" -czf - setup.ps1 |
-        ssh {{.RUNNER}}
-        '$d = Join-Path $env:TEMP "testor-setup"; $null = New-Item -ItemType Directory -Force $d; tar -xzf - -C $d;
-        & "$d\setup.ps1" -Check -Workspaces "$HOME\{{._WORKSPACES}}"; Remove-Item -Recurse -Force $d'
+      - task: ps
+        vars:
+          LABEL: setup.ps1 -Check
+          STDIN: tar -czf - -C "{{._ROOT}}/runner" setup.ps1
+          SCRIPT: |
+            $d = Join-Path ([IO.Path]::GetTempPath()) "testor-setup"
+            $null = New-Item -ItemType Directory -Force $d
+            tar -xzf - -C $d
+            & (Join-Path $d "setup.ps1") -Check -Workspaces (Join-Path $HOME "{{._WORKSPACES}}")
+            Remove-Item -Recurse -Force $d
 
   test:
     desc: Run the orchestrator's ExUnit tests on the runner
     cmds:
       - task: upload
-      - ssh {{.RUNNER}} '& "$HOME\{{._HOME_DIR}}\src\runner\install.ps1" -Test'
+      - task: ps
+        vars: { LABEL: mix test, SCRIPT: "& $installer -Test" }
 
   deploy:
-    desc: Build testor on the runner, install its scheduled task and firewall rule, and (re)start it
+    desc: Build testor on the runner, install it as a service (and on Windows its firewall rule), and (re)start it
     cmds:
       - task: upload
-      - ssh {{.RUNNER}} '& "$HOME\{{._HOME_DIR}}\src\runner\install.ps1" -Port {{._PORT}} -AllowFrom {{._ALLOW_FROM}}'
+      - task: ps
+        vars:
+          LABEL: install.ps1 -Port {{._PORT}}
+          SCRIPT: "& $installer -Port {{._PORT}} -AllowFrom {{._ALLOW_FROM}}"
 
   status:
-    desc: Show testor's scheduled task and health on the runner
-    requires:
-      vars: [RUNNER]
+    desc: Show testor's service and health on the runner
     cmds:
-      - >-
-        ssh {{.RUNNER}}
-        'Get-ScheduledTask -TaskName Testor | Get-ScheduledTaskInfo | Select-Object LastRunTime, LastTaskResult | Format-List;
-        try { Invoke-RestMethod http://127.0.0.1:{{._PORT}}/api/health | Format-List } catch { Write-Warning "not answering: $_" }'
+      - task: ps
+        vars:
+          LABEL: status
+          SCRIPT: |
+            if ($IsWindows) { Get-ScheduledTask -TaskName Testor | Get-ScheduledTaskInfo | Select-Object LastRunTime, LastTaskResult | Format-List | Out-String }
+            elseif ($IsLinux) { systemctl --user --no-pager status testor.service | Select-Object -First 5 }
+            else { launchctl print "gui/$(id -u)/dev.testor" | Select-String "state|pid" | Select-Object -First 3 }
+            try { Invoke-RestMethod http://127.0.0.1:{{._PORT}}/api/health | Format-List | Out-String } catch { Write-Warning "not answering: $_" }
       - curl -fsS --max-time 5 http://{{.RUNNER}}:{{._PORT}}/api/health && echo " <- reachable from $(hostname)"
 
   logs:
     desc: Print the end of testor's log on the runner
-    requires:
-      vars: [RUNNER]
     cmds:
-      - ssh {{.RUNNER}} 'Get-Content -Tail 50 "$HOME\{{._HOME_DIR}}\testor.log"'
+      - task: ps
+        vars: { LABEL: testor.log, SCRIPT: 'Get-Content -Tail 50 (Join-Path $testorHome "testor.log")' }
 
   uninstall:
-    desc: Remove testor's scheduled task and firewall rule (keeps runs, logs and screenshots)
-    requires:
-      vars: [RUNNER]
+    desc: Remove testor's service (and on Windows its firewall rule); runs, logs and screenshots stay
     cmds:
-      - ssh {{.RUNNER}} '& "$HOME\{{._HOME_DIR}}\src\runner\install.ps1" -Uninstall -Port {{._PORT}}'
+      - task: ps
+        vars: { LABEL: uninstall, SCRIPT: "& $installer -Uninstall -Port {{._PORT}}" }
+
+  ps:
+    internal: true
+    requires:
+      vars: [RUNNER, SCRIPT]
+    cmds:
+      - cmd: 'echo "[{{.RUNNER}}] {{.LABEL | default "script"}}"'
+        silent: true
+      # The prelude and the script travel base64-encoded inside single quotes, which both a POSIX
+      # shell and PowerShell (whichever is the runner's login shell) pass on as they are.
+      - cmd: >-
+          {{if .STDIN}}{{.STDIN}} | {{end}}ssh {{.RUNNER}}
+          "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"{{b64enc (print ._PRELUDE .SCRIPT)}}\"))))'"
+        silent: true

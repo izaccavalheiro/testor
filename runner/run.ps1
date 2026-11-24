@@ -1,4 +1,5 @@
-# Runs one task's command and records it for testor (the orchestrator reads these files):
+# Runs one task's command and records it for testor (the orchestrator reads these files).
+# Needs PowerShell 7 (Windows, Linux or macOS). Next to it:
 #   runs\<id>.json        project, kind, command, pid, start, end, status, exit code
 #   logs\<id>.log         everything the command printed (it is still printed, unchanged)
 #   screenshots\<id>\     images the run wrote under test-results, __screenshots__, screenshots
@@ -6,7 +7,7 @@
 # The folders are next to this script (the testor home). Recording never fails a run: only
 # the command's own error is rethrown, so output, stderr and the exit code are unchanged.
 #
-#   & "$HOME\test-run\.testor\run.ps1" -Project my-app -Kind test -Body { npm test }
+#   & "$HOME/test-run/.testor/run.ps1" -Project my-app -Kind test -Body { npm test }
 #
 # The command sees $env:TESTOR_RUN_ID and $env:SCREENSHOT_DIR (a folder kept with the run).
 param(
@@ -19,9 +20,9 @@ $root = $PSScriptRoot
 $started = Get-Date
 $workdir = (Get-Location).Path
 $id = $started.ToUniversalTime().ToString("yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N").Substring(0, 6)
-$runFile = Join-Path $root "runs\$id.json"
-$logFile = Join-Path $root "logs\$id.log"
-$shotDir = Join-Path $root "screenshots\$id"
+$runFile = Join-Path (Join-Path $root "runs") "$id.json"
+$logFile = Join-Path (Join-Path $root "logs") "$id.log"
+$shotDir = Join-Path (Join-Path $root "screenshots") $id
 
 $record = [ordered]@{
   id         = $id

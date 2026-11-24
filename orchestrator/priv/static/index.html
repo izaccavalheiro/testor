@@ -565,7 +565,7 @@ function deviceStrip() {
     <div class="tile" data-device><div class="label">CPU</div><div class="value">${pct(s.cpu)}</div><div class="sub">${s.processes ?? "–"} processes · ${s.threads ?? "–"} threads</div>${spark(hist("cpu"), { max: 100 })}</div>
     <div class="tile" data-device><div class="label">Memory</div><div class="value">${m ? pct(m.pct) : "–"}</div><div class="sub">${m ? `${bytes(m.used)} of ${bytes(m.total)}` : ""}</div>${spark(hist("mem"), { max: 100, color: "var(--amber)" })}</div>
     <div class="tile" data-device><div class="label">GPU</div><div class="value">${pct(s.gpu?.util)}</div><div class="sub">${esc(S.device.static?.gpus?.[0]?.name ?? "")}</div>${spark(hist("gpu"), { max: 100, color: "var(--green)" })}</div>
-    <div class="tile" data-device><div class="label">Disk</div><div class="value">${pct(s.disk?.active)}</div><div class="sub">R ${rate(s.disk?.read)} · W ${rate(s.disk?.write)}</div>${spark(hist("diskActive"), { max: 100, color: "var(--red)" })}</div>
+    <div class="tile" data-device><div class="label">Disk</div><div class="value">${pct(s.disk?.active)}</div><div class="sub">${diskIO(s.disk)}</div>${spark(hist("diskActive"), { max: 100, color: "var(--red)" })}</div>
     <div class="tile" data-device><div class="label">Network</div><div class="value" style="font-size:18px">↓ ${rate(net.rx)}</div><div class="sub">↑ ${rate(net.tx)}</div>${spark(S.device.history.map((p) => (p.netRx || 0) + (p.netTx || 0)))}</div>
   </div>`;
 }
@@ -574,6 +574,7 @@ function runUsage(run) {
   if (!u) return "";
   return `<div class="res">CPU <b>${u.cpu}%</b> · memory <b>${bytes(u.mem)}</b> · <b>${u.processes}</b> processes${u.top?.length ? ` · ${esc(u.top.slice(0, 3).join(", "))}` : ""}</div>`;
 }
+const diskIO = (d) => d?.read == null && d?.io != null ? `I/O ${rate(d.io)}` : `R ${rate(d?.read)} · W ${rate(d?.write)}`;
 const BATTERY = { 1: "discharging", 2: "on AC power", 3: "fully charged", 4: "low", 5: "critical", 6: "charging", 7: "charging (high)", 8: "charging (low)", 9: "charging (critical)", 11: "partially charged" };
 function uptime(iso) { return iso ? dur(Date.now() - Date.parse(iso)) : "–"; }
 function renderDevice() {
@@ -589,17 +590,17 @@ function renderDevice() {
     <div class="dev-card"><h3>System <span>${esc(st.host)}</span></h3>
       <dl class="facts">
         <dt>OS</dt><dd>${esc(st.os.name)} <span class="muted">${esc(st.os.architecture)}</span></dd>
-        <dt>Version</dt><dd>${esc(st.os.version)} (build ${esc(st.os.build)})</dd>
-        <dt>Machine</dt><dd>${esc(st.machine.manufacturer)} ${esc(st.machine.model)} <span class="muted">BIOS ${esc(st.machine.bios)}</span></dd>
+        <dt>Version</dt><dd>${esc(st.os.version)}${st.os.build ? ` (build ${esc(st.os.build)})` : ""}</dd>
+        <dt>Machine</dt><dd>${esc(st.machine.manufacturer ?? "")} ${esc(st.machine.model ?? "")}${st.machine.bios ? ` <span class="muted">BIOS ${esc(st.machine.bios)}</span>` : ""}</dd>
         <dt>Uptime</dt><dd>${uptime(st.os.bootedAt)} <span class="muted">since ${esc(when(st.os.bootedAt))}</span></dd>
-        <dt>Installed</dt><dd>${st.os.installedAt ? new Date(st.os.installedAt).toLocaleDateString() : "–"}</dd>
+        ${st.os.installedAt ? `<dt>Installed</dt><dd>${new Date(st.os.installedAt).toLocaleDateString()}</dd>` : ""}
         <dt>Locale</dt><dd>${esc(st.os.locale)} · ${esc(st.os.timezone)}</dd>
-        <dt>PowerShell</dt><dd>${esc(st.os.powershell)} (sampler)</dd>
-        ${s.battery ? `<dt>Battery</dt><dd>${s.battery.charge}% · ${esc(BATTERY[s.battery.status] ?? `status ${s.battery.status}`)}${s.battery.minutes ? ` · ${dur(s.battery.minutes * 60000)} left` : ""}</dd>` : ""}
+        <dt>PowerShell</dt><dd>${esc(st.os.powershell ?? "–")}</dd>
+        ${s.battery ? `<dt>Battery</dt><dd>${s.battery.charge}% · ${esc(typeof s.battery.status === "string" ? s.battery.status : (BATTERY[s.battery.status] ?? `status ${s.battery.status}`))}${s.battery.minutes ? ` · ${dur(s.battery.minutes * 60000)} left` : ""}</dd>` : ""}
       </dl></div>
     <div class="dev-card"><h3>CPU <span>${pct(s.cpu)}</span></h3>
       <div>${esc(st.cpu.name)}</div>
-      <div class="muted" style="font-size:12px">${st.cpu.cores} cores · ${st.cpu.threads} threads · ${st.cpu.maxMHz} MHz · L2 ${bytes(st.cpu.l2KB * 1024)} · L3 ${bytes(st.cpu.l3KB * 1024)} · queue ${s.queue ?? "–"}</div>
+      <div class="muted" style="font-size:12px">${[`${st.cpu.cores ?? "–"} cores`, `${st.cpu.threads} threads`, st.cpu.maxMHz && `${st.cpu.maxMHz} MHz`, st.cpu.l2KB && `L2 ${bytes(st.cpu.l2KB * 1024)}`, st.cpu.l3KB && `L3 ${bytes(st.cpu.l3KB * 1024)}`, s.queue != null && `queue ${s.queue}`].filter(Boolean).join(" · ")}</div>
       ${spark(hist("cpu"), { max: 100 })}
       <div class="cores">${(s.cores || []).map((c, i) => `<div class="core" title="core ${i}: ${pct(c)}"><span style="height:${c ?? 0}%"></span><b>${c == null ? "–" : Math.round(c)}</b></div>`).join("")}</div></div>
     <div class="dev-card"><h3>Memory <span>${m ? pct(m.pct) : "–"}</span></h3>
@@ -607,7 +608,7 @@ function renderDevice() {
       ${spark(hist("mem"), { max: 100, color: "var(--amber)" })}
       <dl class="facts">
         <dt>Available</dt><dd>${bytes(s.memory.available)}</dd>
-        <dt>Committed</dt><dd>${bytes(s.memory.committed)} of ${bytes(s.memory.commitLimit)}</dd>
+        ${s.memory.commitLimit ? `<dt>Committed</dt><dd>${bytes(s.memory.committed)} of ${bytes(s.memory.commitLimit)}</dd>` : ""}
         <dt>Cached</dt><dd>${bytes(s.memory.cache)}</dd>
         <dt>Paging</dt><dd>${s.memory.pagesPerSec ?? "–"} pages/s</dd>
         <dt>Modules</dt><dd>${(st.memory.modules || []).map((x) => `${bytes(x.capacity)} ${x.speedMHz ? `${x.speedMHz} MHz` : ""} <span class="muted">${esc(x.slot ?? "")} ${esc(x.manufacturer ?? "")}</span>`).join("<br>") || "–"}</dd>
@@ -616,11 +617,11 @@ function renderDevice() {
       ${(st.gpus || []).map((g) => `<div>${esc(g.name)}</div><div class="muted" style="font-size:12px">driver ${esc(g.driver)}${g.resolution ? ` · ${esc(g.resolution)}${g.refreshHz ? ` @ ${g.refreshHz} Hz` : ""}` : ""}</div>`).join("")}
       ${spark(hist("gpu"), { max: 100, color: "var(--green)" })}
       ${engines.map(([k, v]) => `<div class="row" style="font-size:12px;gap:6px"><span style="width:110px">${esc(k)}</span><div class="meter" style="flex:1;margin:0"><span style="width:${v}%;background:var(--green)"></span></div><span style="width:40px;text-align:right">${pct(v)}</span></div>`).join("")}
-      <dl class="facts" style="margin-top:8px"><dt>Dedicated</dt><dd>${bytes(s.gpu?.dedicated)}</dd><dt>Shared</dt><dd>${bytes(s.gpu?.shared)}</dd></dl></div>
+      <dl class="facts" style="margin-top:8px">${s.gpu?.dedicated != null ? `<dt>Dedicated</dt><dd>${bytes(s.gpu.dedicated)}</dd>` : ""}${s.gpu?.shared != null ? `<dt>Shared</dt><dd>${bytes(s.gpu.shared)}</dd>` : ""}</dl></div>
     <div class="dev-card"><h3>Storage <span>${pct(s.disk?.active)} active</span></h3>
       ${(s.volumes || []).map((v) => `<div class="row" style="justify-content:space-between"><span><b>${esc(v.drive)}</b> ${esc(v.label || "")} <span class="muted">${esc(v.fs)}</span></span><span>${bytes(v.free)} free of ${bytes(v.size)}</span></div>
         <div class="meter"><span style="width:${100 * (1 - v.free / v.size)}%;background:${v.free / v.size < .1 ? "var(--red)" : "var(--blue)"}"></span></div>`).join("")}
-      <div class="muted" style="font-size:12px">read ${rate(s.disk?.read)} · write ${rate(s.disk?.write)}</div>
+      <div class="muted" style="font-size:12px">${diskIO(s.disk)}</div>
       ${spark(hist("diskActive"), { max: 100, color: "var(--red)" })}
       <dl class="facts">${(st.disks || []).map((d) => `<dt>${esc(d.media)} · ${esc(d.bus)}</dt><dd>${esc(d.name)} · ${bytes(d.size)} · ${esc(d.health)}</dd>`).join("")}</dl></div>
     <div class="dev-card"><h3>Network <span>↓ ${rate(net.rx)} · ↑ ${rate(net.tx)}</span></h3>
@@ -636,7 +637,7 @@ function renderDevice() {
     <tbody>${procs.map((p) => {
       const run = p.run != null ? runsByPid.get(String(p.run)) : null;
       return `<tr><td class="mono">${esc(p.name)}</td><td class="num">${p.pid}</td><td class="num">${p.cpu.toFixed(1)}%</td><td class="num">${bytes(p.mem)}</td>
-        <td class="num hide-sm">${p.threads}</td><td class="num hide-sm">${p.handles}</td><td class="num hide-sm">${p.parent}</td>
+        <td class="num hide-sm">${p.threads ?? "–"}</td><td class="num hide-sm">${p.handles ?? "–"}</td><td class="num hide-sm">${p.parent}</td>
         <td>${run ? `<a href="#/run/${encodeURIComponent(run.id)}">${esc(run.project)} · ${esc(run.kind)}</a>` : p.run != null ? `<span class="tag">run ${p.run}</span>` : ""}</td></tr>`; }).join("")}</tbody></table>`
     : `<div class="empty">Process details are sampled while the dashboard is open; the first sample is on its way.</div>`}</div>`, () => {
     app.querySelectorAll("[data-sort]").forEach((th) => th.addEventListener("click", () => { procSort.key = th.dataset.sort; schedule(); }));

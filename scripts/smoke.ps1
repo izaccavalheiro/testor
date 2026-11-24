@@ -1,8 +1,8 @@
-# End-to-end check of a built release on Windows: starts it with a temporary home on a spare
+# End-to-end check of a built release on Windows, Linux or macOS (PowerShell 7): starts it with a temporary home on a spare
 # port, records a passing and a failing run through run.ps1, and checks what the API and the
 # SSE stream report. CI runs it after `mix release`; on a runner:
 #
-#   pwsh scripts/smoke.ps1 -Release orchestrator\_build\prod\rel\testor
+#   pwsh scripts/smoke.ps1 -Release orchestrator/_build/prod/rel/testor
 param(
   [Parameter(Mandatory)][string]$Release,
   [int]$Port = 6799
@@ -15,7 +15,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ("testor-smoke-" + [guid]::NewGuid(
 $testorHome = Join-Path $work ".testor"
 $project = Join-Path $work "demo"
 $null = New-Item -ItemType Directory -Force -Path $testorHome, $project
-Copy-Item (Join-Path $repo "runner\run.ps1") $testorHome
+Copy-Item (Join-Path (Join-Path $repo "runner") "run.ps1") $testorHome
 $base = "http://127.0.0.1:$Port"
 $failures = @()
 function Check([string]$what, [bool]$ok, $detail = "") {
@@ -25,8 +25,14 @@ function Check([string]$what, [bool]$ok, $detail = "") {
 $env:TESTOR_HOME = $testorHome
 $env:TESTOR_WORKSPACES = $work
 $env:TESTOR_PORT = "$Port"
-$bat = Join-Path (Resolve-Path $Release) "bin\testor.bat"
-$server = Start-Process cmd.exe -ArgumentList "/c `"`"$bat`" start`"" -PassThru -WindowStyle Hidden
+$releasePath = (Resolve-Path $Release).Path
+if ($IsWindows) {
+  $bat = Join-Path $releasePath "bin\testor.bat"
+  $server = Start-Process cmd.exe -ArgumentList "/c `"`"$bat`" start`"" -PassThru -WindowStyle Hidden
+} else {
+  $server = Start-Process (Join-Path $releasePath "bin/testor") -ArgumentList "start" -PassThru `
+    -RedirectStandardOutput (Join-Path $work "stdout.log") -RedirectStandardError (Join-Path $work "stderr.log")
+}
 try {
   $deadline = (Get-Date).AddSeconds(60)
   do {
@@ -37,14 +43,16 @@ try {
   if (-not $health) { throw "testor did not start; see $testorHome\testor.log" }
 
   Set-Location $project
-  & "$testorHome\run.ps1" -Project demo -Kind test -Body {
+  & "$testorHome/run.ps1" -Project demo -Kind test -Body {
     # Vitest's marks, built here: this file stays ASCII for Windows PowerShell's parser.
     " $([char]0x2713) tests/a.test.ts (2 tests) 3ms"
     " $([char]0x276F) tests/b.test.ts (1 test | 1 failed) 2ms"
     [IO.File]::WriteAllBytes((Join-Path $env:SCREENSHOT_DIR "b-shot.png"), [Convert]::FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))
   } | Out-Null
   $failed = $false
-  try { & "$testorHome\run.ps1" -Project demo -Kind lint -Body { cmd /c "exit 3" } | Out-Null } catch { $failed = $true }
+  try {
+    & "$testorHome/run.ps1" -Project demo -Kind lint -Body { if ($IsWindows) { cmd /c "exit 3" } else { sh -c "exit 3" } } | Out-Null
+  } catch { $failed = $true }
   Check "run.ps1 rethrows the command's failure" $failed
 
   $deadline = (Get-Date).AddSeconds(20)
@@ -67,7 +75,8 @@ try {
 
   # curl exits 28 when --max-time ends the stream, which is the point here.
   $PSNativeCommandUseErrorActionPreference = $false
-  $sse = & curl.exe -sN --max-time 3 "$base/events" 2>$null
+  $curl = if ($IsWindows) { "curl.exe" } else { "curl" }
+  $sse = & $curl -sN --max-time 3 "$base/events" 2>$null
   $PSNativeCommandUseErrorActionPreference = $true
   Check "SSE stream starts with a snapshot" (($sse -join "`n") -match "event: snapshot")
 
@@ -81,12 +90,23 @@ try {
   Check "device static facts" ($device.static.os.name -and $device.static.cpu.threads -gt 0) "($($device.static.os.name))"
 } finally {
   Set-Location $repo
-  Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*$((Resolve-Path $Release).Path)*" } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  $PSNativeCommandUseErrorActionPreference = $false
+  if ($IsWindows) {
+    Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*$releasePath*" } |
+      ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  } else {
+    pkill -f "$releasePath/" 2>$null
+  }
   Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
-  if ($failures.Count -and (Test-Path "$testorHome\testor.log")) { Get-Content -Tail 40 "$testorHome\testor.log" }
+  if ($failures.Count) {
+    foreach ($log in (Join-Path $testorHome "testor.log"), (Join-Path $work "stderr.log"), (Join-Path $work "stdout.log")) {
+      if (Test-Path $log) { "--- $log"; Get-Content -Tail 40 $log }
+    }
+  }
   Start-Sleep -Milliseconds 500
   Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }
 if ($failures.Count) { throw "$($failures.Count) smoke check(s) failed: $($failures -join ', ')" }
 "all smoke checks passed"
+# curl's deliberate timeout (28) and the failing run's exit code (3) are not this script's.
+$global:LASTEXITCODE = 0

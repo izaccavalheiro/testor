@@ -15,16 +15,16 @@ concurrency:
 
 jobs:
   orchestrator:
-    name: Orchestrator (Windows, OTP ${{ matrix.otp }}, Elixir ${{ matrix.elixir }})
-    runs-on: windows-2025
+    name: Orchestrator (${{ matrix.os }}, OTP ${{ matrix.otp }}, Elixir ${{ matrix.elixir }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - otp: "29"
-            elixir: "1.20"
-          - otp: "27"
-            elixir: "1.18"
+          - { os: windows-2025, otp: "29", elixir: "1.20" }
+          - { os: windows-2025, otp: "27", elixir: "1.18" }
+          - { os: ubuntu-24.04, otp: "29", elixir: "1.20" }
+          - { os: macos-15, otp: "29", elixir: "1.20" }
     defaults:
       run:
         shell: pwsh
@@ -58,10 +58,27 @@ jobs:
       - name: Smoke test of the release
         working-directory: .
         run: ./scripts/smoke.ps1 -Release orchestrator/_build/prod/rel/testor
+      - name: Install as a service and uninstall (Linux, macOS)
+        if: runner.os != 'Windows'
+        working-directory: .
+        run: |
+          # A user service manager needs lingering (or a login session) on Linux.
+          if ($IsLinux) { sudo loginctl enable-linger $env:USER; Start-Sleep -Seconds 2 }
+          # install.ps1 expects <home>/src/{orchestrator,runner}; give it that layout.
+          $testorHome = Join-Path $HOME "test-run/.testor"
+          $src = Join-Path $testorHome "src"
+          $null = New-Item -ItemType Directory -Force $src
+          Copy-Item -Recurse orchestrator, runner $src
+          & (Join-Path $src "runner/install.ps1") -Port 6798
+          & (Join-Path $src "runner/install.ps1") -Uninstall -Port 6798
 
   powershell:
-    name: PowerShell scripts (Windows PowerShell 5.1 and 7)
-    runs-on: windows-2025
+    name: PowerShell scripts (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Parse every script with both PowerShells
@@ -76,6 +93,8 @@ jobs:
           }
           $bad = foreach ($s in $scripts) {
             & $check $s.FullName
+            # setup.ps1 and sysinfo.ps1 run in Windows PowerShell 5.1 too.
+            if (-not $IsWindows -or $s.Name -notin "setup.ps1", "sysinfo.ps1") { continue }
             powershell.exe -NoProfile -Command "`$e = `$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$($s.FullName)', [ref]`$null, [ref]`$e); `$e | ForEach-Object { '$($s.Name) (5.1): ' + `$_.Message }"
           }
           if ($bad) { $bad; throw "parse errors" }
@@ -86,10 +105,15 @@ jobs:
           # Windows PowerShell reads a file without a BOM in the ANSI code page.
           $bad = Get-ChildItem runner, orchestrator/priv -Filter *.ps1 | Where-Object { [IO.File]::ReadAllBytes($_.FullName) | Where-Object { $_ -gt 127 } | Select-Object -First 1 }
           if ($bad) { $bad.FullName; throw "non-ASCII characters" }
-      - name: setup.ps1 -Check
+      - name: setup.ps1 -Check (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
         shell: powershell
         run: ./runner/setup.ps1 -Check
+      - name: setup.ps1 -Check (PowerShell 7)
+        shell: pwsh
+        run: ./runner/setup.ps1 -Check
       - name: Device sampler answers static and two samples
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $out = "static", "sample full", "sample light" | powershell.exe -NoProfile -ExecutionPolicy Bypass -File orchestrator/priv/sysinfo.ps1
@@ -115,6 +139,7 @@ jobs:
               vars: { RUNNER: ci-runner }
           EOF
           task --list
-          task --dry testor:deploy | tee /dev/stderr | grep -q 'install.ps1" -Port 6767 -AllowFrom "100.64.0.0/10","LocalSubnet"'
+          # Every task's templates render (the remote commands are silent, so nothing is printed).
+          for t in check test deploy status logs uninstall; do task --dry testor:$t; done
           cd examples/node-project
-          TESTOR_RUNNER=ci-runner task --dry test | tee /dev/stderr | grep -q 'test-run\\testor-example'
+          TESTOR_RUNNER=ci-runner task --dry test
