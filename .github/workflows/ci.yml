@@ -63,6 +63,7 @@ jobs:
       - name: Install as a service and uninstall (Linux, macOS)
         if: runner.os != 'Windows'
         working-directory: .
+        timeout-minutes: 10
         run: |
           # A user service manager needs lingering (or a login session) on Linux.
           if ($IsLinux) { sudo loginctl enable-linger $env:USER; Start-Sleep -Seconds 2 }
@@ -70,7 +71,12 @@ jobs:
           $testorHome = Join-Path $HOME "test-run/.testor"
           $src = Join-Path $testorHome "src"
           $null = New-Item -ItemType Directory -Force $src
-          Copy-Item -Recurse orchestrator, runner $src
+          # The tracked files only, as `task testor:deploy` uploads them: a recursive copy of the
+          # working tree also walks what the tests leave in orchestrator/ (tmp/, _build/), and
+          # hung there.
+          $archive = Join-Path $env:RUNNER_TEMP "src.tar"
+          git archive --format=tar -o $archive HEAD orchestrator runner
+          tar -xf $archive -C $src
           & (Join-Path $src "runner/install.ps1") -Port 6798
           & (Join-Path $src "runner/install.ps1") -Uninstall -Port 6798
 

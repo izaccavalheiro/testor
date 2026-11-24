@@ -241,7 +241,22 @@ defmodule Testor.Integration.HousekeepingTest do
 
       Events.subscribe("global")
       assert %{status: 202} = http(:post, "/api/maintenance/scan", headers: @x, body: "")
-      assert %{"scanning" => true} = Maintenance.scan()
+
+      # A scan asked for while one runs changes nothing. Scanning this sandbox takes
+      # milliseconds, so two calls are queued while the server is suspended: one of them finds
+      # a scan running, however fast this machine is.
+      pid = Process.whereis(Maintenance)
+      :sys.suspend(pid)
+
+      calls =
+        for _ <- 1..2 do
+          call = Task.async(&Maintenance.scan/0)
+          wait_until(fn -> Process.info(call.pid, :status) == {:status, :waiting} end)
+          call
+        end
+
+      :sys.resume(pid)
+      assert [%{"scanning" => true}, %{"scanning" => true}] = Task.await_many(calls)
 
       scan =
         wait_until(
