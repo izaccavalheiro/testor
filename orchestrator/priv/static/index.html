@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>testor</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #fff; --text: #1b1f24; --muted: #646d78; --line: #e3e6ea; --hover: #f0f2f5;
+  --blue: #2563eb; --green: #15803d; --red: #c42b1c; --amber: #b45309; --gray: #6b7280;
+  --blue-bg: #e8effd; --green-bg: #e7f5ec; --red-bg: #fdecea; --amber-bg: #fdf3e2; --gray-bg: #eef0f2;
+  --mono: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --panel: #191d23; --text: #e6e9ed; --muted: #949ca7; --line: #2a3038; --hover: #20252c;
+    --blue: #7aa2ff; --green: #4ade80; --red: #ff7b6e; --amber: #fbbf24; --gray: #9ca3af;
+    --blue-bg: #1c2a4a; --green-bg: #15301f; --red-bg: #3a1a17; --amber-bg: #33270f; --gray-bg: #252a31;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; }
+header nav { display: flex; gap: 4px; }
+header nav a { padding: 5px 10px; border-radius: 6px; color: var(--muted); }
+header nav a.active { background: var(--hover); color: var(--text); font-weight: 600; text-decoration: none; }
+header .right { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; gap: 12px; align-items: center; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); display: inline-block; vertical-align: 0; }
+.dot.live { background: var(--green); box-shadow: 0 0 0 3px var(--green-bg); }
+.dot.down { background: var(--red); }
+main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 24px 0 10px; }
+h2 .plain { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.tile .label { color: var(--muted); font-size: 12px; }
+.tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+.tile .sub { color: var(--muted); font-size: 12px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
+.card:hover { background: var(--hover); }
+.card .top { display: flex; gap: 8px; align-items: center; }
+.card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.card pre { margin: 8px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; max-height: 112px; overflow: hidden; white-space: pre-wrap; word-break: break-all; color: var(--muted); }
+pre, code, .mono { font-family: var(--mono); font-size: 12px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--panel); }
+tbody tr:last-child td { border-bottom: 0; }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--hover); }
+tr.flash td { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: var(--blue-bg); } }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cmd { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.b-running { color: var(--blue); background: var(--blue-bg); }
+.b-passed { color: var(--green); background: var(--green-bg); }
+.b-failed { color: var(--red); background: var(--red-bg); }
+.b-aborted, .b-cancelled, .b-skipped { color: var(--amber); background: var(--amber-bg); }
+.b-none { color: var(--gray); background: var(--gray-bg); }
+.b-running::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: .2; } }
+.tag { display: inline-block; padding: 1px 7px; border-radius: 5px; background: var(--gray-bg); font-size: 12px; }
+.warn { color: var(--amber); font-size: 12px; margin-top: 4px; }
+.filters { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }
+select, input, button { font: inherit; font-size: 13px; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; }
+button { cursor: pointer; }
+button:hover { background: var(--hover); }
+button.danger { color: var(--red); }
+button.small { padding: 2px 8px; font-size: 12px; }
+.muted { color: var(--muted); }
+.empty { padding: 18px; color: var(--muted); text-align: center; }
+.board { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; padding: 12px 14px; align-items: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; gap: 6px; align-items: center; padding: 3px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--text); }
+.chip:hover { text-decoration: none; background: var(--hover); }
+.chip i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.chip small { color: var(--muted); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.shot { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.shot img { width: 100%; height: 150px; object-fit: cover; object-position: top; display: block; background: var(--bg); cursor: zoom-in; }
+.shot .cap { padding: 8px 10px; font-size: 12px; }
+.shot .cap div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thumb { width: 54px; height: 34px; object-fit: cover; object-position: top; border-radius: 4px; border: 1px solid var(--line); vertical-align: middle; cursor: zoom-in; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; padding: 14px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; word-break: break-all; }
+.log { margin: 0; padding: 12px; height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-all; background: var(--panel); }
+.log div { min-height: 1.45em; }
+.log .fail { color: var(--red); }
+.log .ok { color: var(--green); }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.bar { height: 6px; border-radius: 3px; background: var(--gray-bg); overflow: hidden; display: flex; margin-top: 8px; }
+.bar span { display: block; height: 100%; transition: width .4s; }
+.lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); display: none; align-items: center; justify-content: center; z-index: 20; flex-direction: column; gap: 10px; padding: 20px; }
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 96vw; max-height: 86vh; object-fit: contain; background: #fff; }
+.lightbox .cap { color: #ddd; font-size: 13px; text-align: center; }
+.toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; max-width: calc(100vw - 32px); }
+.toast { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 13px; cursor: pointer; animation: slide .2s ease-out; }
+.toast.passed { border-left-color: var(--green); } .toast.failed { border-left-color: var(--red); } .toast.aborted, .toast.cancelled { border-left-color: var(--amber); }
+@keyframes slide { from { transform: translateY(10px); opacity: 0; } }
+.dev-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
+.dev-strip .tile { cursor: pointer; }
+.dev-strip .tile:hover { background: var(--hover); }
+.spark { display: block; width: 100%; height: 34px; margin-top: 6px; }
+.dev-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 12px; }
+.dev-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.dev-card h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; display: flex; justify-content: space-between; }
+.dev-card .big { font-size: 26px; font-weight: 600; }
+.dev-card .spark { height: 54px; }
+.cores { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px; margin-top: 10px; }
+.core { height: 46px; background: var(--gray-bg); border-radius: 4px; position: relative; overflow: hidden; }
+.core span { position: absolute; left: 0; right: 0; bottom: 0; background: var(--blue); opacity: .75; transition: height .4s; }
+.core b { position: absolute; inset: auto 0 2px; text-align: center; font-size: 10px; font-weight: 600; }
+.meter { height: 8px; border-radius: 4px; background: var(--gray-bg); overflow: hidden; margin: 4px 0 8px; }
+.meter span { display: block; height: 100%; background: var(--blue); transition: width .4s; }
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; font-size: 13px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; word-break: break-word; }
+.res { color: var(--muted); font-size: 12px; margin-top: 4px; }
+.res b { color: var(--text); font-weight: 600; }
+.th-sort { cursor: pointer; user-select: none; }
+.th-sort.on { color: var(--text); }
+@media (max-width: 700px) { main { padding: 12px; } .cards { grid-template-columns: 1fr; } .cmd { max-width: 160px; } .hide-sm { display: none; } .board { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">testor</h1>
+  <nav>
+    <a href="#/" data-nav="runs">Runs</a>
+    <a href="#/shots" data-nav="shots">Screenshots</a>
+    <a href="#/device" data-nav="device">Device</a>
+  </nav>
+  <div class="right"><span id="usage"></span><span id="disk"></span><span><span class="dot" id="conn"></span> <span id="conn-text">connecting…</span></span></div>
+</header>
+<main id="app"></main>
+<div class="lightbox" id="lightbox"><img alt=""><div class="cap"></div></div>
+<div class="toasts" id="toasts"></div>
+<script>
+"use strict";
+// State arrives over server-sent events: /events holds the run list, sessions and stats;
+// /events/runs/<id> holds one run's log, specs and screenshots. Each starts with a snapshot.
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const app = $("#app");
+const S = { runs: new Map(), sessions: [], stats: null, config: null, host: "", ready: false, device: { static: null, sample: null, history: [] } };
+const procSort = { key: "cpu" };
+const filters = { project: "", kind: "", status: "", q: "" };
+const shotFilters = { project: "" };
+let route = parseRoute(), detail = null, runES = null, shots = null, shotsDirty = true, flashIds = new Set();
+
+// --- formatting ---------------------------------------------------------------------------------
+function bytes(n) {
+  if (n == null) return "–";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${u[i]}`;
+}
+function dur(ms) {
+  if (ms == null) return "–";
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+}
+function when(iso) {
+  if (!iso) return "–";
+  const d = new Date(iso), now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toDateString() === now.toDateString() ? time : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} ${time}`;
+}
+function ago(iso) {
+  const s = (Date.now() - Date.parse(iso)) / 1000;
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} d ago`;
+}
+const elapsed = (r) => r.status === "running" ? Date.now() - Date.parse(r.startedAt) : r.durationMs;
+const badge = (status) => `<span class="badge b-${esc(status ?? "none")}">${esc(status ?? "–")}</span>`;
+const color = (status) => ({ passed: "var(--green)", failed: "var(--red)", running: "var(--blue)" })[status] || "var(--amber)";
+function specCell(sum) {
+  if (!sum || !sum.specs) return `<span class="muted">–</span>`;
+  const parts = [`${sum.passed} passed`];
+  if (sum.failed) parts.push(`<b style="color:var(--red)">${sum.failed} failed</b>`);
+  if (sum.skipped) parts.push(`${sum.skipped} skipped`);
+  return `${parts.join(" · ")} <span class="muted">/ ${sum.specs}</span>`;
+}
+const shotCell = (n) => n ? `<span class="tag">📷 ${n}</span>` : `<span class="muted">–</span>`;
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "X-Testor": "1", ...(opts.headers || {}) } });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  return res;
+}
+
+// --- rendering plumbing -------------------------------------------------------------------------
+const painted = new WeakMap();
+function paint(el, html, bind) {
+  if (!el || painted.get(el) === html) return;
+  painted.set(el, html);
+  const y = window.scrollY;
+  el.innerHTML = html;
+  if (bind) bind();
+  window.scrollTo(0, y);
+}
+let frame = 0;
+function schedule() { if (!frame) frame = requestAnimationFrame(() => { frame = 0; render(); }); }
+setInterval(() => { if (S.sessions.length || [...S.runs.values()].some((r) => r.status === "running")) schedule(); }, 1000);
+
+function setConn(state) {
+  $("#conn").className = `dot ${state === "live" ? "live" : state === "down" ? "down" : ""}`;
+  $("#conn-text").textContent = state === "live" ? `live · ${S.host}` : state === "down" ? "disconnected" : "reconnecting…";
+}
+
+function toast(run, text) {
+  const el = document.createElement("div");
+  el.className = `toast ${run.status}`;
+  el.innerHTML = text;
+  el.onclick = () => { location.hash = `#/run/${encodeURIComponent(run.id)}`; el.remove(); };
+  $("#toasts").append(el);
+  setTimeout(() => el.remove(), 7000);
+}
+
+// --- global stream ------------------------------------------------------------------------------
+function connect() {
+  const es = new EventSource("/events");
+  const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
+  on("snapshot", (d) => {
+    S.runs = new Map([...d.running, ...d.history].map((r) => [r.id, r]));
+    Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, paths: d.paths, ready: true });
+    if (d.device) S.device = { static: d.device.static, sample: d.device.sample, history: d.device.history || [] };
+    shotsDirty = true;
+    setConn("live");
+  });
+  on("run", (r) => {
+    const prev = S.runs.get(r.id);
+    S.runs.set(r.id, prev && r.status === "running" ? { ...prev, ...r } : r);
+    if (!prev && r.status === "running") toast(r, `<b>${esc(r.project)}</b> · ${esc(r.kind)} started`);
+    if (prev?.status === "running" && r.status !== "running") {
+      toast(r, `<b>${esc(r.project)}</b> · ${esc(r.kind)} ${badge(r.status)} in ${dur(r.durationMs)}`);
+      flashIds.add(r.id); setTimeout(() => flashIds.delete(r.id), 2000);
+      shotsDirty = true;
+    }
+    if (detail && detail.run.id === r.id) detail.run = { ...detail.run, ...r };
+  });
+  on("live", (d) => {
+    const r = S.runs.get(d.id);
+    if (r && r.status === "running") Object.assign(r, d);
+    if (detail && detail.run.id === d.id && detail.run.status === "running") Object.assign(detail.run, d);
+  });
+  on("run_removed", (d) => { S.runs.delete(d.id); shotsDirty = true; });
+  on("sessions", (list) => { S.sessions = list; });
+  on("stats", (stats) => { S.stats = stats; shotsDirty = true; });
+  on("device", (d) => { S.device.sample = d.sample; S.device.history = [...S.device.history, d.point].slice(-360); });
+  on("device_static", (st) => { S.device.static = st; });
+  es.onopen = () => setConn("live");
+  es.onerror = () => setConn(es.readyState === EventSource.CLOSED ? "down" : "reconnecting");
+}
+
+// --- routing ------------------------------------------------------------------------------------
+function parseRoute() {
+  const h = location.hash.replace(/^#\/?/, "");
+  if (h.startsWith("run/")) return { name: "run", id: decodeURIComponent(h.slice(4)) };
+  if (h.startsWith("shots")) return { name: "shots" };
+  if (h.startsWith("device")) return { name: "device" };
+  return { name: "runs" };
+}
+function enter() {
+  if (runES) { runES.close(); runES = null; }
+  detail = null;
+  app.innerHTML = "";
+  window.scrollTo(0, 0);
+  document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === (route.name === "run" ? "runs" : route.name)));
+  if (route.name === "run") openRun(route.id);
+  if (route.name === "device") app.innerHTML = `<div id="device-view"></div>`;
+  if (route.name === "shots") { app.innerHTML = `<div id="shots-view"></div>`; shotsDirty = true; }
+  if (route.name === "runs") app.innerHTML = `<div id="runs-view"></div>`;
+  schedule();
+}
+window.addEventListener("hashchange", () => { route = parseRoute(); enter(); });
+
+function render() {
+  if (S.stats?.disk) $("#disk").textContent = `disk ${bytes(S.stats.disk.free)} free`;
+  const running = [...S.runs.values()].filter((r) => r.status === "running").length;
+  document.title = running ? `(${running}) testor` : "testor";
+  if (S.host) $("#title").textContent = `testor · ${S.host}`;
+  if (!S.ready) return;
+  const smp = S.device.sample, memPct = S.device.history.at(-1)?.mem;
+  $("#usage").textContent = smp ? `CPU ${Math.round(smp.cpu ?? 0)}% · RAM ${memPct != null ? Math.round(memPct) : "–"}%` : "";
+  if (route.name === "run") renderRun();
+  else if (route.name === "shots") renderShots();
+  else if (route.name === "device") renderDevice();
+  else renderRuns();
+}
+
+// --- runs view ----------------------------------------------------------------------------------
+function renderRuns() {
+  const all = [...S.runs.values()].sort((a, b) => (a.id < b.id ? 1 : -1));
+  const running = all.filter((r) => r.status === "running");
+  const history = all.filter((r) => r.status !== "running");
+  const day = history.filter((r) => Date.now() - Date.parse(r.startedAt) < 86400000);
+  const passed = day.filter((r) => r.status === "passed").length, failed = day.filter((r) => r.status === "failed").length;
+  const projects = [...new Set(all.map((r) => r.project))].sort();
+  const kinds = [...new Set(all.map((r) => r.kind))].sort();
+  const rows = history.filter((r) =>
+    (!filters.project || r.project === filters.project) && (!filters.kind || r.kind === filters.kind) &&
+    (!filters.status || r.status === filters.status) &&
+    (!filters.q || `${r.command} ${r.error ?? ""} ${r.id}`.toLowerCase().includes(filters.q.toLowerCase())));
+  const latest = new Map();
+  for (const r of all) { const k = `${r.project}\u0000${r.kind}`; if (!latest.has(k)) latest.set(k, r); }
+  const byProject = new Map();
+  for (const r of latest.values()) byProject.set(r.project, [...(byProject.get(r.project) || []), r]);
+  const st = S.stats, cfg = S.config;
+  const focus = document.activeElement?.id;
+
+  paint($("#runs-view"), `
+  <div class="tiles">
+    <div class="tile"><div class="label">Running now</div><div class="value">${running.length + S.sessions.length}</div>
+      <div class="sub">${S.sessions.length ? `${S.sessions.length} unrecorded session${S.sessions.length > 1 ? "s" : ""}` : "recorded runs"}</div></div>
+    <div class="tile"><div class="label">Last 24 h</div><div class="value">${day.length} runs</div>
+      <div class="sub"><span style="color:var(--green)">${passed} passed</span> · <span style="color:var(--red)">${failed} failed</span></div>
+      <div class="bar">${day.length ? `<span style="width:${100 * passed / day.length}%;background:var(--green)"></span><span style="width:${100 * failed / day.length}%;background:var(--red)"></span>` : ""}</div></div>
+    <div class="tile"><div class="label">Last run</div><div class="value" style="font-size:16px">${history[0] ? `${badge(history[0].status)} ${esc(history[0].project)}` : "–"}</div>
+      <div class="sub">${history[0] ? `${esc(history[0].kind)} · ${ago(history[0].endedAt ?? history[0].startedAt)}` : ""}</div></div>
+    <div class="tile"><div class="label">Screenshots</div><div class="value">${st?.screenshots?.count ?? "–"}</div>
+      <div class="sub">${bytes(st?.screenshots?.bytes)} of ${cfg.screenshots.maxTotalMB} MB · kept ${cfg.screenshots.maxAgeDays} d</div></div>
+    <div class="tile"><div class="label">Disk free</div><div class="value">${st?.disk ? bytes(st.disk.free) : "–"}</div>
+      <div class="sub">${st?.disk ? `of ${bytes(st.disk.total)}` : ""}</div></div>
+  </div>
+  ${deviceStrip()}
+
+  <h2>Running now</h2>
+  ${running.length || S.sessions.length ? `<div class="cards">
+    ${running.map((r) => `
+      <div class="card" data-run="${esc(r.id)}">
+        <div class="top">${badge("running")} <b>${esc(r.project)}</b> <span class="tag">${esc(r.kind)}</span>
+          <span class="muted" style="margin-left:auto">${dur(elapsed(r))}</span>
+          <button class="small danger" data-cancel="${esc(r.id)}" title="Kill this run's process tree">Cancel</button></div>
+        <div class="meta mono cmd" style="max-width:none" title="${esc(r.command)}">${esc(r.command)}</div>
+        <div class="meta">${r.summary?.specs ? `${specCell(r.summary)}${r.currentSpec ? ` · last: <span class="mono">${esc(r.currentSpec)}</span>` : ""}` : "no spec results yet"}</div>
+        ${runUsage(r)}
+        ${r.warning ? `<div class="warn">⚠ ${esc(r.warning)}</div>` : ""}
+        ${r.logTail?.length ? `<pre>${esc(r.logTail.join("\n"))}</pre>` : ""}
+      </div>`).join("")}
+    ${S.sessions.map((p) => `
+      <div class="card" style="border-left-color:var(--gray);cursor:default">
+        <div class="top">${badge("running")} <b>${esc(p.project)}</b> <span class="tag">unrecorded</span>
+          <span class="muted" style="margin-left:auto">${dur(Date.now() - Date.parse(p.startedAt))}</span></div>
+        <div class="meta mono" style="word-break:break-all">${esc(p.command.slice(0, 400))}</div>
+        <div class="meta">pid ${p.pid} · not started through run.ps1, so no log or screenshots</div>
+      </div>`).join("")}
+  </div>` : `<div class="panel empty">Nothing is running.</div>`}
+
+  <h2>Latest by task</h2>
+  <div class="panel">${byProject.size ? `<div class="board">${[...byProject.entries()].sort().map(([project, list]) => `
+    <b>${esc(project)}</b><div class="chips">${list.sort((a, b) => a.kind.localeCompare(b.kind)).map((r) =>
+      `<a class="chip" href="#/run/${encodeURIComponent(r.id)}" title="${esc(r.status)} · ${esc(when(r.startedAt))}"><i style="background:${color(r.status)}"></i>${esc(r.kind)} <small>${r.status === "running" ? dur(elapsed(r)) : ago(r.endedAt ?? r.startedAt)}</small></a>`).join("")}</div>`).join("")}</div>`
+    : `<div class="empty">No runs yet.</div>`}</div>
+
+  <h2>History</h2>
+  <div class="filters">
+    <select id="f-project"><option value="">All projects</option>${projects.map((p) => `<option ${p === filters.project ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
+    <select id="f-kind"><option value="">All types</option>${kinds.map((k) => `<option ${k === filters.kind ? "selected" : ""}>${esc(k)}</option>`).join("")}</select>
+    <select id="f-status"><option value="">Any status</option>${["passed", "failed", "aborted", "cancelled"].map((k) => `<option ${k === filters.status ? "selected" : ""}>${k}</option>`).join("")}</select>
+    <input id="f-q" placeholder="Search command, error or id" value="${esc(filters.q)}">
+    <span class="muted">${rows.length} of ${history.length} · keeps ${cfg.runs.maxRuns} runs, ${cfg.runs.maxAgeDays} d</span>
+  </div>
+  <div class="panel">${rows.length ? `<table>
+    <thead><tr><th>Started</th><th>Project</th><th>Type</th><th class="hide-sm">Command</th><th>Status</th><th class="num">Duration</th><th>Specs</th><th>Shots</th></tr></thead>
+    <tbody>${rows.slice(0, 300).map((r) => `
+      <tr class="click${flashIds.has(r.id) ? " flash" : ""}" data-run="${esc(r.id)}">
+        <td title="${esc(r.startedAt)}">${when(r.startedAt)}</td>
+        <td><b>${esc(r.project)}</b></td>
+        <td><span class="tag">${esc(r.kind)}</span></td>
+        <td class="hide-sm"><div class="cmd mono" title="${esc(r.command)}">${esc(r.command)}</div></td>
+        <td title="${esc(r.error ?? r.warning ?? "")}">${badge(r.status)}${r.exitCode ? ` <span class="muted">exit ${esc(r.exitCode)}</span>` : ""}${r.warning ? " ⚠" : ""}</td>
+        <td class="num">${dur(r.durationMs)}</td>
+        <td>${specCell(r.summary)}</td>
+        <td>${shotCell(r.screenshots)}</td>
+      </tr>`).join("")}</tbody></table>` : `<div class="empty">No finished runs${filters.project || filters.kind || filters.status || filters.q ? " match the filters" : " yet"}.</div>`}</div>`, () => {
+    app.querySelectorAll("[data-run]").forEach((el) => el.addEventListener("click", () => { location.hash = `#/run/${encodeURIComponent(el.dataset.run)}`; }));
+    app.querySelectorAll("[data-device]").forEach((el) => el.addEventListener("click", () => { location.hash = "#/device"; }));
+    app.querySelectorAll("[data-cancel]").forEach((el) => el.addEventListener("click", (e) => { e.stopPropagation(); cancelRun(el.dataset.cancel); }));
+    for (const key of ["project", "kind", "status"]) $(`#f-${key}`).addEventListener("change", (e) => { filters[key] = e.target.value; schedule(); });
+    $("#f-q").addEventListener("input", (e) => { filters.q = e.target.value; schedule(); });
+    if (focus === "f-q") { const f = $("#f-q"); f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
+  });
+}
+
+async function cancelRun(id) {
+  const r = S.runs.get(id) || detail?.run;
+  if (!confirm(`Cancel ${r ? `${r.project} · ${r.kind}` : id}? Its PowerShell and every process it started are killed.`)) return;
+  try { await api(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }); } catch (e) { alert(e.message); }
+}
+
+// --- run view -----------------------------------------------------------------------------------
+const MAX_LOG_LINES = 5000;
+function openRun(id) {
+  app.innerHTML = `<div id="run-top"><div class="panel empty">Loading…</div></div>
+    <h2 id="log-head">Output</h2><div class="panel"><pre class="log mono" id="log"></pre></div>`;
+  const es = runES = new EventSource(`/events/runs/${encodeURIComponent(id)}`);
+  const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
+  on("snapshot", (d) => {
+    detail = d;
+    const log = $("#log"); log.innerHTML = ""; detail.trimmed = false;
+    appendLog(d.log, true);
+  });
+  on("log", (d) => { if (!detail) return; appendLog(d.text, false); detail.logBytes = d.to; });
+  on("specs", (specs) => { if (detail) detail.specs = specs; });
+  on("run", (r) => { if (detail) detail.run = r; });
+  on("screenshots", (list) => { if (detail) detail.screenshots = list; });
+  on("removed", () => { location.hash = "#/"; });
+  es.onerror = () => {
+    if (es.readyState === EventSource.CLOSED && !detail) paint($("#run-top"), `<div class="panel empty">No such run. <a href="#/">All runs</a></div>`);
+  };
+}
+function colorLine(line) {
+  const cls = /(\bFAIL\b|✘|×|\berror\b|Error:|\bfailed\b)/i.test(line) && !/\b0 failed\b/.test(line) ? "fail"
+    : /^\s*(✓|√|ok\s)/.test(line) ? "ok" : "";
+  return `<div${cls ? ` class="${cls}"` : ""}>${esc(line)}</div>`;
+}
+function appendLog(text, toEnd) {
+  const log = $("#log");
+  if (!log || !text) return;
+  const stick = toEnd || log.scrollTop + log.clientHeight >= log.scrollHeight - 40;
+  const lines = text.replace(/\n$/, "").split("\n");
+  log.insertAdjacentHTML("beforeend", lines.map(colorLine).join(""));
+  while (log.childElementCount > MAX_LOG_LINES) { log.firstElementChild.remove(); detail.trimmed = true; }
+  if (stick) log.scrollTop = log.scrollHeight;
+}
+function renderRun() {
+  if (!detail) return;
+  const { run, specs = [], screenshots = [] } = detail;
+  const live = run.status === "running";
+  const counts = (file) => screenshots.filter((s) => s.spec === file);
+  const sum = { specs: specs.length, passed: specs.filter((s) => s.status === "passed").length, failed: specs.filter((s) => s.status === "failed").length, skipped: specs.filter((s) => s.status === "skipped").length };
+  const unmatched = screenshots.filter((s) => !s.spec).length;
+
+  paint($("#run-top"), `
+  <div class="row" style="margin-bottom:12px"><a href="#/">← All runs</a></div>
+  <div class="row" style="margin-bottom:12px">
+    <span style="font-size:20px;font-weight:600">${esc(run.project)}</span> <span class="tag">${esc(run.kind)}</span> ${badge(run.status)}
+    <span class="muted">${dur(elapsed(run))}</span>
+    ${live ? runUsage(run) : ""}
+    <span style="margin-left:auto"></span>
+    ${live ? `<button class="danger" id="cancel">Cancel run</button>` : `<button class="danger" id="delete">Delete run</button>`}
+  </div>
+  ${run.warning ? `<div class="panel warn" style="padding:10px 14px;margin-bottom:12px">⚠ ${esc(run.warning)}</div>` : ""}
+  <div class="panel"><dl class="kv">
+    <dt>Command</dt><dd class="mono">${esc(run.command)}</dd>
+    <dt>Started</dt><dd>${new Date(run.startedAt).toLocaleString()}</dd>
+    <dt>Ended</dt><dd>${run.endedAt ? new Date(run.endedAt).toLocaleString() : "–"}</dd>
+    ${run.exitCode != null ? `<dt>Exit code</dt><dd>${esc(run.exitCode)}</dd>` : ""}
+    ${run.error ? `<dt>Error</dt><dd style="color:var(--red)">${esc(run.error)}</dd>` : ""}
+    <dt>Folder</dt><dd class="mono">${esc(run.workdir)}</dd>
+    <dt>Run id</dt><dd class="mono">${esc(run.id)} · pid ${esc(run.pid)}</dd>
+  </dl></div>
+
+  <h2>Spec files ${specs.length ? `<span class="plain">· ${specCell(sum)}</span>` : ""}</h2>
+  <div class="panel">${specs.length ? `<table>
+    <thead><tr><th>Spec file</th><th>Runner</th><th>Status</th><th class="num">Tests</th><th class="num">Failed</th><th class="num">Duration</th><th>Screenshot</th></tr></thead>
+    <tbody>${[...specs].sort((a, b) => (b.status === "failed") - (a.status === "failed") || a.file.localeCompare(b.file)).map((s) => {
+      const mine = counts(s.file);
+      return `<tr>
+        <td class="mono">${esc(s.file)}</td><td><span class="tag">${esc(s.runner)}</span></td><td>${badge(s.status)}</td>
+        <td class="num">${s.tests}</td><td class="num">${s.failed || ""}</td><td class="num">${s.durationMs ? (s.durationMs < 1000 ? `${s.durationMs}ms` : dur(s.durationMs)) : "–"}</td>
+        <td>${mine.length ? `<img class="thumb" src="${esc(mine[0].url)}" data-full="${esc(mine[0].url)}" data-cap="${esc(mine[0].path)}" alt="">${mine.length > 1 ? ` <span class="muted">+${mine.length - 1}</span>` : ""}` : `<span class="muted">none</span>`}</td>
+      </tr>`; }).join("")}</tbody></table>`
+    : `<div class="empty">${live ? "No spec results yet; they appear as the runner prints them." : "This run printed no spec results (Vitest, Playwright, pytest, go test or cargo test)."}</div>`}</div>
+
+  <h2>Screenshots (${screenshots.length})</h2>
+  ${screenshots.length ? `<div class="grid">${screenshots.map((x) => shotCard(x, x.spec ? `<span class="mono">${esc(x.spec)}</span>` : "")).join("")}</div>`
+    : `<div class="panel empty">${live ? "Screenshots are collected when the run ends (or saved live to $env:SCREENSHOT_DIR)." : "No screenshots. Images under test-results, __screenshots__ or screenshots, or saved to $env:SCREENSHOT_DIR, are kept here."}</div>`}
+  ${unmatched && specs.length ? `<p class="muted">${unmatched} screenshot(s) did not match a spec file.</p>` : ""}`, () => {
+    $("#cancel")?.addEventListener("click", () => cancelRun(run.id));
+    $("#delete")?.addEventListener("click", async () => {
+      if (!confirm("Delete this run, its log and its screenshots?")) return;
+      try { await api(`/api/runs/${encodeURIComponent(run.id)}`, { method: "DELETE" }); location.hash = "#/"; } catch (e) { alert(e.message); }
+    });
+    bindLightbox();
+  });
+  paint($("#log-head"), `Output <span class="plain muted">· ${bytes(detail.logBytes)}${live ? ` · <span style="color:var(--blue)">streaming</span>` : ""}${detail.truncated || detail.trimmed ? " · showing the end" : ""} · <a href="/api/runs/${encodeURIComponent(run.id)}/log?tail=67108864" target="_blank">full log</a></span>`);
+}
+
+// --- screenshots view ---------------------------------------------------------------------------
+function shotCard(x, extra) {
+  return `<div class="shot"><img loading="lazy" src="${esc(x.url)}" data-full="${esc(x.url)}" data-cap="${esc(x.path)}" alt="">
+    <div class="cap"><div class="mono" title="${esc(x.path)}">${esc(x.path)}</div>
+    <div class="muted">${extra ? `${extra} · ` : ""}${bytes(x.bytes)} · ${when(x.takenAt)}</div></div></div>`;
+}
+let shotsLoading = false;
+async function loadShots() {
+  if (shotsLoading) return;
+  shotsLoading = true; shotsDirty = false;
+  try { shots = await (await api("/api/screenshots")).json(); } catch { shotsDirty = true; }
+  shotsLoading = false;
+  schedule();
+}
+function renderShots() {
+  if (shotsDirty) loadShots();
+  if (!shots) return;
+  const list = shots.filter((x) => !shotFilters.project || x.project === shotFilters.project);
+  const projects = [...new Set(shots.map((x) => x.project).filter(Boolean))].sort();
+  const c = S.config.screenshots, used = S.stats?.screenshots?.bytes ?? 0, cap = c.maxTotalMB * 1048576, last = S.stats?.lastCleanup;
+  paint($("#shots-view"), `
+  <div class="panel" style="padding:14px">
+    <div class="row"><b>Screenshots folder</b> <span class="mono muted">${esc(S.paths?.home ?? "")}\\screenshots</span>
+      <button id="cleanup" style="margin-left:auto">Clean up now</button></div>
+    <div class="muted" style="margin-top:6px">${S.stats?.screenshots?.count ?? 0} images · ${bytes(used)} of ${c.maxTotalMB} MB ·
+      images older than ${c.maxAgeDays} days are deleted, then the oldest runs' images until the folder fits; history keeps ${S.config.runs.maxRuns} runs for ${S.config.runs.maxAgeDays} days ·
+      cleanup every ${S.config.cleanupIntervalMinutes} min${last?.removed ? `, last ${ago(last.at)} (${esc(last.reason)}: removed ${last.removed.runs} runs, ${last.removed.screenshotFolders + last.removed.looseFiles} screenshot sets, ${bytes(last.removed.bytes)})` : ""}</div>
+    <div class="bar"><span style="width:${Math.min(100, 100 * used / cap)}%;background:${used > cap * .9 ? "var(--red)" : "var(--blue)"}"></span></div>
+  </div>
+  <h2>All screenshots</h2>
+  <div class="filters"><select id="s-project"><option value="">All projects</option>${projects.map((p) => `<option ${p === shotFilters.project ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
+    <span class="muted">${list.length} images</span></div>
+  ${list.length ? `<div class="grid">${list.slice(0, 400).map((x) => shotCard(x,
+      x.runId ? `<a href="#/run/${encodeURIComponent(x.runId)}">${esc(x.project ?? x.runId)}${x.kind ? ` · ${esc(x.kind)}` : ""}</a> ${x.status ? badge(x.status) : ""}${x.spec ? ` · <span class="mono">${esc(x.spec)}</span>` : ""}` : "dropped in the folder")).join("")}</div>`
+    : `<div class="panel empty">No screenshots yet.</div>`}`, () => {
+    $("#s-project").addEventListener("change", (e) => { shotFilters.project = e.target.value; schedule(); });
+    $("#cleanup").addEventListener("click", async (e) => {
+      e.target.disabled = true; e.target.textContent = "Cleaning…";
+      try { await api("/api/cleanup", { method: "POST" }); shotsDirty = true; schedule(); } catch (err) { alert(err.message); }
+      e.target.disabled = false; e.target.textContent = "Clean up now";
+    });
+    bindLightbox();
+  });
+}
+
+
+// --- device -------------------------------------------------------------------------------------
+const pct = (v) => v == null ? "–" : `${Math.round(v)}%`;
+const rate = (v) => v == null ? "–" : `${bytes(v)}/s`;
+function spark(values, { max = null, color = "var(--blue)" } = {}) {
+  const v = values.map((x) => (x == null ? null : Number(x)));
+  const nums = v.filter((x) => x != null);
+  if (nums.length < 2) return `<svg class="spark"></svg>`;
+  const top = max ?? Math.max(...nums, 1);
+  const n = v.length, step = 100 / Math.max(n - 1, 1);
+  const pts = v.map((x, i) => x == null ? null : `${(i * step).toFixed(2)},${(30 - (Math.min(x, top) / top) * 28).toFixed(2)}`).filter(Boolean);
+  return `<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polygon points="0,30 ${pts.join(" ")} 100,30" fill="${color}" opacity=".12"/><polyline points="${pts.join(" ")}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
+}
+const hist = (key) => S.device.history.map((p) => p[key]);
+function memInfo() {
+  const total = S.device.static?.memory?.total, avail = S.device.sample?.memory?.available;
+  return total && avail != null ? { total, used: total - avail, pct: 100 * (1 - avail / total) } : null;
+}
+function netTotals() {
+  const nics = S.device.sample?.network || [];
+  return { rx: nics.reduce((n, x) => n + (x.rx || 0), 0), tx: nics.reduce((n, x) => n + (x.tx || 0), 0) };
+}
+function deviceStrip() {
+  const s = S.device.sample;
+  if (!s) return "";
+  const m = memInfo(), net = netTotals();
+  return `<div class="dev-strip">
+    <div class="tile" data-device><div class="label">CPU</div><div class="value">${pct(s.cpu)}</div><div class="sub">${s.processes ?? "–"} processes · ${s.threads ?? "–"} threads</div>${spark(hist("cpu"), { max: 100 })}</div>
+    <div class="tile" data-device><div class="label">Memory</div><div class="value">${m ? pct(m.pct) : "–"}</div><div class="sub">${m ? `${bytes(m.used)} of ${bytes(m.total)}` : ""}</div>${spark(hist("mem"), { max: 100, color: "var(--amber)" })}</div>
+    <div class="tile" data-device><div class="label">GPU</div><div class="value">${pct(s.gpu?.util)}</div><div class="sub">${esc(S.device.static?.gpus?.[0]?.name ?? "")}</div>${spark(hist("gpu"), { max: 100, color: "var(--green)" })}</div>
+    <div class="tile" data-device><div class="label">Disk</div><div class="value">${pct(s.disk?.active)}</div><div class="sub">R ${rate(s.disk?.read)} · W ${rate(s.disk?.write)}</div>${spark(hist("diskActive"), { max: 100, color: "var(--red)" })}</div>
+    <div class="tile" data-device><div class="label">Network</div><div class="value" style="font-size:18px">↓ ${rate(net.rx)}</div><div class="sub">↑ ${rate(net.tx)}</div>${spark(S.device.history.map((p) => (p.netRx || 0) + (p.netTx || 0)))}</div>
+  </div>`;
+}
+function runUsage(run) {
+  const u = S.device.sample?.runs?.[String(run.pid)];
+  if (!u) return "";
+  return `<div class="res">CPU <b>${u.cpu}%</b> · memory <b>${bytes(u.mem)}</b> · <b>${u.processes}</b> processes${u.top?.length ? ` · ${esc(u.top.slice(0, 3).join(", "))}` : ""}</div>`;
+}
+const BATTERY = { 1: "discharging", 2: "on AC power", 3: "fully charged", 4: "low", 5: "critical", 6: "charging", 7: "charging (high)", 8: "charging (low)", 9: "charging (critical)", 11: "partially charged" };
+function uptime(iso) { return iso ? dur(Date.now() - Date.parse(iso)) : "–"; }
+function renderDevice() {
+  const st = S.device.static, s = S.device.sample;
+  if (!st || !s) { paint($("#device-view"), `<div class="panel empty">Waiting for the first device sample…</div>`); return; }
+  const m = memInfo(), net = netTotals();
+  const runsByPid = new Map([...S.runs.values()].filter((r) => r.status === "running").map((r) => [String(r.pid), r]));
+  const procs = [...(s.top || [])].sort((a, b) => (b[procSort.key] ?? 0) - (a[procSort.key] ?? 0));
+  const engines = Object.entries(s.gpu?.engines || {}).filter(([, v]) => v != null).sort((a, b) => b[1] - a[1]);
+  const stale = !s.full && s.fullAt ? ` <span class="plain muted">(processes, GPU and volumes from ${ago(s.fullAt)})</span>` : "";
+  paint($("#device-view"), `
+  <div class="dev-grid">
+    <div class="dev-card"><h3>System <span>${esc(st.host)}</span></h3>
+      <dl class="facts">
+        <dt>OS</dt><dd>${esc(st.os.name)} <span class="muted">${esc(st.os.architecture)}</span></dd>
+        <dt>Version</dt><dd>${esc(st.os.version)} (build ${esc(st.os.build)})</dd>
+        <dt>Machine</dt><dd>${esc(st.machine.manufacturer)} ${esc(st.machine.model)} <span class="muted">BIOS ${esc(st.machine.bios)}</span></dd>
+        <dt>Uptime</dt><dd>${uptime(st.os.bootedAt)} <span class="muted">since ${esc(when(st.os.bootedAt))}</span></dd>
+        <dt>Installed</dt><dd>${st.os.installedAt ? new Date(st.os.installedAt).toLocaleDateString() : "–"}</dd>
+        <dt>Locale</dt><dd>${esc(st.os.locale)} · ${esc(st.os.timezone)}</dd>
+        <dt>PowerShell</dt><dd>${esc(st.os.powershell)} (sampler)</dd>
+        ${s.battery ? `<dt>Battery</dt><dd>${s.battery.charge}% · ${esc(BATTERY[s.battery.status] ?? `status ${s.battery.status}`)}${s.battery.minutes ? ` · ${dur(s.battery.minutes * 60000)} left` : ""}</dd>` : ""}
+      </dl></div>
+    <div class="dev-card"><h3>CPU <span>${pct(s.cpu)}</span></h3>
+      <div>${esc(st.cpu.name)}</div>
+      <div class="muted" style="font-size:12px">${st.cpu.cores} cores · ${st.cpu.threads} threads · ${st.cpu.maxMHz} MHz · L2 ${bytes(st.cpu.l2KB * 1024)} · L3 ${bytes(st.cpu.l3KB * 1024)} · queue ${s.queue ?? "–"}</div>
+      ${spark(hist("cpu"), { max: 100 })}
+      <div class="cores">${(s.cores || []).map((c, i) => `<div class="core" title="core ${i}: ${pct(c)}"><span style="height:${c ?? 0}%"></span><b>${c == null ? "–" : Math.round(c)}</b></div>`).join("")}</div></div>
+    <div class="dev-card"><h3>Memory <span>${m ? pct(m.pct) : "–"}</span></h3>
+      <div class="big">${m ? bytes(m.used) : "–"} <span class="muted" style="font-size:14px;font-weight:400">of ${bytes(st.memory.total)}</span></div>
+      ${spark(hist("mem"), { max: 100, color: "var(--amber)" })}
+      <dl class="facts">
+        <dt>Available</dt><dd>${bytes(s.memory.available)}</dd>
+        <dt>Committed</dt><dd>${bytes(s.memory.committed)} of ${bytes(s.memory.commitLimit)}</dd>
+        <dt>Cached</dt><dd>${bytes(s.memory.cache)}</dd>
+        <dt>Paging</dt><dd>${s.memory.pagesPerSec ?? "–"} pages/s</dd>
+        <dt>Modules</dt><dd>${(st.memory.modules || []).map((x) => `${bytes(x.capacity)} ${x.speedMHz ? `${x.speedMHz} MHz` : ""} <span class="muted">${esc(x.slot ?? "")} ${esc(x.manufacturer ?? "")}</span>`).join("<br>") || "–"}</dd>
+      </dl></div>
+    <div class="dev-card"><h3>GPU <span>${pct(s.gpu?.util)}</span></h3>
+      ${(st.gpus || []).map((g) => `<div>${esc(g.name)}</div><div class="muted" style="font-size:12px">driver ${esc(g.driver)}${g.resolution ? ` · ${esc(g.resolution)}${g.refreshHz ? ` @ ${g.refreshHz} Hz` : ""}` : ""}</div>`).join("")}
+      ${spark(hist("gpu"), { max: 100, color: "var(--green)" })}
+      ${engines.map(([k, v]) => `<div class="row" style="font-size:12px;gap:6px"><span style="width:110px">${esc(k)}</span><div class="meter" style="flex:1;margin:0"><span style="width:${v}%;background:var(--green)"></span></div><span style="width:40px;text-align:right">${pct(v)}</span></div>`).join("")}
+      <dl class="facts" style="margin-top:8px"><dt>Dedicated</dt><dd>${bytes(s.gpu?.dedicated)}</dd><dt>Shared</dt><dd>${bytes(s.gpu?.shared)}</dd></dl></div>
+    <div class="dev-card"><h3>Storage <span>${pct(s.disk?.active)} active</span></h3>
+      ${(s.volumes || []).map((v) => `<div class="row" style="justify-content:space-between"><span><b>${esc(v.drive)}</b> ${esc(v.label || "")} <span class="muted">${esc(v.fs)}</span></span><span>${bytes(v.free)} free of ${bytes(v.size)}</span></div>
+        <div class="meter"><span style="width:${100 * (1 - v.free / v.size)}%;background:${v.free / v.size < .1 ? "var(--red)" : "var(--blue)"}"></span></div>`).join("")}
+      <div class="muted" style="font-size:12px">read ${rate(s.disk?.read)} · write ${rate(s.disk?.write)}</div>
+      ${spark(hist("diskActive"), { max: 100, color: "var(--red)" })}
+      <dl class="facts">${(st.disks || []).map((d) => `<dt>${esc(d.media)} · ${esc(d.bus)}</dt><dd>${esc(d.name)} · ${bytes(d.size)} · ${esc(d.health)}</dd>`).join("")}</dl></div>
+    <div class="dev-card"><h3>Network <span>↓ ${rate(net.rx)} · ↑ ${rate(net.tx)}</span></h3>
+      ${spark(S.device.history.map((p) => (p.netRx || 0) + (p.netTx || 0)))}
+      ${(s.network || []).map((n) => `<div style="margin-top:6px"><div>${esc(n.name)}</div><div class="muted" style="font-size:12px">↓ ${rate(n.rx)} · ↑ ${rate(n.tx)}${n.bandwidth ? ` · link ${bytes(n.bandwidth / 8)}/s` : ""}</div></div>`).join("")}</div>
+  </div>
+
+  <h2>Processes <span class="plain muted">· ${s.processes ?? "–"} processes · ${s.threads ?? "–"} threads${s.handles ? ` · ${s.handles} handles` : ""} · top by CPU and memory${stale}</span></h2>
+  <div class="panel">${procs.length ? `<table>
+    <thead><tr><th>Process</th><th class="num">PID</th><th class="num th-sort ${procSort.key === "cpu" ? "on" : ""}" data-sort="cpu">CPU ${procSort.key === "cpu" ? "▾" : ""}</th>
+      <th class="num th-sort ${procSort.key === "mem" ? "on" : ""}" data-sort="mem">Memory ${procSort.key === "mem" ? "▾" : ""}</th>
+      <th class="num hide-sm">Threads</th><th class="num hide-sm">Handles</th><th class="num hide-sm">Parent</th><th>Test run</th></tr></thead>
+    <tbody>${procs.map((p) => {
+      const run = p.run != null ? runsByPid.get(String(p.run)) : null;
+      return `<tr><td class="mono">${esc(p.name)}</td><td class="num">${p.pid}</td><td class="num">${p.cpu.toFixed(1)}%</td><td class="num">${bytes(p.mem)}</td>
+        <td class="num hide-sm">${p.threads}</td><td class="num hide-sm">${p.handles}</td><td class="num hide-sm">${p.parent}</td>
+        <td>${run ? `<a href="#/run/${encodeURIComponent(run.id)}">${esc(run.project)} · ${esc(run.kind)}</a>` : p.run != null ? `<span class="tag">run ${p.run}</span>` : ""}</td></tr>`; }).join("")}</tbody></table>`
+    : `<div class="empty">Process details are sampled while the dashboard is open; the first sample is on its way.</div>`}</div>`, () => {
+    app.querySelectorAll("[data-sort]").forEach((th) => th.addEventListener("click", () => { procSort.key = th.dataset.sort; schedule(); }));
+  });
+}
+
+// --- lightbox -----------------------------------------------------------------------------------
+const lb = $("#lightbox");
+function bindLightbox() {
+  app.querySelectorAll("img[data-full]").forEach((img) => img.addEventListener("click", (e) => {
+    e.stopPropagation();
+    $("img", lb).src = img.dataset.full;
+    $(".cap", lb).innerHTML = `${esc(img.dataset.cap)} · <a href="${esc(img.dataset.full)}" target="_blank" style="color:#9cf">open</a>`;
+    lb.classList.add("open");
+  }));
+}
+lb.addEventListener("click", (e) => { if (e.target.tagName !== "A") lb.classList.remove("open"); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") lb.classList.remove("open"); });
+
+connect();
+enter();
+</script>
+</body>
+</html>

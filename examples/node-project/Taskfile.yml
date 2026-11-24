@@ -1,0 +1,21 @@
+# Runs this example's tests on a testor runner: TESTOR_RUNNER=<ssh host> task test
+version: "3"
+
+includes:
+  runner:
+    taskfile: ../../taskfiles/remote.yml
+    internal: true
+    vars:
+      RUNNER: "{{.TESTOR_RUNNER}}"
+      # This folder (the root Taskfile's), not the testor repository it sits in.
+      ROOT: "{{.ROOT_DIR}}"
+      PROJECT: testor-example
+
+tasks:
+  test:
+    desc: Run the example's Vitest suite on the runner, recorded by testor; Vitest filters after --
+    cmds:
+      - task: runner:sync
+      - task: runner:npm-ci
+      - task: runner:exec
+        vars: { KIND: test, CMD: "npx vitest run {{.CLI_ARGS}}" }

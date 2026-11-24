@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  orchestrator:
+    name: Orchestrator (Windows, OTP ${{ matrix.otp }}, Elixir ${{ matrix.elixir }})
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - otp: "29"
+            elixir: "1.20"
+          - otp: "27"
+            elixir: "1.18"
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            orchestrator/deps
+            orchestrator/_build
+          key: mix-${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-${{ hashFiles('orchestrator/mix.lock') }}
+      - name: Dependencies
+        run: mix deps.get
+      - name: Formatting
+        run: mix format --check-formatted
+      - name: Compile (warnings are errors)
+        run: mix compile --warnings-as-errors
+      - name: Tests
+        run: mix test
+      - name: Release
+        env:
+          MIX_ENV: prod
+        run: |
+          mix deps.get --only prod
+          mix release --overwrite
+      - name: Smoke test of the release
+        working-directory: .
+        run: ./scripts/smoke.ps1 -Release orchestrator/_build/prod/rel/testor
+
+  powershell:
+    name: PowerShell scripts (Windows PowerShell 5.1 and 7)
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Parse every script with both PowerShells
+        shell: pwsh
+        run: |
+          $scripts = Get-ChildItem -Recurse -Filter *.ps1 | Where-Object FullName -notmatch "\\(_build|deps)\\"
+          $check = {
+            param($path)
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
+            $errors | ForEach-Object { "$path`: $($_.Extent.StartLineNumber): $($_.Message)" }
+          }
+          $bad = foreach ($s in $scripts) {
+            & $check $s.FullName
+            powershell.exe -NoProfile -Command "`$e = `$null; [void][System.Management.Automation.Language.Parser]::ParseFile('$($s.FullName)', [ref]`$null, [ref]`$e); `$e | ForEach-Object { '$($s.Name) (5.1): ' + `$_.Message }"
+          }
+          if ($bad) { $bad; throw "parse errors" }
+          "parsed $($scripts.Count) scripts"
+      - name: Scripts the runner's PowerShell 5.1 reads are ASCII
+        shell: pwsh
+        run: |
+          # Windows PowerShell reads a file without a BOM in the ANSI code page.
+          $bad = Get-ChildItem runner, orchestrator/priv -Filter *.ps1 | Where-Object { [IO.File]::ReadAllBytes($_.FullName) | Where-Object { $_ -gt 127 } | Select-Object -First 1 }
+          if ($bad) { $bad.FullName; throw "non-ASCII characters" }
+      - name: setup.ps1 -Check
+        shell: powershell
+        run: ./runner/setup.ps1 -Check
+      - name: Device sampler answers static and two samples
+        shell: pwsh
+        run: |
+          $out = "static", "sample full", "sample light" | powershell.exe -NoProfile -ExecutionPolicy Bypass -File orchestrator/priv/sysinfo.ps1
+          $lines = @($out | ForEach-Object { $_ | ConvertFrom-Json })
+          $lines | ForEach-Object { "$($_.type) in $($_.ms) ms" }
+          if ($lines.Count -ne 3 -or $lines[0].type -ne "static" -or $lines[1].type -ne "sample" -or $null -eq $lines[2].cpu) { $out; throw "unexpected sampler output" }
+
+  taskfiles:
+    name: Taskfiles
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Task
+        run: go install github.com/go-task/task/v3/cmd/task@v3.54.0
+      - name: The Taskfiles load and list their tasks
+        run: |
+          export PATH="$HOME/go/bin:$PATH"
+          cat > Taskfile.yml <<'EOF'
+          version: "3"
+          includes:
+            testor:
+              taskfile: ./taskfiles/testor.yml
+              vars: { RUNNER: ci-runner }
+          EOF
+          task --list
+          task --dry testor:deploy | tee /dev/stderr | grep -q 'install.ps1" -Port 6767 -AllowFrom "100.64.0.0/10","LocalSubnet"'
+          cd examples/node-project
+          TESTOR_RUNNER=ci-runner task --dry test | tee /dev/stderr | grep -q 'test-run\\testor-example'

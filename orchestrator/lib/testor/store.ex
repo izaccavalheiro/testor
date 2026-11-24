@@ -1,0 +1,337 @@
+defmodule Testor.Store do
+  @moduledoc """
+  The run index. run.ps1 writes runs\\<id>.json when a run starts and again when it ends; the
+  store sees both within #{300} ms, starts a RunTracker for each running run, stores the spec
+  summary of finished runs, settles runs that were aborted or cancelled, and publishes every
+  change on the "global" topic. Reads go straight to ETS; writes go through this process.
+  """
+  use GenServer
+  require Logger
+  alias Testor.{Config, Events, Files, OS, RunTracker, SpecParser, Stats}
+
+  @table :testor_runs
+  @live :testor_live
+  @scan_ms 300
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+
+  # --- reads (any process) -------------------------------------------------------------------
+
+  @doc "Every run, newest first."
+  def all do
+    @table |> :ets.tab2list() |> Enum.map(&elem(&1, 1)) |> Enum.sort_by(& &1["id"], :desc)
+  end
+
+  def get(id) do
+    case :ets.lookup(@table, id) do
+      [{_, run}] -> run
+      [] -> nil
+    end
+  end
+
+  @doc "A running run with its live progress (summary, current spec, last lines) merged in."
+  def with_live(%{"status" => "running", "id" => id} = run) do
+    case :ets.lookup(@live, id) do
+      [{_, live}] -> Map.merge(run, live)
+      [] -> run
+    end
+  end
+
+  def with_live(run), do: run
+
+  def put_live(id, live), do: :ets.insert(@live, {id, live})
+  def drop_live(id), do: :ets.delete(@live, id)
+
+  # --- writes --------------------------------------------------------------------------------
+
+  @doc "Re-reads a run's record from disk now."
+  def refresh(id), do: GenServer.call(__MODULE__, {:refresh, id})
+
+  @doc "Ends a run that run.ps1 could not end itself (aborted, cancelled)."
+  def settle(id, status), do: GenServer.call(__MODULE__, {:settle, id, status})
+
+  @doc "Kills a running run's PowerShell and everything it started."
+  def cancel(id), do: GenServer.call(__MODULE__, {:cancel, id}, 30_000)
+
+  @doc "Deletes a finished run: its record, log and screenshots."
+  def delete(id), do: GenServer.call(__MODULE__, {:delete, id}, 30_000)
+
+  # --- server --------------------------------------------------------------------------------
+
+  @impl true
+  def init(nil) do
+    :ets.new(@table, [:named_table, :public, read_concurrency: true])
+    :ets.new(@live, [:named_table, :public, read_concurrency: true])
+    Enum.each([Config.runs_dir(), Config.logs_dir(), Config.shots_dir()], &File.mkdir_p!/1)
+    state = scan(%{sigs: %{}})
+    Logger.info("store: #{map_size(state.sigs)} runs in #{Config.runs_dir()}")
+    Process.send_after(self(), :scan, @scan_ms)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_info(:scan, state) do
+    state =
+      try do
+        scan(state)
+      rescue
+        error ->
+          Logger.error("store: scan failed: #{Exception.format(:error, error, __STACKTRACE__)}")
+          state
+      end
+
+    Process.send_after(self(), :scan, @scan_ms)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:refresh, id}, _from, state) do
+    state = load(state, id, signature(id))
+    {:reply, get(id), state}
+  end
+
+  def handle_call({:settle, id, status}, _from, state) do
+    {state, run} = settle_run(state, id, status)
+    {:reply, run, state}
+  end
+
+  def handle_call({:cancel, id}, _from, state) do
+    state = load(state, id, signature(id))
+
+    case get(id) do
+      %{"status" => "running", "pid" => pid} ->
+        result = OS.kill_tree(pid)
+        Logger.info("store: cancelled #{id} (pid #{pid}): #{inspect(result)}")
+        {state, run} = settle_run(state, id, "cancelled")
+        {:reply, {:ok, run}, state}
+
+      nil ->
+        {:reply, {:error, :not_found}, state}
+
+      _ ->
+        {:reply, {:error, :not_running}, state}
+    end
+  end
+
+  def handle_call({:delete, id}, _from, state) do
+    case get(id) do
+      %{"status" => "running"} ->
+        {:reply, {:error, :running}, state}
+
+      _ ->
+        File.rm(Config.run_file(id))
+        File.rm(Config.log_file(id))
+        File.rm_rf(Path.join(Config.shots_dir(), id))
+        {:reply, :ok, forget(state, id)}
+    end
+  end
+
+  # --- scanning ------------------------------------------------------------------------------
+
+  defp scan(state) do
+    ids =
+      case File.ls(Config.runs_dir()) do
+        {:ok, names} -> for name <- names, String.ends_with?(name, ".json"), do: Path.rootname(name)
+        _ -> []
+      end
+
+    on_disk = MapSet.new(ids)
+
+    state =
+      state.sigs
+      |> Map.keys()
+      |> Enum.reject(&MapSet.member?(on_disk, &1))
+      |> Enum.reduce(state, &forget(&2, &1))
+
+    # Finished runs never change on disk again (only this process writes them), so only new
+    # and running records are looked at.
+    Enum.reduce(ids, state, fn id, state ->
+      if Map.has_key?(state.sigs, id) and get(id)["status"] != "running" do
+        state
+      else
+        sig = signature(id)
+        if sig && state.sigs[id] != sig, do: load(state, id, sig), else: state
+      end
+    end)
+  end
+
+  # mtime has a resolution of one second, so the size is part of the signature: a run that
+  # starts and ends within the same second still changes its record's size.
+  defp signature(id) do
+    case File.stat(Config.run_file(id), time: :posix) do
+      {:ok, %{mtime: mtime, size: size}} -> {mtime, size}
+      _ -> nil
+    end
+  end
+
+  defp load(state, _id, nil), do: state
+
+  defp load(state, id, sig) do
+    case Files.read_json(Config.run_file(id)) do
+      {:ok, run} -> apply_run(state, id, sig, Map.put(run, "id", id))
+      # Half written: the next scan reads it.
+      :error -> state
+    end
+  end
+
+  defp apply_run(state, id, sig, run) do
+    prev = get(id)
+    run = keep_annotations(run, prev)
+    state = %{state | sigs: Map.put(state.sigs, id, sig)}
+
+    {state, run} =
+      if run["status"] != "running" and not Map.has_key?(run, "summary") do
+        finalize(state, run)
+      else
+        {state, run}
+      end
+
+    :ets.insert(@table, {id, run})
+
+    cond do
+      prev == nil and run["status"] == "running" ->
+        on_start(run)
+
+      prev != nil and prev["status"] == "running" and run["status"] != "running" ->
+        on_finish(run)
+
+      prev != run ->
+        Events.broadcast("global", "run", with_live(run))
+
+      true ->
+        :ok
+    end
+
+    state
+  end
+
+  defp keep_annotations(run, nil), do: run
+
+  defp keep_annotations(run, prev) do
+    case prev do
+      %{"warning" => warning} -> Map.put_new(run, "warning", warning)
+      _ -> run
+    end
+  end
+
+  defp on_start(run) do
+    id = run["id"]
+
+    # Runs of one project share <workspaces>\<project>: a second upload rewrites the first run's files.
+    others =
+      for other <- all(),
+          other["id"] != id,
+          other["status"] == "running",
+          other["project"] == run["project"],
+          do: other["id"]
+
+    run =
+      if others == [] do
+        run
+      else
+        warning =
+          "started while #{Enum.join(others, ", ")} was running: both use #{Config.workspaces_name()}\\#{run["project"]}"
+
+        Logger.warning("store: #{id} #{warning}")
+        run = Map.put(run, "warning", warning)
+        :ets.insert(@table, {id, run})
+        run
+      end
+
+    case RunTracker.start(id) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+      error -> Logger.error("store: no tracker for #{id}: #{inspect(error)}")
+    end
+
+    Logger.info("store: #{id} started (#{run["project"]} #{run["kind"]})")
+    Events.broadcast("global", "run", run)
+  end
+
+  defp on_finish(run) do
+    id = run["id"]
+    specs = Files.log_specs(id)
+    shots = Files.screenshots(id, specs)
+    Logger.info("store: #{id} #{run["status"]} in #{run["durationMs"]} ms")
+    Events.broadcast("global", "run", run)
+    Events.broadcast({"run", id}, "run", run)
+    Events.broadcast({"run", id}, "specs", with_shot_counts(specs, shots))
+    Events.broadcast({"run", id}, "screenshots", shots)
+    if shots != [], do: Stats.refresh_screenshots()
+  end
+
+  @doc false
+  def with_shot_counts(specs, shots) do
+    Enum.map(specs, fn spec ->
+      Map.put(spec, "screenshots", Enum.count(shots, &(&1["spec"] == spec["file"])))
+    end)
+  end
+
+  # Adds the spec summary (and the screenshot count, for records without one) and saves it.
+  defp finalize(state, run) do
+    id = run["id"]
+    run = Map.put(run, "summary", id |> Files.log_specs() |> SpecParser.summary())
+
+    run =
+      Map.put_new_lazy(run, "screenshots", fn ->
+        id |> Files.screenshots() |> length()
+      end)
+
+    Files.write_json(Config.run_file(id), run)
+    {%{state | sigs: Map.put(state.sigs, id, signature(id))}, run}
+  end
+
+  defp settle_run(state, id, status) do
+    case get(id) do
+      %{"status" => "running"} = run ->
+        ended =
+          case Files.mtime(Config.log_file(id)) do
+            mtime when is_integer(mtime) and status == "aborted" -> DateTime.from_unix!(mtime)
+            _ -> DateTime.utc_now()
+          end
+
+        run =
+          Map.merge(run, %{
+            "status" => status,
+            "endedAt" => DateTime.to_iso8601(ended),
+            "durationMs" => duration(run["startedAt"], ended)
+          })
+
+        {state, run} = finalize(state, run)
+        :ets.insert(@table, {id, run})
+        on_finish(run)
+        {state, run}
+
+      run ->
+        {state, run}
+    end
+  end
+
+  defp forget(state, id) do
+    :ets.delete(@table, id)
+    drop_live(id)
+    Events.broadcast("global", "run_removed", %{"id" => id})
+    Events.broadcast({"run", id}, "removed", %{"id" => id})
+    %{state | sigs: Map.delete(state.sigs, id)}
+  end
+
+  @doc false
+  def duration(started, %DateTime{} = ended) do
+    case parse_time(started) do
+      {:ok, started} -> DateTime.diff(ended, started, :millisecond)
+      _ -> nil
+    end
+  end
+
+  @doc "Parses PowerShell's round-trip time format, which has 7 fractional digits."
+  def parse_time(text) when is_binary(text) do
+    text = Regex.replace(~r/(\.\d{6})\d+/, text, "\\1")
+
+    case DateTime.from_iso8601(text) do
+      {:ok, time, _} -> {:ok, time}
+      error -> error
+    end
+  end
+
+  def parse_time(_), do: :error
+end

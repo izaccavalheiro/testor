@@ -1,0 +1,83 @@
+# Runs a project's checks on a Windows runner over SSH. Include it from the project's
+# Taskfile (internal: its tasks are building blocks, not commands of their own):
+#
+#   includes:
+#     runner:
+#       taskfile: ~/git/testor/taskfiles/remote.yml
+#       internal: true
+#       vars: { RUNNER: my-runner }
+#
+#   tasks:
+#     test:
+#       cmds:
+#         - task: runner:sync            # upload the working tree (once per `task` call)
+#         - task: runner:npm-ci          # optional: npm ci when package-lock.json changed
+#         - task: runner:exec
+#           vars: { KIND: test, CMD: "npm test -- {{.CLI_ARGS}}" }
+#
+# sync uploads the working tree as git sees it (tracked and untracked files, uncommitted
+# changes included, minus what .gitignore excludes) to $HOME\<WORKSPACES>\<PROJECT> on the
+# runner, deleting the previous snapshot's files except KEEP (dependencies and build caches).
+# exec runs CMD there in PowerShell 7, stopping at the first failing command. With KIND, the
+# command runs through testor's run.ps1, so the run shows on the dashboard: output, stderr
+# and exit code are passed through unchanged. Without testor installed, it just runs.
+#
+# Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
+# ROOT (default: the git root of the directory `task` was called from), WORKSPACES
+# (test-run), HOME_DIR (<WORKSPACES>\.testor), KEEP (node_modules .lockhash target .venv).
+version: "3"
+
+# go-task gives an included Taskfile's own vars precedence over the ones passed to it, so the
+# values computed here have names of their own (_ROOT, ...) and read the caller's with defaults.
+vars:
+  _ROOT:
+    sh: '{{if .ROOT}}echo "{{.ROOT}}"{{else}}git -C "{{.USER_WORKING_DIR}}" rev-parse --show-toplevel{{end}}'
+  _PROJECT: '{{.PROJECT | default (base ._ROOT)}}'
+  _WORKSPACES: '{{.WORKSPACES | default "test-run"}}'
+  _HOME_DIR: '{{.HOME_DIR | default (printf "%s\\.testor" ._WORKSPACES)}}'
+  _KEEP:
+    sh: echo '{{.KEEP | default "node_modules .lockhash target .venv"}}' | sed 's/[^ ][^ ]*/"&"/g; s/ /, /g'
+
+tasks:
+  sync:
+    run: once
+    requires:
+      vars: [RUNNER]
+    cmds:
+      # Folders are passed explicitly: a task-level dir: in an included Taskfile does not see
+      # the vars passed to the include.
+      - >-
+        git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
+        tar -C "{{._ROOT}}" --null --ignore-failed-read -T - -czf - |
+        ssh {{.RUNNER}}
+        '$dir = "$HOME\{{._WORKSPACES}}\{{._PROJECT}}";
+        function Clear-Snapshot($p) { Get-ChildItem -LiteralPath $p -Force | Where-Object { $_.Name -notin {{._KEEP}} } | ForEach-Object { if ($_.PSIsContainer) { Clear-Snapshot $_.FullName } else { Remove-Item -LiteralPath $_.FullName -Force } } };
+        if (Test-Path $dir) { Clear-Snapshot $dir };
+        $null = New-Item -ItemType Directory -Force -Path $dir; tar -xzf - -C $dir'
+
+  npm-ci:
+    run: once
+    cmds:
+      # .lockhash is written last, so a failed install is retried on the next run.
+      - task: exec
+        vars:
+          CMD: >-
+            if (Test-Path package-lock.json) {
+            $hash = (Get-FileHash package-lock.json -Algorithm SHA256).Hash;
+            $prev = if (Test-Path .lockhash) { (Get-Content .lockhash -Raw).Trim() } else { "" };
+            if ($hash -ne $prev -or -not (Test-Path node_modules)) {
+            npm ci; Set-Content -NoNewline -Path .lockhash -Value $hash } }
+
+  exec:
+    requires:
+      vars: [RUNNER, CMD]
+    cmds:
+      # sshd hands each session the PATH it had when the service started, so programs
+      # installed since are appended from the registry.
+      - >-
+        ssh {{.RUNNER}}
+        '$ErrorActionPreference = "Stop"; $PSNativeCommandUseErrorActionPreference = $true;
+        $env:Path += ";" + [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User");
+        Set-Location "$HOME\{{._WORKSPACES}}\{{._PROJECT}}";
+        {{if .KIND}}$body = { {{.CMD}} }; $run = "$HOME\{{._HOME_DIR}}\run.ps1";
+        if (Test-Path $run) { & $run -Project "{{._PROJECT}}" -Kind "{{.KIND}}" -Body $body } else { & $body }{{else}}{{.CMD}}{{end}}'
