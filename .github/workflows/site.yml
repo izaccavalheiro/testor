@@ -1,5 +1,5 @@
 # Publishes the documentation site (website/) to GitHub Pages when main changes, or by hand.
-# The site is static and loads nothing from other origins.
+# The site is static; its only other origin is the Monoid analytics tracker.
 
 name: Site
 
