@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: mix
+    directory: /orchestrator
+    schedule: { interval: weekly }
+    commit-message: { prefix: "build(deps)" }
+  - package-ecosystem: npm
+    directory: /website
+    schedule: { interval: weekly }
+    commit-message: { prefix: "build(deps)" }
+    groups:
+      docusaurus:
+        patterns: ["@docusaurus/*", "react", "react-dom", "@mdx-js/*"]
+  - package-ecosystem: npm
+    directory: /examples/node-project
+    schedule: { interval: monthly }
+    commit-message: { prefix: "build(deps)" }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    commit-message: { prefix: "ci(deps)" }
