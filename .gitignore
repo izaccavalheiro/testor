@@ -3,3 +3,4 @@
 erl_crash.dump
 node_modules/
 .lockhash
+/orchestrator/tmp/
