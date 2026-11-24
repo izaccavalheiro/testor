@@ -84,6 +84,8 @@ if ($Uninstall) {
     if (Test-Path $plist) { Remove-Item $plist }
   }
   "Removed the testor service; $testorHome is kept."
+  # pkill or launchctl finding nothing to stop is not a failure of this script.
+  $global:LASTEXITCODE = 0
   return
 }
 
@@ -190,3 +192,4 @@ if (-not $health) { throw "testor did not answer on port $Port; see $(Join-Path 
 $hostName = [Environment]::MachineName.ToLower()
 "testor $($health.version) (Elixir $($health.elixir), OTP $($health.otp)) on http://${hostName}:$Port"
 if (-not $IsWindows) { "No firewall rule was added: allow TCP $Port from your workstation if this machine filters inbound traffic." }
+$global:LASTEXITCODE = 0
