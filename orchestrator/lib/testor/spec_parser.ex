@@ -175,11 +175,8 @@ defmodule Testor.SpecParser do
     end
   end
 
-  defp to_ms(""), do: nil
-  defp to_ms(nil), do: nil
-
   defp to_ms(text) do
-    case Float.parse(text) do
+    case text && Float.parse(text) do
       {value, "ms"} -> round(value)
       {value, "s"} -> round(value * 1000)
       _ -> nil

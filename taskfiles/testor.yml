@@ -8,8 +8,13 @@
 #       vars: { RUNNER: my-runner }
 #
 #   task testor:check     what setup.ps1 would still install on the runner
-#   task testor:test      the orchestrator's ExUnit tests, on the runner
+#   task testor:test      format, warnings as errors, ExUnit with the 100% coverage gate, on the runner
+#   task testor:smoke     a release built and checked end to end (scripts/smoke.ps1), on the runner
+#   task testor:ci        both: everything CI checks
+#   task testor:format    mix format on the runner, the formatted sources copied back
 #   task testor:deploy    build and (re)start it; the dashboard is http://<runner>:6767
+#   task testor:user      add a user (USER=ada ROLE=admin, password from TESTOR_PASSWORD): auth on
+#   task testor:token     print a Bearer token (USER=ada DAYS=30 SCOPE=read) for MCP clients, CI
 #   task testor:status / testor:logs / testor:uninstall
 #
 # Optional vars: PORT (6767), WORKSPACES (test-run, under the runner user's home), HOME_DIR
@@ -25,6 +30,12 @@ vars:
   _WORKSPACES: '{{.WORKSPACES | default "test-run"}}'
   _HOME_DIR: '{{.HOME_DIR | default (printf "%s/.testor" ._WORKSPACES)}}'
   _ALLOW_FROM: '{{range $i, $a := splitList "," (.ALLOW_FROM | default "100.64.0.0/10,LocalSubnet")}}{{if $i}}, {{end}}"{{$a}}"{{end}}'
+  # The installed release's eval, with the folders the service uses. No parentheses or double
+  # quotes in the expression: on Windows, testor.bat passes it through cmd.exe.
+  _EVAL: >-
+    $env:TESTOR_HOME = $testorHome;
+    $env:TESTOR_WORKSPACES = Join-Path $HOME "{{._WORKSPACES}}";
+    & (Join-Path $testorHome "app/bin/testor$(if ($IsWindows) { '.bat' })") eval
   _PRELUDE: |
     $ErrorActionPreference = "Stop"
     $PSNativeCommandUseErrorActionPreference = $true
@@ -42,10 +53,10 @@ tasks:
       - task: ps
         vars:
           LABEL: upload orchestrator/ and runner/
-          STDIN: tar -czf - -C "{{._ROOT}}" --exclude=_build --exclude=deps orchestrator runner
+          STDIN: tar -czf - -C "{{._ROOT}}" --exclude=_build --exclude=deps --exclude=cover orchestrator runner scripts
           SCRIPT: |
             $null = New-Item -ItemType Directory -Force -Path $src
-            foreach ($d in "runner", "orchestrator/lib", "orchestrator/priv", "orchestrator/test", "orchestrator/config", "orchestrator/rel") {
+            foreach ($d in "runner", "scripts", "orchestrator/lib", "orchestrator/priv", "orchestrator/test", "orchestrator/config", "orchestrator/rel") {
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $src $d)
             }
             tar -xzf - -C $src
@@ -64,12 +75,44 @@ tasks:
             & (Join-Path $d "setup.ps1") -Check -Workspaces (Join-Path $HOME "{{._WORKSPACES}}")
             Remove-Item -Recurse -Force $d
 
-  test:
-    desc: Run the orchestrator's ExUnit tests on the runner
+  format:
+    desc: Format the orchestrator's sources with mix format on the runner, and bring them back
     cmds:
       - task: upload
       - task: ps
-        vars: { LABEL: mix test, SCRIPT: "& $installer -Test" }
+        vars:
+          LABEL: mix format
+          # The formatted sources come back as one base64 line: a binary stream would not survive
+          # every login shell.
+          OUT: 'tee {{.TEE | default "/dev/null"}} | tail -n 1 | base64 -d | tar -xzf - -C "{{._ROOT}}/orchestrator"'
+          SCRIPT: |
+            & $installer -Format *> $null
+            Set-Location (Join-Path $src "orchestrator")
+            $tgz = Join-Path ([IO.Path]::GetTempPath()) "testor-format.tgz"
+            tar -czf $tgz config lib test mix.exs .formatter.exs
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($tgz))
+            Remove-Item $tgz
+
+  test:
+    desc: Check the orchestrator on the runner (format, warnings as errors, ExUnit with 100% coverage)
+    cmds:
+      - task: upload
+      - task: ps
+        vars: { LABEL: mix test, SCRIPT: "& $installer -Test -TestArgs @({{range $i, $a := splitArgs (.CLI_ARGS | default \"\")}}{{if $i}}, {{end}}'{{$a}}'{{end}})" }
+
+  smoke:
+    desc: Build a release on the runner and check it end to end (scripts/smoke.ps1), beside the installed one
+    cmds:
+      - task: upload
+      - task: ps
+        vars: { LABEL: smoke test, SCRIPT: "& $installer -Smoke" }
+
+  ci:
+    desc: Every check CI runs, on the runner - format, warnings, ExUnit with 100% coverage, release smoke test
+    cmds:
+      - task: test
+      - task: ps
+        vars: { LABEL: smoke test, SCRIPT: "& $installer -Smoke" }
 
   deploy:
     desc: Build testor on the runner, install it as a service (and on Windows its firewall rule), and (re)start it
@@ -92,6 +135,33 @@ tasks:
             else { launchctl print "gui/$(id -u)/dev.testor" | Select-String "state|pid" | Select-Object -First 3 }
             try { Invoke-RestMethod http://127.0.0.1:{{._PORT}}/api/health | Format-List | Out-String } catch { Write-Warning "not answering: $_" }
       - curl -fsS --max-time 5 http://{{.RUNNER}}:{{._PORT}}/api/health && echo " <- reachable from $(hostname)"
+
+  user:
+    desc: Add a user of the dashboard, API and MCP, or change one (USER=, ROLE=viewer|operator|admin, password from TESTOR_PASSWORD); turns authentication on
+    requires:
+      vars: [USER]
+    preconditions:
+      - sh: test -n "$TESTOR_PASSWORD"
+        msg: "set TESTOR_PASSWORD first (read -rs TESTOR_PASSWORD; export TESTOR_PASSWORD): it travels on the SSH session's stdin"
+    cmds:
+      - task: ps
+        vars:
+          LABEL: user {{.USER}}
+          STDIN: 'printf "%s\n" "$TESTOR_PASSWORD"'
+          SCRIPT: |
+            $env:TESTOR_PASSWORD = [Console]::In.ReadLine()
+            {{._EVAL}} "Testor.Auth.CLI.user ~s[{{.USER}}], ~s[{{.ROLE | default "viewer"}}]"
+
+  token:
+    desc: Print a Bearer token for an MCP client or a script (USER=, DAYS=30, SCOPE="read" or more, space-separated)
+    requires:
+      vars: [USER]
+    cmds:
+      - task: ps
+        vars:
+          LABEL: token for {{.USER}}
+          SCRIPT: |
+            {{._EVAL}} "Testor.Auth.CLI.token ~s[{{.USER}}], {{.DAYS | default "30"}}{{if .SCOPE}}, ~s[{{.SCOPE}}]{{end}}"
 
   logs:
     desc: Print the end of testor's log on the runner
@@ -116,5 +186,5 @@ tasks:
       # shell and PowerShell (whichever is the runner's login shell) pass on as they are.
       - cmd: >-
           {{if .STDIN}}{{.STDIN}} | {{end}}ssh {{.RUNNER}}
-          "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"{{b64enc (print ._PRELUDE .SCRIPT)}}\"))))'"
+          "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"{{b64enc (print ._PRELUDE .SCRIPT)}}\"))))'"{{if .OUT}} | {{.OUT}}{{end}}
         silent: true

@@ -1,0 +1,228 @@
+defmodule Testor.Web.Auth do
+  @moduledoc """
+  The security plugs in front of every route. `call/2` authenticates and authorizes a request
+  (`Testor.Auth` describes the scheme), assigning `:principal`; `csrf/2` guards state-changing
+  requests; `audit/2` logs them.
+
+  Public paths, answered without credentials: `GET /api/health`, `GET /api/v1/health`,
+  `GET /api/v1/openapi.json`, and the signed file links under `/s/`, which their route checks.
+
+  Scopes required:
+
+    * `maintain`: `POST /api/maintenance/clean`, `POST /api/v1/maintenance/clean`
+    * `read`: `POST /api/v1/auth/token` (which also requires Basic credentials) and `POST /mcp`
+      (each tool requires its own scope)
+    * `operate`: any other `POST`, `PUT`, `PATCH` or `DELETE`
+    * `read`: everything else
+  """
+  import Plug.Conn
+  require Logger
+  alias Testor.Auth
+  alias Testor.Web.Reply
+
+  @unsafe ["POST", "PUT", "PATCH", "DELETE"]
+
+  def init(opts), do: opts
+
+  def call(conn, _opts) do
+    settings = Auth.settings()
+
+    if settings.enabled do
+      authenticate(conn, settings)
+    else
+      assign(conn, :principal, Auth.anonymous())
+    end
+  end
+
+  defp authenticate(conn, settings) do
+    public = public?(conn)
+
+    case credentials(conn, settings) do
+      {:ok, principal} ->
+        conn = assign(conn, :principal, principal)
+        if public, do: conn, else: authorize(conn, principal)
+
+      _ when public ->
+        assign(conn, :principal, Auth.public())
+
+      :none ->
+        unauthorized(conn, nil, "authentication required: Basic credentials or a Bearer token")
+
+      {:error, {:rate_limited, seconds}} ->
+        conn
+        |> put_resp_header("retry-after", to_string(seconds))
+        |> Reply.error(429, "rate_limited", "too many failed attempts; try again in #{seconds} s")
+        |> halt()
+
+      {:error, :expired} ->
+        unauthorized(conn, "invalid_token", "the token has expired")
+
+      {:error, :revoked} ->
+        unauthorized(conn, "invalid_token", "the token has been revoked")
+
+      {:error, :invalid_token} ->
+        unauthorized(conn, "invalid_token", "the token is not valid")
+
+      {:error, _} ->
+        unauthorized(conn, nil, "invalid credentials")
+    end
+  end
+
+  defp credentials(conn, settings) do
+    address = conn.remote_ip |> :inet.ntoa() |> to_string()
+
+    case get_req_header(conn, "authorization") do
+      [value] ->
+        case String.split(value, " ", parts: 2) do
+          [scheme, rest] ->
+            case String.downcase(scheme) do
+              "basic" -> basic(settings, String.trim(rest), address)
+              "bearer" -> Auth.bearer(settings, String.trim(rest), address)
+              _ -> {:error, :scheme}
+            end
+
+          _ ->
+            {:error, :scheme}
+        end
+
+      [] ->
+        :none
+
+      _ ->
+        {:error, :scheme}
+    end
+  end
+
+  defp basic(settings, encoded, address) do
+    with {:ok, decoded} <- Base.decode64(encoded),
+         [name, password] <- :binary.split(decoded, ":") do
+      Auth.basic(settings, name, password, address)
+    else
+      _ -> {:error, :malformed}
+    end
+  end
+
+  defp authorize(conn, principal) do
+    scope = required_scope(conn)
+
+    if scope in principal.scopes do
+      conn
+    else
+      conn
+      |> Reply.error(403, "forbidden", "#{Auth.who(principal)} lacks the #{scope} scope")
+      |> halt()
+    end
+  end
+
+  @doc "The scope a request needs."
+  def required_scope(%Plug.Conn{method: method, path_info: path}) do
+    case {method, path} do
+      {"POST", ["api", "maintenance", "clean"]} -> "maintain"
+      {"POST", ["api", "v1", "maintenance", "clean"]} -> "maintain"
+      {"POST", ["api", "v1", "auth", "token"]} -> "read"
+      {"POST", ["mcp"]} -> "read"
+      {method, _} when method in @unsafe -> "operate"
+      _ -> "read"
+    end
+  end
+
+  @doc "Whether a request may go without credentials."
+  def public?(%Plug.Conn{method: method, path_info: path}) when method in ["GET", "HEAD"] do
+    case path do
+      ["api", "health"] -> true
+      ["api", "v1", "health"] -> true
+      ["api", "v1", "openapi.json"] -> true
+      ["s", _cap, area | _] when area in ["shots", "artifacts"] -> true
+      _ -> false
+    end
+  end
+
+  def public?(_conn), do: false
+
+  # Basic comes first: browsers prompt for the first scheme they support.
+  defp unauthorized(conn, error, message) do
+    bearer = if error, do: ~s(Bearer realm="testor", error="#{error}"), else: ~s(Bearer realm="testor")
+
+    conn
+    |> prepend_resp_headers([
+      {"www-authenticate", ~s(Basic realm="testor", charset="UTF-8")},
+      {"www-authenticate", bearer}
+    ])
+    |> Reply.error(401, "unauthorized", message)
+    |> halt()
+  end
+
+  @doc """
+  Refuses a state-changing request a browser could have been tricked into sending: one from
+  another origin (an `Origin` header that is not this server's, including the `null` origin of
+  a sandboxed artifact), or one with neither a Bearer token, the `X-Testor: 1` header nor a
+  JSON body, which cross-site forms cannot send without a CORS preflight this server never
+  grants. The token endpoint needs only the origin check: its answer cannot be read cross-site.
+  """
+  def csrf(%Plug.Conn{method: method} = conn, _opts) when method in @unsafe do
+    cond do
+      cross_origin?(conn) ->
+        conn |> Reply.error(403, "cross_origin", "cross-origin request refused") |> halt()
+
+      safe?(conn) ->
+        conn
+
+      true ->
+        conn |> Reply.error(403, "csrf", "missing X-Testor header") |> halt()
+    end
+  end
+
+  def csrf(conn, _opts), do: conn
+
+  defp safe?(conn) do
+    conn.path_info == ["api", "v1", "auth", "token"] or
+      match?(%{via: :bearer}, conn.assigns[:principal]) or
+      get_req_header(conn, "x-testor") == ["1"] or
+      json?(conn)
+  end
+
+  @doc "Whether the request carries an `Origin` other than this server."
+  def cross_origin?(conn) do
+    case get_req_header(conn, "origin") do
+      [] ->
+        false
+
+      [origin | _] ->
+        uri = URI.parse(origin)
+
+        host =
+          case get_req_header(conn, "host") do
+            [value | _] -> String.downcase(value)
+            [] -> if conn.port in [80, 443], do: conn.host, else: "#{conn.host}:#{conn.port}"
+          end
+
+        default = if uri.scheme == "https", do: 443, else: 80
+
+        name = if is_binary(uri.host) and String.contains?(uri.host, ":"), do: "[#{uri.host}]", else: uri.host
+        authority = if uri.port in [nil, default], do: name, else: "#{name}:#{uri.port}"
+
+        uri.host == nil or String.downcase(authority) != strip_default_port(host, default)
+    end
+  end
+
+  defp strip_default_port(host, default), do: String.replace_suffix(host, ":#{default}", "")
+
+  defp json?(conn) do
+    case get_req_header(conn, "content-type") do
+      [type | _] -> type |> String.downcase() |> String.starts_with?("application/json")
+      _ -> false
+    end
+  end
+
+  @doc "Logs who sent a state-changing request and how it ended."
+  def audit(%Plug.Conn{method: method} = conn, _opts) when method in @unsafe do
+    register_before_send(conn, fn conn ->
+      who = conn.assigns |> Map.get(:principal, %{sub: nil, via: :unknown}) |> Auth.who()
+      address = conn.remote_ip |> :inet.ntoa() |> to_string()
+      Logger.info("audit: #{who} from #{address}: #{conn.method} #{conn.request_path} -> #{conn.status}")
+      conn
+    end)
+  end
+
+  def audit(conn, _opts), do: conn
+end

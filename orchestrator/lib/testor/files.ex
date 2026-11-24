@@ -122,9 +122,20 @@ defmodule Testor.Files do
     end
   end
 
+  @doc "The names in `dir`; none when it is nil, missing or not a folder."
+  def ls(nil), do: []
+
+  def ls(dir) do
+    case File.ls(dir) do
+      {:ok, names} -> names
+      _ -> []
+    end
+  end
+
   @doc "Every file under `dir`: %{full, rel, size, mtime}."
   def walk(dir), do: walk(dir, dir)
 
+  # Anything but a regular file is walked: a folder lists its files, the rest lists nothing.
   defp walk(dir, base) do
     case File.ls(dir) do
       {:ok, names} ->
@@ -132,14 +143,11 @@ defmodule Testor.Files do
           full = Path.join(dir, name)
 
           case File.stat(full, time: :posix) do
-            {:ok, %{type: :directory}} ->
-              walk(full, base)
-
             {:ok, %{type: :regular, size: size, mtime: mtime}} ->
               [%{full: full, rel: Path.relative_to(full, base), size: size, mtime: mtime}]
 
             _ ->
-              []
+              walk(full, base)
           end
         end)
 
@@ -153,6 +161,8 @@ defmodule Testor.Files do
 
   @doc "A run's screenshots, each matched to a spec when its path names one."
   def screenshots(id, specs \\ []) do
+    prefix = Testor.Auth.file_prefix(id)
+
     Path.join(Config.shots_dir(), id)
     |> walk()
     |> Enum.filter(&image_type(&1.rel))
@@ -161,7 +171,8 @@ defmodule Testor.Files do
       %{
         "path" => file.rel,
         "url" =>
-          "/shots/" <>
+          prefix <>
+            "/shots/" <>
             Enum.map_join(
               [id | Path.split(file.rel)],
               "/",
@@ -181,7 +192,10 @@ defmodule Testor.Files do
   coverage, Playwright, Vitest) is one `report` entry that links to its index.html. At most
   #{@max_artifacts} entries, sorted by path.
   """
-  def artifacts(id), do: list_artifacts(Path.join(Config.artifacts_dir(), id), "/artifacts/" <> encode(id))
+  def artifacts(id) do
+    base_url = Testor.Auth.file_prefix(id) <> "/artifacts/" <> encode(id)
+    list_artifacts(Path.join(Config.artifacts_dir(), id), base_url)
+  end
 
   @doc false
   def list_artifacts(root, base_url) do
@@ -223,15 +237,12 @@ defmodule Testor.Files do
             full = Path.join(dir, name)
 
             case File.stat(full, time: :posix) do
-              {:ok, %{type: :directory}} ->
-                collect_artifacts(full, root)
-
               {:ok, %{type: :regular, size: size, mtime: mtime}} ->
                 rel = Path.relative_to(full, root)
                 [%{rel: rel, target: rel, kind: artifact_kind(rel), size: size, files: 1, mtime: mtime}]
 
               _ ->
-                []
+                collect_artifacts(full, root)
             end
           end)
         end

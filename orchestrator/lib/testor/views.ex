@@ -1,8 +1,30 @@
 defmodule Testor.Views do
   @moduledoc "The JSON documents the API and the SSE snapshots send."
-  alias Testor.{Config, Device, Files, RunTracker, Sessions, Stats, Store}
+  alias Testor.{Auth, Config, Device, Files, RunTracker, Sessions, Stats, Store}
 
   @log_snapshot 262_144
+
+  @doc "Liveness; versions and paths only for a caller with the read scope."
+  def health(principal) do
+    base = %{
+      "ok" => true,
+      "app" => "testor",
+      "version" => to_string(Application.spec(:testor, :vsn)),
+      "auth" => Auth.enabled?()
+    }
+
+    if principal != nil and "read" in principal.scopes do
+      Map.merge(base, %{
+        "home" => Config.data_dir(),
+        "elixir" => System.version(),
+        "otp" => System.otp_release(),
+        "uptimeMs" => :erlang.statistics(:wall_clock) |> elem(0),
+        "os_pid" => System.pid()
+      })
+    else
+      base
+    end
+  end
 
   def state do
     {running, history} = Enum.split_with(Store.all(), &(&1["status"] == "running"))
@@ -56,13 +78,7 @@ defmodule Testor.Views do
   def screenshots_all do
     shots = Config.shots_dir()
 
-    entries =
-      case File.ls(shots) do
-        {:ok, names} -> names
-        _ -> []
-      end
-
-    Enum.flat_map(entries, fn name ->
+    Enum.flat_map(Files.ls(shots), fn name ->
       path = Path.join(shots, name)
 
       cond do
@@ -83,7 +99,7 @@ defmodule Testor.Views do
           [
             %{
               "path" => name,
-              "url" => "/shots/" <> URI.encode(name, &URI.char_unreserved?/1),
+              "url" => Auth.file_prefix(name) <> "/shots/" <> URI.encode(name, &URI.char_unreserved?/1),
               "bytes" => Files.size(path),
               "takenAt" => path |> Files.mtime() |> Files.iso(),
               "spec" => nil,
@@ -103,13 +119,8 @@ defmodule Testor.Views do
 
   @doc "Every run that kept artifacts, newest first: the run and its artifacts."
   def artifacts_all do
-    names =
-      case File.ls(Config.artifacts_dir()) do
-        {:ok, names} -> names
-        _ -> []
-      end
-
-    names
+    Config.artifacts_dir()
+    |> Files.ls()
     |> Enum.filter(&File.dir?(Path.join(Config.artifacts_dir(), &1)))
     |> Enum.sort(:desc)
     |> Enum.flat_map(fn id ->

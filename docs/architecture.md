@@ -76,6 +76,7 @@ Testor.Supervisor
 ├── EventRegistry       pub/sub: "global" and {"run", id} topics
 ├── TrackerRegistry     one name per tracked run
 ├── TaskSupervisor      PowerShell queries run here, never in a GenServer
+├── Auth.Guard          verified credentials (briefly) and failed attempts by address
 ├── TrackerSupervisor   ── RunTracker (one per running run)
 ├── Store               run index in ETS; scans runs\, settles, publishes
 ├── Sessions            pwsh sessions in the workspace that run.ps1 did not start
@@ -83,7 +84,7 @@ Testor.Supervisor
 ├── Janitor             retention: runs by count and age, screenshots by age and size
 ├── Device              device stats (Windows: a PowerShell port; Linux, macOS: Elixir) and their history
 ├── Maintenance         measures and, when asked, deletes what testing leaves on the runner
-└── Bandit              HTTP: the page, the JSON API, the SSE streams
+└── Bandit              HTTP: authentication, the page, the JSON APIs, the SSE streams, MCP
 ```
 
 Reads go straight to ETS, so a busy dashboard never queues behind the store. Everything that

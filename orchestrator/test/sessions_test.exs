@@ -2,12 +2,15 @@ defmodule Testor.SessionsTest do
   use ExUnit.Case, async: true
   alias Testor.Sessions
 
+  # The workspaces folder's name (the tests use one of their own).
+  defp ws, do: Testor.Config.workspaces_name()
+
   # A command line as remote.yml sends it: the prelude and the script, base64-encoded.
   defp encoded(script) do
-    prelude = ~S"""
+    prelude = """
     $ErrorActionPreference = "Stop"
-    $workspace = Join-Path (Join-Path $HOME "test-run") "demo"
-    $testorRun = Join-Path (Join-Path $HOME "test-run/.testor") "run.ps1"
+    $workspace = Join-Path (Join-Path $HOME "#{ws()}") "demo"
+    $testorRun = Join-Path (Join-Path $HOME "#{ws()}/.testor") "run.ps1"
     """
 
     b64 = Base.encode64(prelude <> script)
@@ -32,7 +35,7 @@ defmodule Testor.SessionsTest do
   end
 
   test "describe/1 reads older commands sent in clear, with Windows' escaped quotes" do
-    cmd = ~S|"pwsh.exe" -c "Set-Location \"$HOME\test-run\anonymous-app\"; npm test"|
+    cmd = ~S|"pwsh.exe" -c "Set-Location \"$HOME\WS\anonymous-app\"; npm test"| |> String.replace("WS", ws())
     assert [%{"project" => "anonymous-app", "command" => "npm test"}] = Sessions.describe({1, "t", cmd})
   end
 
@@ -41,9 +44,9 @@ defmodule Testor.SessionsTest do
   end
 
   test "elapsed/1 reads ps's etime" do
-    assert Sessions.elapsed("05") == 5
-    assert Sessions.elapsed("01:02") == 62
-    assert Sessions.elapsed("02:03:04") == 7384
-    assert Sessions.elapsed("1-00:00:01") == 86_401
+    assert Testor.OS.elapsed("05") == 5
+    assert Testor.OS.elapsed("01:02") == 62
+    assert Testor.OS.elapsed("02:03:04") == 7384
+    assert Testor.OS.elapsed("1-00:00:01") == 86_401
   end
 end

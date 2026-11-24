@@ -115,11 +115,7 @@ defmodule Testor.Stats do
   defp artifacts do
     dir = Config.artifacts_dir()
 
-    runs =
-      case File.ls(dir) do
-        {:ok, names} -> Enum.count(names, &File.dir?(Path.join(dir, &1)))
-        _ -> 0
-      end
+    runs = dir |> Files.ls() |> Enum.count(&File.dir?(Path.join(dir, &1)))
 
     Map.put(Files.usage(dir), "runs", runs)
   end
