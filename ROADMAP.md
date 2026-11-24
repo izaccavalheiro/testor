@@ -20,7 +20,7 @@ Two principles hold through every milestone:
 | Release | Theme | Status |
 | ------- | ----- | ------ |
 | 0.1.0 | One runner over SSH: live dashboard, history, spec parsing, screenshots, device stats; Windows, Linux, macOS | released |
-| **0.2.0** | Integrations and trust: `/api/v1` with OpenAPI, the MCP server for AI agents, authentication (roles, scopes, JWT, signed links, audit), artifacts, disk maintenance, the documentation site, semantic versioning | in `Unreleased`, next |
+| **0.2.0** | Integrations and trust: `/api/v1` with OpenAPI, the MCP server for AI agents, authentication (roles, scopes, JWT, signed links, audit), artifacts, disk maintenance, the documentation site, semantic versioning | released |
 
 ## Next milestones
 
