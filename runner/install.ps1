@@ -16,11 +16,18 @@
 #   4. stops the running release, swaps <home>/app.new in as <home>/app, starts the service
 #      and waits for /api/health.
 #
-#   -Test        runs the ExUnit tests instead (mix test)
+#   -Test        checks the sources instead, as CI does: formatting, a compile with warnings as
+#                errors, and the ExUnit tests with the coverage gate (mix test --cover)
+#   -Smoke       builds the release into a temporary folder (the installed one keeps running)
+#                and runs scripts/smoke.ps1 against it: the end-to-end check CI runs
+#   -Format      formats the sources in place (mix format), for `task testor:format`
 #   -Uninstall   removes the service (and on Windows the firewall rule); data is kept
 param(
   [switch]$Uninstall,
   [switch]$Test,
+  [switch]$Format,
+  [switch]$Smoke,
+  [string[]]$TestArgs = @(),
   [int]$Port = 6767,
   [string[]]$AllowFrom = @("100.64.0.0/10", "LocalSubnet")
 )
@@ -97,10 +104,35 @@ Set-Location (Join-Path $src "orchestrator")
 mix local.hex --force --if-missing | Out-Null
 mix local.rebar --force --if-missing | Out-Null
 
+if ($Format) {
+  $env:MIX_ENV = "test"
+  mix deps.get | Out-Null
+  mix format
+  return
+}
+
 if ($Test) {
   $env:MIX_ENV = "test"
   mix deps.get | Out-Null
-  mix test --color
+  "== mix format --check-formatted"
+  mix format --check-formatted
+  "== mix compile --warnings-as-errors"
+  mix compile --warnings-as-errors --force
+  "== mix test --cover"
+  mix test --cover --color @TestArgs
+  return
+}
+
+if ($Smoke) {
+  $env:MIX_ENV = "prod"
+  mix deps.get --only prod | Out-Null
+  $release = Join-Path ([IO.Path]::GetTempPath()) "testor-smoke-release"
+  if (Test-Path $release) { Remove-Item -Recurse -Force $release }
+  "== mix release (MIX_ENV=prod) into $release"
+  mix release --overwrite --quiet --path $release
+  "== scripts/smoke.ps1"
+  try { & (Join-Path (Join-Path $src "scripts") "smoke.ps1") -Release $release }
+  finally { Remove-Item -Recurse -Force $release -ErrorAction SilentlyContinue }
   return
 }
 

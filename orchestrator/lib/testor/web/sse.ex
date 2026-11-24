@@ -45,12 +45,9 @@ defmodule Testor.Web.SSE do
   end
 
   defp send_then_loop(conn, snapshot, offset) do
-    with {:ok, conn} <- chunk(conn, "retry: 3000\n\n"),
-         {:ok, conn} <- send_event(conn, "snapshot", snapshot) do
-      loop(conn, offset)
-    else
-      _ -> conn
-    end
+    conn
+    |> chunk(["retry: 3000\n\n" | event("snapshot", snapshot)])
+    |> continue(conn, offset)
   end
 
   defp loop(conn, offset) do
@@ -60,20 +57,16 @@ defmodule Testor.Web.SSE do
         loop(conn, offset)
 
       {:event, name, data} ->
-        case send_event(conn, name, data) do
-          {:ok, conn} -> loop(conn, offset)
-          {:error, _} -> conn
-        end
+        conn |> chunk(event(name, data)) |> continue(conn, offset)
     after
-      @heartbeat ->
-        case chunk(conn, ": ping\n\n") do
-          {:ok, conn} -> loop(conn, offset)
-          {:error, _} -> conn
-        end
+      Application.get_env(:testor, :sse_heartbeat_ms, @heartbeat) ->
+        conn |> chunk(": ping\n\n") |> continue(conn, offset)
     end
   end
 
-  defp send_event(conn, name, data) do
-    chunk(conn, ["event: ", name, "\ndata: ", JSON.encode!(data), "\n\n"])
-  end
+  # A chunk that cannot be sent is a browser that went away: the stream ends.
+  defp continue({:ok, conn}, _previous, offset), do: loop(conn, offset)
+  defp continue({:error, _}, conn, _offset), do: conn
+
+  defp event(name, data), do: ["event: ", name, "\ndata: ", JSON.encode!(data), "\n\n"]
 end

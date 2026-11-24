@@ -20,27 +20,43 @@ defmodule Testor.Web.Router do
     POST   /api/maintenance/clean  cleans the chosen targets of the last scan
     GET    /shots/<run>/<path>     a screenshot
     GET    /artifacts/<run>/<path> an artifact (byte ranges for videos), in a sandbox
+    GET    /s/<sig>/shots/...      the same, through a signed link (while authentication is on)
+    GET    /s/<sig>/artifacts/...
+    *      /api/v1/...             the versioned API (Testor.Web.ApiV1)
+    POST   /mcp                    the MCP server (Testor.Web.MCP)
 
-  POST and DELETE need the header `X-Testor: 1`: a cross-site form cannot send it without
-  a CORS preflight, which this server never grants.
+  Every request passes `Testor.Web.Auth` first: authentication and scopes (once `auth.json`
+  has users), the CSRF guard (POST and DELETE need a Bearer token, the header `X-Testor: 1` or
+  a JSON body, and no foreign `Origin`), and an audit line for each state-changing request.
 
   Artifacts are written by the projects' tools (HTML reports run scripts), so they are served
   with `Content-Security-Policy: sandbox`: a page gets an opaque origin, its requests to the API
   are cross-origin and cannot carry `X-Testor` without that preflight. It may still read other
-  artifacts (`Access-Control-Allow-Origin: *`, which reports that fetch their data need), and
-  everything they could read is readable without authentication anyway.
+  artifacts (`Access-Control-Allow-Origin: *`, which reports that fetch their data need):
+  while authentication is off, everything is readable anyway; once it is on, a report reached
+  through its signed link has no credentials and can read its own run's files only.
   """
   use Plug.Router
-  alias Testor.{Config, Files, Janitor, Maintenance, Store, Views}
-  alias Testor.Web.SSE
+  import Testor.Web.Reply
+  alias Testor.{Auth, Config, Files, Janitor, Maintenance, Views}
+  alias Testor.Web.{Actions, SSE}
 
-  plug(:guard)
+  plug(Plug.RequestId)
+  plug(:security_headers)
+  plug(Testor.Web.Auth)
+  plug(:csrf)
+  plug(:audit)
   plug(:match)
   plug(:dispatch)
+
+  forward("/api/v1", to: Testor.Web.ApiV1)
+  forward("/mcp", to: Testor.Web.MCP)
 
   get "/" do
     conn
     |> put_resp_header("cache-control", "no-store")
+    |> put_resp_header("x-frame-options", "DENY")
+    |> put_resp_header("content-security-policy", "frame-ancestors 'none'")
     |> put_resp_content_type("text/html")
     |> send_file(200, Application.app_dir(:testor, "priv/static/index.html"))
   end
@@ -54,16 +70,7 @@ defmodule Testor.Web.Router do
   end
 
   get "/api/health" do
-    json(conn, 200, %{
-      "ok" => true,
-      "app" => "testor",
-      "home" => Config.data_dir(),
-      "version" => to_string(Application.spec(:testor, :vsn)),
-      "elixir" => System.version(),
-      "otp" => System.otp_release(),
-      "uptimeMs" => :erlang.statistics(:wall_clock) |> elem(0),
-      "os_pid" => System.pid()
-    })
+    json(conn, 200, Views.health(conn.assigns[:principal]))
   end
 
   get "/api/state" do
@@ -95,28 +102,9 @@ defmodule Testor.Web.Router do
   end
 
   post "/api/maintenance/clean" do
-    {:ok, body, conn} = read_body(conn, length: 65_536)
-
-    with {:ok, %{"scanId" => scan_id, "targets" => [_ | _] = targets}} <- JSON.decode(body),
-         true <- Enum.all?(targets, &is_binary/1) do
-      case Maintenance.clean(scan_id, targets) do
-        {:ok, state} ->
-          json(conn, 202, state)
-
-        {:error, :disabled} ->
-          json(conn, 403, %{"error" => "cleaning is off: set maintenance.enabled in config.json"})
-
-        {:error, :busy} ->
-          json(conn, 409, %{"error" => "a run, a session or a scan is in progress; try again when it ends"})
-
-        {:error, :stale} ->
-          json(conn, 409, %{"error" => "the scan changed; look at the new one and choose again"})
-
-        {:error, {:unknown, ids}} ->
-          json(conn, 400, %{"error" => "not in the scan: #{Enum.join(ids, ", ")}"})
-      end
-    else
-      _ -> json(conn, 400, %{"error" => ~s(expected {"scanId": "...", "targets": ["..."]})})
+    case body_params(conn) do
+      {:ok, params, conn} -> reply(conn, Actions.maintenance_clean(params), 202)
+      {:error, conn} -> conn
     end
   end
 
@@ -151,22 +139,11 @@ defmodule Testor.Web.Router do
   end
 
   post "/api/runs/:id/cancel" do
-    with_id(conn, id, fn conn ->
-      case Store.cancel(id) do
-        {:ok, run} -> json(conn, 200, run)
-        {:error, :not_found} -> json(conn, 404, %{"error" => "no such run"})
-        {:error, :not_running} -> json(conn, 409, %{"error" => "the run is not running"})
-      end
-    end)
+    with_id(conn, id, &reply(&1, Actions.cancel(id), 200))
   end
 
   delete "/api/runs/:id" do
-    with_id(conn, id, fn conn ->
-      case Store.delete(id) do
-        :ok -> json(conn, 200, %{"deleted" => id})
-        {:error, :running} -> json(conn, 409, %{"error" => "the run is still running; cancel it first"})
-      end
-    end)
+    with_id(conn, id, &reply(&1, Actions.delete(id), 200))
   end
 
   get "/shots/*path" do
@@ -177,24 +154,43 @@ defmodule Testor.Web.Router do
     serve_artifact(conn, path)
   end
 
+  get "/s/:cap/shots/*path" do
+    signed(conn, cap, path, &serve_shot/2)
+  end
+
+  get "/s/:cap/artifacts/*path" do
+    signed(conn, cap, path, &serve_artifact/2)
+  end
+
   match _ do
     json(conn, 404, %{"error" => "not found"})
   end
 
   # --- helpers -------------------------------------------------------------------------------
 
-  def guard(%Plug.Conn{method: method} = conn, _opts) when method in ["POST", "DELETE"] do
-    if get_req_header(conn, "x-testor") == ["1"] do
-      conn
-    else
-      conn |> json(403, %{"error" => "missing X-Testor header"}) |> halt()
-    end
+  def csrf(conn, opts), do: Testor.Web.Auth.csrf(conn, opts)
+  def audit(conn, opts), do: Testor.Web.Auth.audit(conn, opts)
+
+  def security_headers(conn, _opts) do
+    conn
+    |> put_resp_header("x-content-type-options", "nosniff")
+    |> put_resp_header("referrer-policy", "no-referrer")
   end
 
-  def guard(conn, _opts), do: conn
+  # A signed link opens the files of the run (or the loose screenshot) its first segment names.
+  defp signed(conn, cap, [first | _] = segments, serve) do
+    if Auth.file_cap_valid?(cap, first),
+      do: serve.(conn, segments),
+      else: error(conn, 404, "not_found", "not found")
+  end
+
+  defp signed(conn, _cap, _segments, _serve), do: error(conn, 404, "not_found", "not found")
+
+  defp reply(conn, {:ok, data}, status), do: json(conn, status, data)
+  defp reply(conn, {:error, status, code, message}, _), do: error(conn, status, code, message)
 
   defp with_id(conn, id, fun) do
-    if Regex.match?(~r/^[\w.-]+$/, id), do: fun.(conn), else: json(conn, 400, %{"error" => "bad id"})
+    if valid_id?(id), do: fun.(conn), else: error(conn, 400, "bad_request", "bad id")
   end
 
   defp serve_shot(conn, segments) do
@@ -268,11 +264,4 @@ defmodule Testor.Web.Router do
   end
 
   defp download_name(path), do: path |> Path.basename() |> String.replace(~r/[^\w.-]/u, "_")
-
-  defp json(conn, status, data) do
-    conn
-    |> put_resp_content_type("application/json")
-    |> put_resp_header("cache-control", "no-store")
-    |> send_resp(status, JSON.encode!(data))
-  end
 end

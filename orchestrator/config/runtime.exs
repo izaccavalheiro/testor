@@ -7,9 +7,18 @@ home = System.user_home!()
 workspaces = System.get_env("TESTOR_WORKSPACES") || Path.join(home, "test-run")
 data_dir = System.get_env("TESTOR_HOME") || Path.join(workspaces, ".testor")
 
+# TESTOR_BIND: the address to listen on (default 0.0.0.0, every interface); 127.0.0.1 keeps
+# testor local, for a reverse proxy that terminates TLS in front of it.
+ip =
+  case :inet.parse_address(String.to_charlist(System.get_env("TESTOR_BIND", "0.0.0.0"))) do
+    {:ok, ip} -> ip
+    {:error, _} -> raise "TESTOR_BIND is not an IP address: #{System.get_env("TESTOR_BIND")}"
+  end
+
 config :testor,
   data_dir: data_dir,
   workspaces: workspaces,
+  ip: ip,
   port: String.to_integer(System.get_env("TESTOR_PORT", "6767"))
 
 if config_env() == :prod do

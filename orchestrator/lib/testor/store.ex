@@ -91,7 +91,13 @@ defmodule Testor.Store do
 
   @impl true
   def handle_call({:refresh, id}, _from, state) do
-    state = load(state, id, signature(id))
+    # A record that is gone is forgotten: settling it afterwards must not write it back.
+    state =
+      case signature(id) do
+        nil -> forget(state, id)
+        sig -> load(state, id, sig)
+      end
+
     {:reply, get(id), state}
   end
 
@@ -135,17 +141,15 @@ defmodule Testor.Store do
   # --- scanning ------------------------------------------------------------------------------
 
   defp scan(state) do
-    ids =
-      case File.ls(Config.runs_dir()) do
-        {:ok, names} -> for name <- names, String.ends_with?(name, ".json"), do: Path.rootname(name)
-        _ -> []
-      end
+    ids = for name <- Files.ls(Config.runs_dir()), String.ends_with?(name, ".json"), do: Path.rootname(name)
 
     on_disk = MapSet.new(ids)
 
+    # What the table holds, not only what was signed: a scan that failed halfway may have
+    # stored a run without its signature.
     state =
-      state.sigs
-      |> Map.keys()
+      all()
+      |> Enum.map(& &1["id"])
       |> Enum.reject(&MapSet.member?(on_disk, &1))
       |> Enum.reduce(state, &forget(&2, &1))
 
@@ -244,11 +248,8 @@ defmodule Testor.Store do
         run
       end
 
-    case RunTracker.start(id) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, _}} -> :ok
-      error -> Logger.error("store: no tracker for #{id}: #{inspect(error)}")
-    end
+    # A tracker's start cannot fail (its init only schedules a tick); one may already follow it.
+    _ = RunTracker.start(id)
 
     Logger.info("store: #{id} started (#{run["project"]} #{run["kind"]})")
     Events.broadcast("global", "run", run)
@@ -293,6 +294,8 @@ defmodule Testor.Store do
   defp settle_run(state, id, status) do
     case get(id) do
       %{"status" => "running"} = run ->
+        Logger.warning("store: #{id} #{status}")
+
         ended =
           case Files.mtime(Config.log_file(id)) do
             mtime when is_integer(mtime) and status == "aborted" -> DateTime.from_unix!(mtime)

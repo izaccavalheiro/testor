@@ -9,7 +9,6 @@ defmodule Testor.RunTracker do
   a snapshot up to some offset drops the events it already has.
   """
   use GenServer, restart: :transient
-  require Logger
   alias Testor.{Config, Events, Files, OS, SpecParser, Store}
 
   @tick 250
@@ -77,16 +76,10 @@ defmodule Testor.RunTracker do
         stop(st)
 
       st.ticks > 0 and rem(st.ticks, @alive_every) == 0 and not OS.alive?(run["pid"]) ->
-        # run.ps1 writes its final record before its PowerShell exits: re-read before settling.
-        case Store.refresh(st.id) do
-          %{"status" => "running"} ->
-            Logger.warning("tracker: #{st.id}: pid #{run["pid"]} is gone; aborted")
-            Store.settle(st.id, "aborted")
-
-          _ ->
-            :ok
-        end
-
+        # run.ps1 writes its final record before its PowerShell exits: re-read it first. Settling
+        # leaves a run that has ended alone.
+        Store.refresh(st.id)
+        Store.settle(st.id, "aborted")
         stop(st)
 
       true ->
@@ -108,14 +101,9 @@ defmodule Testor.RunTracker do
 
     data =
       with true <- size > st.read,
-           {:ok, io} <- File.open(path, [:read, :binary]) do
-        result = Files.read_at(io, st.read, min(size - st.read, @max_read))
-        File.close(io)
-
-        case result do
-          {:ok, data} -> data
-          _ -> ""
-        end
+           {:ok, io} <- File.open(path, [:read, :binary]),
+           {:ok, data} <- read_close(io, st.read, min(size - st.read, @max_read)) do
+        data
       else
         _ -> ""
       end
@@ -145,6 +133,12 @@ defmodule Testor.RunTracker do
 
       %{st | emitted: to, parser: SpecParser.feed(st.parser, clean), tail: tail}
     end
+  end
+
+  defp read_close(io, from, length) do
+    result = Files.read_at(io, from, length)
+    File.close(io)
+    result
   end
 
   defp publish(st, force) do

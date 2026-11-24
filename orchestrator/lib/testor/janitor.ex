@@ -56,11 +56,8 @@ defmodule Testor.Janitor do
       runs
       |> Enum.reject(&MapSet.member?(running, &1["id"]))
       |> Enum.reduce({MapSet.size(running), []}, fn run, {kept, doomed} ->
-        old =
-          case Store.parse_time(run["startedAt"]) do
-            {:ok, time} -> now - DateTime.to_unix(time) > max_age
-            _ -> false
-          end
+        # A run whose start cannot be read is not old.
+        old = match?({:ok, time} when now - time > max_age, unix(run["startedAt"]))
 
         if not old and kept < config["runs"]["maxRuns"],
           do: {kept + 1, doomed},
@@ -100,11 +97,7 @@ defmodule Testor.Janitor do
     max_age = limits["maxAgeDays"] * @day
     limit = limits["maxTotalMB"] * 1024 * 1024
 
-    {folders, loose} =
-      case File.ls(dir) do
-        {:ok, names} -> Enum.split_with(names, &File.dir?(Path.join(dir, &1)))
-        _ -> {[], []}
-      end
+    {folders, loose} = dir |> Files.ls() |> Enum.split_with(&File.dir?(Path.join(dir, &1)))
 
     {loose_removed, loose_bytes} =
       Enum.reduce(loose, {0, 0}, fn name, {n, bytes} ->
@@ -152,6 +145,10 @@ defmodule Testor.Janitor do
       end)
 
     %{folders: folders_removed, loose: loose_removed, bytes: loose_bytes + folder_bytes}
+  end
+
+  defp unix(started) do
+    with {:ok, time} <- Store.parse_time(started), do: {:ok, DateTime.to_unix(time)}
   end
 
   defp now_iso, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()

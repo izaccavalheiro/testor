@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- **Versioned API** (`/api/v1`): runs filtered and paged, a run's log searched with context,
+  projects, sessions, stats, device, screenshots, artifacts, maintenance, cancel and delete;
+  described by `GET /api/v1/openapi.json` (OpenAPI 3.1). The dashboard's routes are unchanged.
+- **MCP server** (`POST /mcp`, Streamable HTTP, stateless): tools `get_status`, `list_runs`,
+  `get_run`, `get_run_log`, `wait_for_run`, `list_projects`, `get_device`, `cancel_run`,
+  `delete_run`, filtered by the caller's scopes.
+- **Authentication**, off until `auth.json` lists a user: HTTP Basic and HS256 JWT bearer
+  tokens (`POST /api/v1/auth/token`, client credentials), roles `viewer`/`operator`/`admin`
+  granting the scopes `read`/`operate`/`maintain`, PBKDF2-SHA256 passwords, revocation and key
+  rotation, rate limiting of failed attempts, signed expiring links for screenshots and
+  artifacts, an audit log of state-changing requests. Managed with `task testor:user` and
+  `task testor:token` (or `Testor.Auth.CLI` through the release). `TESTOR_BIND` sets the
+  listening address.
+- State-changing requests are also accepted with a JSON body or a Bearer token instead of
+  `X-Testor: 1`, and refused from another `Origin`.
+- `GET /api/health` reports versions and paths only to callers with the `read` scope.
+- The store forgets a run whose record disappears even when a scan failed halfway, and does
+  not write back the record of a run that was deleted while its tracker settled it.
+- Tests: integration tests that run the whole server, 100% line coverage enforced (platform
+  adapters excepted), a smoke test that covers the API, MCP, cancelling a process tree and
+  authentication; `task testor:ci`, `task testor:smoke` and `task testor:format` run them on
+  the runner.
+
 - **Artifacts**: `ARTIFACTS` in a task (`remote.yml`; `run.ps1 -Artifacts`) keeps the files and
   folders a run writes (coverage, HTML reports, Markdown, JUnit XML, ...) with the run, up to
   `artifacts.maxRunMB` per run; Playwright's videos and `$env:TESTOR_ARTIFACT_DIR` are kept too.

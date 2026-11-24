@@ -50,6 +50,13 @@ editor; or to give an idle machine a job.
 - **Device stats.** OS, machine, CPU, memory, GPU, volumes and disk throughput, network,
   battery, the top processes, and the CPU and memory of each test run's process tree, with
   sparklines.
+- **API and MCP.** A versioned JSON API (`/api/v1`, with an OpenAPI 3.1 document) for scripts
+  and CI, and an MCP server (`/mcp`) so AI agents can list runs, read why one failed (log
+  search with context), wait for a run to end, and cancel one. See [docs/api.md](docs/api.md)
+  and [docs/mcp.md](docs/mcp.md).
+- **Security.** Off until you add a user; then HTTP Basic for the dashboard, JWT bearer tokens
+  for programs, roles and scopes, signed file links, rate limiting, CSRF protection and an
+  audit log. See [docs/security.md](docs/security.md).
 - **Unchanged terminal.** Output, stderr and exit codes reach your terminal exactly as without
   testor; scripts that pipe or parse a task's output keep working.
 
@@ -160,17 +167,38 @@ CI builds, tests and smoke-tests the release on all three.
 
 ## Security
 
-testor has no authentication: anyone who can reach its port can read logs, delete runs and
-cancel them. On Windows the installer's firewall rule opens the port only to the Tailscale
-range (`100.64.0.0/10`) and the local subnet (`ALLOW_FROM` changes that); on Linux and macOS,
-restrict it with the system's firewall if the network is not yours. State-changing requests
-need an `X-Testor: 1` header, which a cross-site form cannot send. Artifacts are served with
-`Content-Security-Policy: sandbox`: an HTML report runs with an opaque origin, so it cannot
-send that header either. Maintenance deletes only a fixed list of targets (never a path from
-a request), is off until `maintenance.enabled` is set in `config.json` (anyone who can reach
-the port could otherwise use it), and waits until nothing runs. SSH is the only way
-commands reach the runner, and testor runs as the installing user (on Windows with a limited
-token).
+Authentication is off on a fresh install, so it works at once on a private network; add a user
+and it is on:
+
+```sh
+read -rs TESTOR_PASSWORD; export TESTOR_PASSWORD
+task testor:user USER=ada ROLE=admin      # viewer, operator or admin
+task testor:token USER=ada SCOPE=read     # a Bearer token for an MCP client or CI
+```
+
+The dashboard then asks for the user name and password (HTTP Basic); programs use Basic or
+JSON Web Tokens (HS256) from `POST /api/v1/auth/token`. Roles grant scopes (`read`, `operate`,
+`maintain`); passwords are PBKDF2-SHA256 hashes; repeated failures are rate limited;
+screenshots and artifacts are reached through signed, expiring links; state-changing requests
+from other sites are refused; every change is logged with who made it. Plain HTTP: use it over
+Tailscale (encrypted) or behind a TLS proxy with `TESTOR_BIND=127.0.0.1`. On Windows the
+installer's firewall rule opens the port only to the Tailscale range and the local subnet
+(`ALLOW_FROM`). Nothing in the API starts a command: SSH is the only way commands reach the
+runner. Details: [docs/security.md](docs/security.md).
+
+## Development
+
+testor's own checks run on a runner too: `task testor:test` checks formatting, compiles with
+warnings as errors and runs the ExUnit suite (unit tests, and integration tests that start the
+whole server on a free port, record runs as `run.ps1` does and use it over HTTP, server-sent
+events and MCP) with a **100% line coverage** gate. `task testor:smoke` builds a release and
+checks it end to end with `scripts/smoke.ps1` (runs through `run.ps1`, the dashboard's and the
+versioned API, MCP, cancelling a process tree, maintenance, device stats, authentication set
+up with the release's CLI); `task testor:ci` runs both; `task testor:format` formats the sources
+on the runner and copies them back. CI runs the same on Windows, Linux and macOS. The platform
+adapters (`Testor.OS`, `Testor.Device`, `Testor.Device.Unix`), whose Windows, Linux and macOS
+branches cannot all run on one machine, are left out of the coverage gate and checked end to
+end by the smoke test on each OS.
 
 ## License
 

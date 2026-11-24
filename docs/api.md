@@ -1,8 +1,59 @@
 # HTTP and SSE API
 
-testor listens on port 6767 (`TESTOR_PORT`). Responses are JSON unless noted. There is no
-authentication (see the README's security section); `POST` and `DELETE` need the header
-`X-Testor: 1`.
+testor listens on port 6767 (`TESTOR_PORT`; `TESTOR_BIND` picks the address). Responses are
+JSON unless noted. There are three interfaces over the same data:
+
+- [`/api/v1`](#versioned-api-apiv1): the versioned API for scripts, CI and other programs,
+  described by an OpenAPI 3.1 document;
+- [`/mcp`](mcp.md): the MCP server, for AI agents;
+- the dashboard's own routes (`/api/*`, `/events`), below.
+
+## Authentication
+
+Off until `auth.json` has a user ([security.md](security.md)). Then every request needs
+HTTP Basic credentials or `Authorization: Bearer <token>`, except `GET /api/health`,
+`GET /api/v1/health`, `GET /api/v1/openapi.json` and signed file links (`/s/...`). Without
+credentials: `401` with `WWW-Authenticate: Basic realm="testor"` and `Bearer realm="testor"`;
+without the scope a route needs: `403`; after 10 failures in 15 minutes: `429` and
+`Retry-After`.
+
+Scopes: `read` for every `GET`; `operate` for `POST` and `DELETE`;
+`maintain` for `POST .../maintenance/clean`.
+
+A `POST` or `DELETE` without a Bearer token needs the header `X-Testor: 1` or a JSON body
+(`Content-Type: application/json`), and is refused with an `Origin` other than the server.
+
+## Versioned API: `/api/v1`
+
+`GET /api/v1/openapi.json` describes it. Collections answer `{"data": [...]}` (and `"next"`
+where they page), errors `{"error": {"code", "message"}}`.
+
+| Request | Returns |
+| ------- | ------- |
+| `GET /api/v1/health` | `{ok, app, version, auth}`, plus versions and paths with the `read` scope |
+| `POST /api/v1/auth/token` | with Basic credentials: `{access_token, token_type: "Bearer", expires_in, scope}`. Body (JSON or form, optional): `grant_type=client_credentials`, `scope` (a subset of the user's), `expires_in` (seconds). Errors as OAuth 2.0: `{error, error_description}` |
+| `GET /api/v1/auth/me` | `{authEnabled, user, via, scopes, expiresAt}` |
+| `GET /api/v1/runs?status=&project=&kind=&q=&limit=&before=` | runs, newest first: `{data, next}`; `next` is the `before` of the next page |
+| `GET /api/v1/runs/:id` | `{run, specs, screenshots, artifacts, logBytes}` |
+| `GET /api/v1/runs/:id/log?tail=&grep=&context=` | the end of the output as text; with `grep`, the matching lines (numbered) and `X-Log-Matches` |
+| `GET /api/v1/runs/:id/events` | the run's event stream (as `/events/runs/:id`) |
+| `POST /api/v1/runs/:id/cancel` | the cancelled run; `409` when it is not running |
+| `DELETE /api/v1/runs/:id` | `{deleted}`; `409` while it runs |
+| `GET /api/v1/events` | the global event stream (as `/events`) |
+| `GET /api/v1/projects` | `{data: [{project, kind, runs, latest, recent}]}` |
+| `GET /api/v1/sessions`, `/stats`, `/device`, `/screenshots`, `/artifacts` | as below |
+| `POST /api/v1/cleanup` | runs the janitor |
+| `GET /api/v1/maintenance`, `POST .../scan`, `POST .../clean` | as below |
+
+```sh
+TOKEN=$(curl -s -u ada -X POST http://my-runner:6767/api/v1/auth/token -d grant_type=client_credentials | jq -r .access_token)
+curl -s -H "authorization: Bearer $TOKEN" 'http://my-runner:6767/api/v1/runs?status=failed&limit=5' | jq '.data[].id'
+curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID/log?grep=FAIL&context=3"
+```
+
+## The dashboard's routes
+
+Kept as they are for the dashboard; errors are `{"error": "message"}`.
 
 ## Server-sent events
 
@@ -59,7 +110,7 @@ curl -N http://my-runner:6767/events
 
 | Request                       | Returns                                                         |
 | ----------------------------- | --------------------------------------------------------------- |
-| `GET /api/health`             | `{ok, app, version, elixir, otp, uptimeMs, os_pid, home}`       |
+| `GET /api/health`             | `{ok, app, version, auth}`; with the `read` scope also `elixir, otp, uptimeMs, os_pid, home` |
 | `GET /api/state`              | the `/events` snapshot                                          |
 | `GET /api/runs/:id`           | the `/events/runs/:id` snapshot                                 |
 | `GET /api/runs/:id/log?tail=N`| the last `N` bytes of the output (default 512 KB) as `text/plain`; headers `X-Log-Size`, `X-Log-Truncated` |
@@ -67,6 +118,7 @@ curl -N http://my-runner:6767/events
 | `GET /api/artifacts`          | every run that kept artifacts, newest first: `[{runId, project, kind, status, startedAt, artifacts[]}]` |
 | `GET /api/device`             | `{static, sample, history[]}`                                   |
 | `GET /shots/<run>/<path>`     | a screenshot (image)                                            |
+| `GET /s/<sig>/shots/...`, `GET /s/<sig>/artifacts/...` | the same through a signed link, without credentials (the URLs every answer gives while authentication is on) |
 | `GET /artifacts/<run>/<path>` | an artifact: shown when browsers show its type, a download otherwise; honours a single `Range`; served with `Content-Security-Policy: sandbox allow-scripts allow-popups allow-downloads`, `X-Content-Type-Options: nosniff` and `Access-Control-Allow-Origin: *` |
 | `POST /api/runs/:id/cancel`   | kills a running run's process tree; the settled record (409 if it is not running) |
 | `DELETE /api/runs/:id`        | deletes a finished run, its log and screenshots (409 while it runs) |
@@ -76,8 +128,8 @@ curl -N http://my-runner:6767/events
 | `POST /api/maintenance/clean` | body `{scanId, targets: [id, ...]}`: deletes those targets of that scan in the background, then scans again (202). 403 while `maintenance.enabled` is off, 409 while a run, a session, a scan or a cleaning is in progress or when `scanId` is not the last scan, 400 for an id the scan does not have |
 
 ```sh
-curl -s http://my-runner:6767/api/state | jq '.history[0]'
-curl -s -X POST -H 'X-Testor: 1' http://my-runner:6767/api/runs/<id>/cancel
+curl -s -u ada http://my-runner:6767/api/state | jq '.history[0]'
+curl -s -u ada -X POST -H 'X-Testor: 1' http://my-runner:6767/api/runs/<id>/cancel
 ```
 
 ## Device samples

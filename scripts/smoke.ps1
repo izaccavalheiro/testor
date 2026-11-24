@@ -1,6 +1,8 @@
 # End-to-end check of a built release on Windows, Linux or macOS (PowerShell 7): starts it with a temporary home on a spare
 # port, records a passing, a failing and a run with artifacts through run.ps1, and checks what
-# the API, the SSE stream and the maintenance endpoints report. CI runs it after `mix release`; on a runner:
+# the API (the dashboard's and /api/v1), the SSE stream, MCP, the maintenance endpoints, the
+# cancellation of a process tree, device stats and authentication (set up with the release's
+# CLI) do. CI runs it after `mix release`; on a runner:
 #
 #   pwsh scripts/smoke.ps1 -Release orchestrator/_build/prod/rel/testor
 param(
@@ -20,6 +22,17 @@ $base = "http://127.0.0.1:$Port"
 $failures = @()
 function Check([string]$what, [bool]$ok, $detail = "") {
   if ($ok) { "ok    $what" } else { "FAIL  $what $detail"; $script:failures += $what }
+}
+
+# The temporary folder and the tools' caches the maintenance scan measures: a sandbox, so the
+# scan takes seconds on a runner whose real ones hold gigabytes.
+$sandboxed = "TMP", "TEMP", "TMPDIR", "npm_config_cache", "PIP_CACHE_DIR", "GOCACHE", "CARGO_HOME", "PLAYWRIGHT_BROWSERS_PATH"
+$savedEnv = @{}
+foreach ($name in $sandboxed) {
+  $savedEnv[$name] = [Environment]::GetEnvironmentVariable($name)
+  $dir = Join-Path (Join-Path $work "sandbox") $name
+  $null = New-Item -ItemType Directory -Force $dir
+  [Environment]::SetEnvironmentVariable($name, $dir)
 }
 
 $env:TESTOR_HOME = $testorHome
@@ -139,12 +152,84 @@ try {
     -Body (@{ scanId = $maint.scan.id; targets = @("C:/Windows") } | ConvertTo-Json) -SkipHttpErrorCheck
   Check "maintenance refuses a target the scan does not have" ($unknown.StatusCode -eq 400) "($($unknown.StatusCode))"
 
+  # The versioned API and MCP (authentication still off).
+  $page1 = Invoke-RestMethod "$base/api/v1/runs?limit=2"
+  Check "v1: runs are paged" (@($page1.data).Count -eq 2 -and $page1.next) "($($page1 | ConvertTo-Json -Compress -Depth 2))"
+  $page2 = Invoke-RestMethod "$base/api/v1/runs?limit=2&before=$($page1.next)"
+  Check "v1: the next page" (@($page2.data).Count -eq 1 -and -not $page2.next)
+  $openapi = Invoke-RestMethod "$base/api/v1/openapi.json"
+  Check "v1: OpenAPI document" ($openapi.openapi -eq "3.1.0" -and $openapi.paths."/runs")
+  $grep = Invoke-WebRequest "$base/api/v1/runs/$($test.id)/log?grep=failed"
+  Check "v1: log filtered" ($grep.Content -match "tests/b.test.ts" -and "$($grep.Headers["X-Log-Matches"])" -eq "1") "($($grep.Content))"
+  function Mcp($method, $params, $headers = @{}) {
+    $body = @{ jsonrpc = "2.0"; id = 1; method = $method; params = $params } | ConvertTo-Json -Depth 6 -Compress
+    Invoke-RestMethod -Method Post -ContentType "application/json" -Headers $headers "$base/mcp" -Body $body
+  }
+  $init = Mcp "initialize" @{ protocolVersion = "2025-06-18"; capabilities = @{}; clientInfo = @{ name = "smoke"; version = "1" } }
+  Check "mcp: initialize" ($init.result.protocolVersion -eq "2025-06-18" -and $init.result.serverInfo.name -eq "testor")
+  $tools = Mcp "tools/list" @{}
+  Check "mcp: tools" (@($tools.result.tools).name -contains "get_run_log" -and @($tools.result.tools).name -contains "cancel_run")
+  $listed = Mcp "tools/call" @{ name = "list_runs"; arguments = @{ status = "failed" } }
+  Check "mcp: list_runs" (@($listed.result.structuredContent.runs).Count -eq 1 -and -not $listed.result.isError)
+
+  # Cancelling kills the run's whole process tree, on every OS.
+  $hidden = if ($IsWindows) { @{ WindowStyle = "Hidden" } } else { @{} }
+  $slow = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-Command", "& '$testorHome/run.ps1' -Project slow -Kind slow -Body { pwsh -NoProfile -Command 'Start-Sleep 120' }"
+  $deadline = (Get-Date).AddSeconds(30)
+  do { Start-Sleep -Milliseconds 500; $running = @((Invoke-RestMethod "$base/api/v1/runs?status=running").data) } until ($running.Count -or (Get-Date) -gt $deadline)
+  Check "a long run is seen running" ($running.Count -eq 1)
+  $cancel = Invoke-RestMethod -Method Post -ContentType "application/json" "$base/api/v1/runs/$($running[0].id)/cancel" -Body "{}"
+  Check "cancel settles the run" ($cancel.status -eq "cancelled")
+  $gone = $slow.WaitForExit(15000)
+  Check "cancel killed the process tree" $gone
+
   $deadline = (Get-Date).AddSeconds(30)
   do { Start-Sleep -Seconds 1; $device = Invoke-RestMethod "$base/api/device" } until (($device.static -and $null -ne $device.sample.cpu) -or (Get-Date) -gt $deadline)
   Check "device stats" ([bool]$device.static -and $null -ne $device.sample.cpu) "(static: $([bool]$device.static), cpu: $($device.sample.cpu))"
   Check "device static facts" ($device.static.os.name -and $device.static.cpu.threads -gt 0) "($($device.static.os.name))"
+
+  # Authentication, set up with the release's CLI: from now on everything needs credentials.
+  # No parentheses or double quotes in eval's expression: testor.bat hands it through cmd.exe.
+  $bin = Join-Path $releasePath $(if ($IsWindows) { "bin/testor.bat" } else { "bin/testor" })
+  $env:TESTOR_PASSWORD = "smoke-test-password"
+  & $bin eval "Testor.Auth.CLI.user ~s[smoke], ~s[admin]" | Out-Null
+  & $bin eval "Testor.Auth.CLI.user ~s[viewer], ~s[viewer]" | Out-Null
+  Remove-Item Env:TESTOR_PASSWORD
+  Start-Sleep -Milliseconds 1500
+  $anon = Invoke-WebRequest "$base/api/v1/runs" -SkipHttpErrorCheck
+  Check "auth: credentials required" ($anon.StatusCode -eq 401 -and "$($anon.Headers["WWW-Authenticate"])" -like "Basic*") "($($anon.StatusCode))"
+  $health = Invoke-RestMethod "$base/api/health"
+  Check "auth: health stays public" ($health.ok -and $health.auth -and -not $health.home)
+  $basic = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("smoke:smoke-test-password")) }
+  $viewer = @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("viewer:smoke-test-password")) }
+  Check "auth: Basic" ((Invoke-WebRequest "$base/api/v1/runs" -Headers $basic).StatusCode -eq 200)
+  $wrong = Invoke-WebRequest "$base/api/v1/runs" -Headers @{ Authorization = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("smoke:nope")) } -SkipHttpErrorCheck
+  Check "auth: a wrong password is refused" ($wrong.StatusCode -eq 401)
+  $token = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/x-www-form-urlencoded" "$base/api/v1/auth/token" -Body "grant_type=client_credentials&scope=read"
+  $bearer = @{ Authorization = "Bearer $($token.access_token)" }
+  $me = Invoke-RestMethod "$base/api/v1/auth/me" -Headers $bearer
+  Check "auth: a Bearer token from the token endpoint" ($me.user -eq "smoke" -and $me.via -eq "bearer" -and "$($me.scopes)" -eq "read")
+  $forbidden = Invoke-WebRequest -Method Post -Headers $bearer "$base/api/v1/cleanup" -SkipHttpErrorCheck
+  Check "auth: a read token cannot change anything" ($forbidden.StatusCode -eq 403)
+  $denied = Invoke-WebRequest -Method Post -Headers ($viewer + @{ "X-Testor" = "1" }) "$base/api/cleanup" -SkipHttpErrorCheck
+  Check "auth: a viewer cannot change anything" ($denied.StatusCode -eq 403)
+  $cliToken = (& $bin eval "Testor.Auth.CLI.token ~s[smoke], 1" | Select-Object -Last 1).Trim()
+  $mcp = Mcp "tools/call" @{ name = "list_runs"; arguments = @{} } @{ Authorization = "Bearer $cliToken" }
+  Check "auth: MCP with a token from the CLI" (@($mcp.result.structuredContent.runs).Count -ge 3)
+  $mcpAnon = Invoke-WebRequest -Method Post -ContentType "application/json" "$base/mcp" -Body '{"jsonrpc":"2.0","id":1,"method":"ping"}' -SkipHttpErrorCheck
+  Check "auth: MCP needs credentials" ($mcpAnon.StatusCode -eq 401)
+  $signed = @((Invoke-RestMethod "$base/api/v1/runs/$($test.id)" -Headers $basic).screenshots)[0].url
+  Check "auth: screenshots are linked signed" ($signed -like "/s/*")
+  Check "auth: a signed link needs no credentials" ((Invoke-WebRequest "$base$signed").StatusCode -eq 200)
+  $plain = Invoke-WebRequest "$base/shots/$($test.id)/$(Split-Path -Leaf $signed)" -SkipHttpErrorCheck
+  Check "auth: an unsigned link does" ($plain.StatusCode -eq 401)
+  & $bin eval "Testor.Auth.CLI.revoke ~s[smoke]" | Out-Null
+  Start-Sleep -Milliseconds 1500
+  $revoked = Invoke-WebRequest "$base/api/v1/auth/me" -Headers $bearer -SkipHttpErrorCheck
+  Check "auth: revoked tokens stop working" ($revoked.StatusCode -eq 401)
 } finally {
   Set-Location $repo
+  foreach ($name in $sandboxed) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }
   $PSNativeCommandUseErrorActionPreference = $false
   if ($IsWindows) {
     Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like "*$releasePath*" } |

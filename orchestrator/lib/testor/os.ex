@@ -79,6 +79,77 @@ defmodule Testor.OS do
     walk(children, rest ++ kids, found ++ kids)
   end
 
+  @doc """
+  Removes a symbolic link (not what it points to). Windows refuses File.rm/1 on a junction
+  whose target is gone (eperm); deleting it as a directory works.
+  """
+  def remove_link(path) do
+    case File.rm(path) do
+      :ok -> :ok
+      error -> if windows?(), do: :file.del_dir(path), else: error
+    end
+  end
+
+  @doc "[{pid, startedAt, command line}] of the running PowerShell 7 and Windows PowerShell processes."
+  def pwsh_processes do
+    if windows?(), do: windows_pwsh(), else: unix_pwsh()
+  end
+
+  defp windows_pwsh do
+    script = """
+    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" |
+      Where-Object { $_.CommandLine -notmatch 'Get-CimInstance|sysinfo\\.ps1' } |
+      ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; started = $_.CreationDate.ToUniversalTime().ToString('o'); cmd = $_.CommandLine } } |
+      ConvertTo-Json -Compress
+    """
+
+    with {:ok, out} <- powershell(script),
+         out when out != "" <- String.trim(out),
+         {:ok, parsed} <- JSON.decode(out) do
+      for %{"pid" => pid, "started" => started, "cmd" => cmd} <- List.wrap(parsed),
+          do: {pid, started, cmd || ""}
+    else
+      _ -> []
+    end
+  end
+
+  defp unix_pwsh do
+    case System.cmd("ps", ["-A", "-o", "pid=,etime=,args="], stderr_to_stdout: true) do
+      {out, 0} ->
+        now = DateTime.utc_now()
+
+        out
+        |> String.split("\n", trim: true)
+        |> Enum.filter(&String.contains?(&1, "pwsh"))
+        |> Enum.flat_map(fn line ->
+          case String.split(String.trim(line), ~r/\s+/, parts: 3) do
+            [pid, etime, args] ->
+              started = DateTime.add(now, -elapsed(etime), :second) |> DateTime.to_iso8601()
+              [{String.to_integer(pid), started, args}]
+
+            _ ->
+              []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  @doc "Seconds in ps's etime: [[dd-]hh:]mm:ss."
+  def elapsed(etime) do
+    {days, rest} =
+      case String.split(etime, "-") do
+        [d, rest] -> {String.to_integer(d), rest}
+        [rest] -> {0, rest}
+      end
+
+    parts = rest |> String.split(":") |> Enum.map(&String.to_integer/1)
+    [s, m, h] = Enum.reverse(parts) ++ List.duplicate(0, 3 - length(parts))
+    days * 86_400 + h * 3_600 + m * 60 + s
+  end
+
   @doc "Runs a Windows PowerShell script and returns its stdout."
   def powershell(script, timeout \\ 15_000) do
     task =

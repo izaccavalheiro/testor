@@ -139,15 +139,16 @@ defmodule Testor.Maintenance do
   # Every target: the public fields and, under :remove, the paths cleaning deletes.
   defp targets(settings) do
     now = System.os_time(:second)
+    places = places(OS.family(), &System.get_env/1, System.user_home!(), System.tmp_dir())
 
     results =
-      snapshots(Store.all(), settings, now) ++
-        temp(settings, now) ++ caches() ++ browsers()
+      snapshots(Store.all(), settings, now, places) ++
+        temp(settings, now, places) ++ caches(places) ++ browsers(places)
 
     {Enum.map(results, &Map.delete(&1, :remove)), Map.new(results, &{&1["id"], &1.remove})}
   end
 
-  defp snapshots(runs, settings, now) do
+  defp snapshots(runs, settings, now, places) do
     root = Config.workspaces()
     data = Path.expand(Config.data_dir())
 
@@ -174,7 +175,7 @@ defmodule Testor.Maintenance do
         "id" => "snapshot:" <> name,
         "kind" => "snapshot",
         "label" => name,
-        "path" => display(path),
+        "path" => display(places, path),
         "bytes" => size.bytes,
         "files" => size.files,
         "lastUsed" => Files.iso(used),
@@ -187,31 +188,20 @@ defmodule Testor.Maintenance do
     end)
   end
 
-  defp temp(settings, now) do
-    dir = System.tmp_dir()
+  defp temp(settings, now, places) do
+    dir = places.temp
     min_age = settings["tempMinAgeDays"] * @day
     # On Unix the temporary folder may be shared (/tmp): only the user's own entries.
-    own = if not OS.windows?(), do: uid(Config.data_dir())
+    {:ok, %{uid: own}} = File.stat(Config.data_dir())
+    mine? = fn path -> places.family == :windows or match?({:ok, %{uid: ^own}}, File.lstat(path)) end
 
     entries =
-      if dir do
-        dir
-        |> ls()
-        |> Enum.flat_map(fn name ->
-          path = Path.join(dir, name)
-
-          case File.lstat(path) do
-            {:ok, %{uid: uid}} when own == nil or uid == own ->
-              size = measure(path)
-              if now - size.newest > min_age, do: [{path, size}], else: []
-
-            _ ->
-              []
-          end
-        end)
-      else
-        []
-      end
+      dir
+      |> ls()
+      |> Enum.map(&Path.join(dir, &1))
+      |> Enum.filter(mine?)
+      |> Enum.map(&{&1, measure(&1)})
+      |> Enum.filter(fn {_, size} -> now - size.newest > min_age end)
 
     if entries == [] do
       []
@@ -221,7 +211,7 @@ defmodule Testor.Maintenance do
           "id" => "temp",
           "kind" => "temp",
           "label" => "Temporary files",
-          "path" => display(dir),
+          "path" => display(places, dir),
           "bytes" => entries |> Enum.map(&elem(&1, 1).bytes) |> Enum.sum(),
           "files" => entries |> Enum.map(&elem(&1, 1).files) |> Enum.sum(),
           "lastUsed" => entries |> Enum.map(&elem(&1, 1).newest) |> Enum.max() |> Files.iso(),
@@ -233,17 +223,15 @@ defmodule Testor.Maintenance do
     end
   end
 
-  defp caches do
+  defp caches(places) do
     [
-      {"npm", "npm cache", npm_cache(), "packages npm downloads again when it needs them"},
-      {"pip", "pip cache", env_or("PIP_CACHE_DIR", user_cache("pip", "pip/Cache")),
-       "packages pip downloads again"},
-      {"go", "Go build cache", env_or("GOCACHE", user_cache("go-build", "go-build")),
-       "rebuilt on the next go build or go test"},
-      {"cargo", "Cargo downloaded crates", cargo_cache(), "crates Cargo downloads again"}
+      {"npm", "npm cache", places.npm, "packages npm downloads again when it needs them"},
+      {"pip", "pip cache", places.pip, "packages pip downloads again"},
+      {"go", "Go build cache", places.go, "rebuilt on the next go build or go test"},
+      {"cargo", "Cargo downloaded crates", places.cargo, "crates Cargo downloads again"}
     ]
     |> Enum.flat_map(fn {key, label, path, note} ->
-      children = if path, do: Enum.map(ls(path), &Path.join(path, &1)), else: []
+      children = path |> ls() |> Enum.map(&Path.join(path, &1))
 
       if children == [] do
         []
@@ -255,7 +243,7 @@ defmodule Testor.Maintenance do
             "id" => "cache:" <> key,
             "kind" => "cache",
             "label" => label,
-            "path" => display(path),
+            "path" => display(places, path),
             "bytes" => size.bytes,
             "files" => size.files,
             "lastUsed" => Files.iso(size.newest),
@@ -268,15 +256,10 @@ defmodule Testor.Maintenance do
     end)
   end
 
-  defp browsers do
-    path =
-      case System.get_env("PLAYWRIGHT_BROWSERS_PATH") do
-        value when value in [nil, "", "0"] -> user_cache("ms-playwright", "ms-playwright")
-        value -> value
-      end
+  defp browsers(places) do
+    path = places.playwright
 
-    old =
-      if path, do: path |> ls() |> Enum.filter(&File.dir?(Path.join(path, &1))) |> old_revisions(), else: []
+    old = path |> ls() |> Enum.filter(&File.dir?(Path.join(path, &1))) |> old_revisions()
 
     if old == [] do
       []
@@ -288,7 +271,7 @@ defmodule Testor.Maintenance do
           "id" => "browsers:playwright",
           "kind" => "browsers",
           "label" => "Old Playwright browsers",
-          "path" => display(path),
+          "path" => display(places, path),
           "bytes" => sizes |> Enum.map(& &1.bytes) |> Enum.sum(),
           "files" => sizes |> Enum.map(& &1.files) |> Enum.sum(),
           "lastUsed" => sizes |> Enum.map(& &1.newest) |> Enum.max() |> Files.iso(),
@@ -317,64 +300,58 @@ defmodule Testor.Maintenance do
     |> Enum.sort()
   end
 
-  defp npm_cache do
-    base =
-      case {System.get_env("npm_config_cache"), OS.windows?(), System.get_env("LOCALAPPDATA")} do
-        {dir, _, _} when dir not in [nil, ""] -> dir
-        {_, true, nil} -> nil
-        {_, true, local} -> Path.join(local, "npm-cache")
-        {_, false, _} -> Path.join(System.user_home!(), ".npm")
+  @doc """
+  Where the targets live, for an OS `family` (`:windows`, `:macos`, `:linux`), an environment
+  (`env`, a function from a variable's name to its value or nil), the user's home and the
+  temporary folder. The tools' own variables win (`npm_config_cache`, `PIP_CACHE_DIR`,
+  `GOCACHE`, `CARGO_HOME`, `PLAYWRIGHT_BROWSERS_PATH`); otherwise the user's cache folder:
+  ~/.cache (XDG) on Linux, ~/Library/Caches on macOS, %LOCALAPPDATA% on Windows (where some
+  tools nest it differently). A path that cannot be known is nil.
+  """
+  def places(family, env, home, temp) do
+    local = blank(env.("LOCALAPPDATA"))
+
+    user_cache = fn unix, windows ->
+      case family do
+        :windows -> local && Path.join(local, windows)
+        :macos -> Path.join([home, "Library/Caches", unix])
+        _ -> Path.join(blank(env.("XDG_CACHE_HOME")) || Path.join(home, ".cache"), unix)
+      end
+    end
+
+    npm =
+      cond do
+        dir = blank(env.("npm_config_cache")) -> dir
+        family != :windows -> Path.join(home, ".npm")
+        true -> local && Path.join(local, "npm-cache")
       end
 
-    base && Path.join(base, "_cacache")
+    playwright =
+      case env.("PLAYWRIGHT_BROWSERS_PATH") do
+        value when value in [nil, "", "0"] -> user_cache.("ms-playwright", "ms-playwright")
+        value -> value
+      end
+
+    %{
+      family: family,
+      temp: temp,
+      npm: npm && Path.join(npm, "_cacache"),
+      pip: blank(env.("PIP_CACHE_DIR")) || user_cache.("pip", "pip/Cache"),
+      go: blank(env.("GOCACHE")) || user_cache.("go-build", "go-build"),
+      cargo: Path.join(blank(env.("CARGO_HOME")) || Path.join(home, ".cargo"), "registry/cache"),
+      playwright: playwright
+    }
   end
 
-  defp cargo_cache do
-    (System.get_env("CARGO_HOME") || Path.join(System.user_home!(), ".cargo"))
-    |> Path.join("registry/cache")
-  end
-
-  defp env_or(name, default) do
-    case System.get_env(name) do
-      value when value in [nil, ""] -> default
-      value -> value
-    end
-  end
-
-  # The user's cache folder for a tool: ~/.cache (XDG) on Linux, ~/Library/Caches on macOS,
-  # %LOCALAPPDATA% on Windows (where some tools nest it differently).
-  defp user_cache(unix, windows) do
-    case OS.family() do
-      :windows ->
-        case System.get_env("LOCALAPPDATA") do
-          nil -> nil
-          dir -> Path.join(dir, windows)
-        end
-
-      :macos ->
-        Path.join([System.user_home!(), "Library/Caches", unix])
-
-      _ ->
-        Path.join(System.get_env("XDG_CACHE_HOME") || Path.join(System.user_home!(), ".cache"), unix)
-    end
-  end
+  defp blank(value) when value in [nil, ""], do: nil
+  defp blank(value), do: value
 
   # Paths as the runner's users write them (Elixir joins with "/", Windows' home has "\\").
-  defp display(path), do: if(OS.windows?(), do: String.replace(path, "/", "\\"), else: path)
+  @doc false
+  def display(%{family: :windows}, path), do: String.replace(path, "/", "\\")
+  def display(_places, path), do: path
 
-  defp uid(path) do
-    case File.stat(path) do
-      {:ok, %{uid: uid}} -> uid
-      _ -> -1
-    end
-  end
-
-  defp ls(dir) do
-    case File.ls(dir) do
-      {:ok, names} -> names
-      _ -> []
-    end
-  end
+  defp ls(dir), do: Files.ls(dir)
 
   # --- measuring and removing ----------------------------------------------------------------
 
@@ -400,16 +377,39 @@ defmodule Testor.Maintenance do
     end
   end
 
+  @doc """
+  Deletes `path` and everything under it without following links, and returns the errors.
+  Unlike File.rm_rf/1 it removes Windows junctions whose target is gone (npm workspaces leave
+  them once the snapshot's packages are deleted): File.rm/1 refuses those (eperm), deleting
+  them as directories works.
+  """
+  def remove_tree(path) do
+    case File.lstat(path) do
+      {:ok, %{type: :directory}} ->
+        case path |> ls() |> Enum.flat_map(&remove_tree(Path.join(path, &1))) do
+          [] -> result(path, File.rmdir(path))
+          errors -> errors
+        end
+
+      {:ok, %{type: :symlink}} ->
+        result(path, OS.remove_link(path))
+
+      {:ok, _} ->
+        result(path, File.rm(path))
+
+      error ->
+        result(path, error)
+    end
+  end
+
+  defp result(_path, :ok), do: []
+  defp result(_path, {:error, :enoent}), do: []
+  defp result(path, {:error, reason}), do: ["#{path}: #{:file.format_error(reason)}"]
+
   defp remove(plans, before) do
     targets =
       Enum.map(plans, fn {id, paths} ->
-        errors =
-          Enum.flat_map(paths, fn path ->
-            case File.rm_rf(path) do
-              {:ok, _} -> []
-              {:error, reason, file} -> ["#{file}: #{:file.format_error(reason)}"]
-            end
-          end)
+        errors = Enum.flat_map(paths, &remove_tree/1)
 
         left = paths |> Enum.map(&measure(&1).bytes) |> Enum.sum()
 

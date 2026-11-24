@@ -1,0 +1,242 @@
+defmodule Testor.Web.ApiV1 do
+  @moduledoc """
+  The versioned API, `/api/v1`: stable paths and shapes for scripts, CI and other programs,
+  described by `GET /api/v1/openapi.json` (OpenAPI 3.1). Collections answer
+  `{"data": [...]}` (with `"next"` where they page), errors `{"error": {"code", "message"}}`,
+  except the token endpoint, which answers errors as OAuth 2.0 does (RFC 6749, 5.2).
+
+  The dashboard keeps its own routes (`/api/*`, `/events`); both read the same data.
+  """
+  use Plug.Router
+  import Testor.Web.Reply
+  alias Testor.{Auth, Device, Janitor, Maintenance, Query, Sessions, Stats, Views}
+  alias Testor.Web.{Actions, OpenAPI, SSE}
+
+  plug(:match)
+  plug(:dispatch)
+
+  get "/health" do
+    json(conn, 200, Views.health(conn.assigns[:principal]))
+  end
+
+  get "/openapi.json" do
+    json(conn, 200, OpenAPI.spec())
+  end
+
+  # --- authentication ------------------------------------------------------------------------
+
+  # The OAuth 2.0 client credentials grant (RFC 6749, 4.4) with the user's Basic credentials.
+  post "/auth/token" do
+    settings = Auth.settings()
+
+    with true <- settings.enabled || {:off, conn},
+         {:ok, params, conn} <- body_params(conn),
+         true <- params["grant_type"] in [nil, "client_credentials"] || {:grant, conn} do
+      case Auth.issue_token(conn.assigns.principal, params, settings) do
+        {:ok, token} ->
+          conn |> put_resp_header("pragma", "no-cache") |> json(200, token)
+
+        {:error, :invalid_client} ->
+          conn
+          |> put_resp_header("www-authenticate", ~s(Basic realm="testor", charset="UTF-8"))
+          |> oauth_error(
+            401,
+            "invalid_client",
+            "a token is obtained with Basic credentials, not with a token"
+          )
+
+        {:error, :invalid_scope} ->
+          oauth_error(conn, 400, "invalid_scope", "scope must be a non-empty subset of the user's scopes")
+
+        {:error, :invalid_request} ->
+          oauth_error(conn, 400, "invalid_request", "expires_in must be a number of seconds, 60 or more")
+      end
+    else
+      {:off, conn} ->
+        oauth_error(conn, 400, "invalid_request", "authentication is off: there are no tokens")
+
+      {:grant, conn} ->
+        oauth_error(conn, 400, "unsupported_grant_type", "only client_credentials is supported")
+
+      {:error, conn} ->
+        conn
+    end
+  end
+
+  get "/auth/me" do
+    principal = conn.assigns.principal
+
+    json(conn, 200, %{
+      "authEnabled" => principal.via != :none,
+      "user" => principal.sub,
+      "via" => to_string(principal.via),
+      "scopes" => principal.scopes,
+      "expiresAt" => principal[:exp]
+    })
+  end
+
+  # --- runs ----------------------------------------------------------------------------------
+
+  get "/runs" do
+    conn = fetch_query_params(conn)
+
+    case run_filters(conn.query_params) do
+      {:ok, opts} ->
+        {runs, next} = Query.runs(opts)
+        json(conn, 200, %{"data" => runs, "next" => next})
+
+      {:error, message} ->
+        error(conn, 400, "bad_request", message)
+    end
+  end
+
+  get "/runs/:id" do
+    with_id(conn, id, fn conn ->
+      case Views.run_snapshot(id) do
+        nil ->
+          error(conn, 404, "not_found", "no such run")
+
+        snapshot ->
+          snapshot = snapshot |> Map.drop(["log", "truncated"]) |> Map.update!("run", &Query.compact/1)
+          json(conn, 200, snapshot)
+      end
+    end)
+  end
+
+  get "/runs/:id/log" do
+    with_id(conn, id, fn conn ->
+      conn = fetch_query_params(conn)
+      params = conn.query_params
+      tail = int(params["tail"], 512 * 1024, 1, 64 * 1024 * 1024)
+      context = int(params["context"], 0, 0, 20)
+      log = Query.log(id, tail, params["grep"], context)
+
+      conn
+      |> put_resp_header("x-log-size", to_string(log.size))
+      |> put_resp_header("x-log-truncated", to_string(log.truncated))
+      |> then(&if(log.matches, do: put_resp_header(&1, "x-log-matches", to_string(log.matches)), else: &1))
+      |> put_resp_header("cache-control", "no-store")
+      |> put_resp_content_type("text/plain")
+      |> send_resp(200, log.text)
+    end)
+  end
+
+  get "/runs/:id/events" do
+    with_id(conn, id, &SSE.run(&1, id))
+  end
+
+  post "/runs/:id/cancel" do
+    with_id(conn, id, &reply(&1, Actions.cancel(id), 200))
+  end
+
+  delete "/runs/:id" do
+    with_id(conn, id, &reply(&1, Actions.delete(id), 200))
+  end
+
+  # --- the rest ------------------------------------------------------------------------------
+
+  get "/events" do
+    SSE.global(conn)
+  end
+
+  get "/projects" do
+    json(conn, 200, %{"data" => Query.projects()})
+  end
+
+  get "/sessions" do
+    json(conn, 200, %{"data" => Sessions.list()})
+  end
+
+  get "/stats" do
+    json(conn, 200, Stats.get())
+  end
+
+  get "/device" do
+    json(conn, 200, Device.snapshot())
+  end
+
+  get "/screenshots" do
+    json(conn, 200, %{"data" => Views.screenshots_all()})
+  end
+
+  get "/artifacts" do
+    json(conn, 200, %{"data" => Views.artifacts_all()})
+  end
+
+  post "/cleanup" do
+    json(conn, 200, Janitor.run("api"))
+  end
+
+  get "/maintenance" do
+    json(conn, 200, Maintenance.state())
+  end
+
+  post "/maintenance/scan" do
+    json(conn, 202, Maintenance.scan())
+  end
+
+  post "/maintenance/clean" do
+    case body_params(conn) do
+      {:ok, params, conn} -> reply(conn, Actions.maintenance_clean(params), 202)
+      {:error, conn} -> conn
+    end
+  end
+
+  match _ do
+    error(
+      conn,
+      404,
+      "not_found",
+      "no such endpoint: #{conn.method} /api/v1/#{Enum.join(conn.path_info, "/")}"
+    )
+  end
+
+  # --- helpers -------------------------------------------------------------------------------
+
+  defp reply(conn, {:ok, data}, status), do: json(conn, status, data)
+  defp reply(conn, {:error, status, code, message}, _), do: error(conn, status, code, message)
+
+  defp with_id(conn, id, fun) do
+    if valid_id?(id), do: fun.(conn), else: error(conn, 400, "bad_request", "bad id")
+  end
+
+  defp oauth_error(conn, status, code, description) do
+    json(conn, status, %{"error" => code, "error_description" => description})
+  end
+
+  defp run_filters(params) do
+    statuses = Query.statuses()
+
+    cond do
+      params["status"] not in [nil | statuses] ->
+        {:error, "status is one of #{Enum.join(statuses, ", ")}"}
+
+      params["before"] != nil and not valid_id?(params["before"]) ->
+        {:error, "before is a run id"}
+
+      true ->
+        {:ok,
+         %{
+           status: params["status"],
+           project: params["project"],
+           kind: params["kind"],
+           q: blank_to_nil(params["q"]),
+           before: params["before"],
+           limit: int(params["limit"], 50, 1, 500)
+         }}
+    end
+  end
+
+  defp blank_to_nil(""), do: nil
+  defp blank_to_nil(value) when is_binary(value), do: value
+  defp blank_to_nil(_), do: nil
+
+  defp int(value, default, low, high) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} -> n |> max(low) |> min(high)
+      _ -> default
+    end
+  end
+
+  defp int(_value, default, _low, _high), do: default
+end
