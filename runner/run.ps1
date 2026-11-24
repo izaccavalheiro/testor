@@ -4,16 +4,24 @@
 #   logs\<id>.log         everything the command printed (it is still printed, unchanged)
 #   screenshots\<id>\     images the run wrote under test-results, __screenshots__, screenshots
 #                         or .vitest-attachments, plus anything saved to $env:SCREENSHOT_DIR
+#   artifacts\<id>\       what -Artifacts names (reports, coverage, ...), videos from the same
+#                         folders as screenshots, plus anything saved to $env:TESTOR_ARTIFACT_DIR
 # The folders are next to this script (the testor home). Recording never fails a run: only
 # the command's own error is rethrown, so output, stderr and the exit code are unchanged.
 #
 #   & "$HOME/test-run/.testor/run.ps1" -Project my-app -Kind test -Body { npm test }
+#   & ... -Artifacts coverage, playwright-report, "reports/*.md" -Body { npm run test:coverage }
 #
-# The command sees $env:TESTOR_RUN_ID and $env:SCREENSHOT_DIR (a folder kept with the run).
+# -Artifacts: files and folders, relative to the working folder (wildcards allowed), kept with
+# the run when the run wrote them (a folder counts when any file in it is new). They are copied
+# in order until artifacts.maxRunMB (config.json, default 256) is reached; the rest is skipped
+# with a warning. The command sees $env:TESTOR_RUN_ID, $env:SCREENSHOT_DIR and
+# $env:TESTOR_ARTIFACT_DIR (folders kept with the run).
 param(
   [Parameter(Mandatory)][string]$Project,
   [Parameter(Mandatory)][string]$Kind,
-  [Parameter(Mandatory)][scriptblock]$Body
+  [Parameter(Mandatory)][scriptblock]$Body,
+  [string[]]$Artifacts = @()
 )
 
 $root = $PSScriptRoot
@@ -23,6 +31,20 @@ $id = $started.ToUniversalTime().ToString("yyyyMMdd-HHmmss") + "-" + [guid]::New
 $runFile = Join-Path (Join-Path $root "runs") "$id.json"
 $logFile = Join-Path (Join-Path $root "logs") "$id.log"
 $shotDir = Join-Path (Join-Path $root "screenshots") $id
+$artDir = Join-Path (Join-Path $root "artifacts") $id
+# Files this run wrote are the ones changed since it started; the margin covers file systems
+# that keep modification times to the second (or two, on FAT).
+$since = $started.AddSeconds(-2)
+$imageExt = ".png", ".jpg", ".jpeg", ".webp", ".gif"
+$videoExt = ".webm", ".mp4"
+$maxRunBytes = 256MB
+try {
+  $configFile = Join-Path $root "config.json"
+  if (Test-Path -LiteralPath $configFile) {
+    $mb = (Get-Content -Raw -LiteralPath $configFile | ConvertFrom-Json).artifacts.maxRunMB
+    if ($mb -gt 0) { $maxRunBytes = [long]$mb * 1MB }
+  }
+} catch { Write-Warning "testor: config.json: $_" }
 
 $record = [ordered]@{
   id         = $id
@@ -43,24 +65,66 @@ function Save-Record {
   } catch { Write-Warning "testor: could not save the run record: $_" }
 }
 
-function Find-Screenshots([string]$dir, [bool]$inShotFolder) {
+# Images and videos under the folders test runners write screenshots to.
+function Find-Media([string]$dir, [bool]$inShotFolder) {
   foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue) {
     if ($item.PSIsContainer) {
       if ($item.Name -in "node_modules", "target", ".git", ".venv", "playwright-report") { continue }
       $shots = $inShotFolder -or ($item.Name -in "test-results", "__screenshots__", "screenshots", ".vitest-attachments")
-      Find-Screenshots $item.FullName $shots
-    } elseif ($inShotFolder -and $item.Extension -in ".png", ".jpg", ".jpeg", ".webp", ".gif" -and $item.LastWriteTime -ge $started) {
+      Find-Media $item.FullName $shots
+    } elseif ($inShotFolder -and ($item.Extension -in $imageExt -or $item.Extension -in $videoExt) -and $item.LastWriteTime -ge $since) {
       $item
     }
   }
 }
 
+$copied = [Collections.Generic.HashSet[string]]::new()
+$artBytes = [long]0
+$skipped = [Collections.Generic.List[string]]::new()
+# Copies files into the artifacts folder at their path relative to the working folder, all of
+# them or none: a report missing half its files is worse than none.
+function Copy-Artifact([object[]]$files, [string]$label) {
+  $files = @($files | Where-Object { -not $script:copied.Contains($_.FullName) })
+  if (-not $files.Count) { return }
+  $size = [long]($files | Measure-Object -Property Length -Sum).Sum
+  if ($script:artBytes + $size -gt $maxRunBytes) {
+    $script:skipped.Add("$label ($([math]::Round($size / 1MB, 1)) MB)")
+    return
+  }
+  foreach ($file in $files) {
+    $target = Join-Path $artDir ([IO.Path]::GetRelativePath($workdir, $file.FullName))
+    $null = [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+    [IO.File]::Copy($file.FullName, $target, $true)
+    $null = $script:copied.Add($file.FullName)
+  }
+  $script:artBytes += $size
+}
+
+function Save-Artifacts {
+  foreach ($pattern in $Artifacts) {
+    if ([string]::IsNullOrWhiteSpace($pattern)) { continue }
+    $pattern = $pattern.Trim()
+    if ([IO.Path]::IsPathRooted($pattern)) { Write-Warning "testor: artifact '$pattern' is not relative to the working folder; skipped"; continue }
+    foreach ($item in @(Get-Item -Path (Join-Path $workdir $pattern) -Force -ErrorAction SilentlyContinue)) {
+      $rel = [IO.Path]::GetRelativePath($workdir, $item.FullName)
+      if ($rel -eq "." -or $rel -eq ".." -or $rel.StartsWith("..$([IO.Path]::DirectorySeparatorChar)") -or [IO.Path]::IsPathRooted($rel)) {
+        Write-Warning "testor: artifact '$pattern' is outside the working folder; skipped"; continue
+      }
+      $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force -ErrorAction SilentlyContinue) } else { @($item) }
+      # Reports copy their assets with the original dates, so one new file is enough.
+      if (-not ($files | Where-Object { $_.LastWriteTime -ge $since } | Select-Object -First 1)) { continue }
+      Copy-Artifact $files $rel
+    }
+  }
+}
+
 try {
-  $null = New-Item -ItemType Directory -Force -Path (Join-Path $root "runs"), (Join-Path $root "logs"), $shotDir
+  $null = New-Item -ItemType Directory -Force -Path (Join-Path $root "runs"), (Join-Path $root "logs"), $shotDir, $artDir
 } catch { Write-Warning "testor: $_" }
 Save-Record
 $env:TESTOR_RUN_ID = $id
 $env:SCREENSHOT_DIR = $shotDir
+$env:TESTOR_ARTIFACT_DIR = $artDir
 
 $failure = $null
 $global:LASTEXITCODE = 0
@@ -104,7 +168,9 @@ try {
     $record.endedAt = $ended.ToUniversalTime().ToString("o")
     $record.durationMs = [int]($ended - $started).TotalMilliseconds
 
-    foreach ($file in @(Find-Screenshots $workdir $false)) {
+    $videos = @()
+    foreach ($file in @(Find-Media $workdir $false)) {
+      if ($file.Extension -in $videoExt) { $videos += $file; continue }
       $rel = [IO.Path]::GetRelativePath($workdir, $file.FullName)
       $target = Join-Path $shotDir $rel
       $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
@@ -113,6 +179,20 @@ try {
     $images = @(Get-ChildItem -LiteralPath $shotDir -Recurse -File -ErrorAction SilentlyContinue)
     $record.screenshots = $images.Count
     if ($images.Count -eq 0) { Remove-Item -LiteralPath $shotDir -Recurse -Force -ErrorAction SilentlyContinue }
+  } catch { Write-Warning "testor: $_" }
+  try {
+    Save-Artifacts
+    foreach ($video in $videos) { Copy-Artifact @($video) ([IO.Path]::GetRelativePath($workdir, $video.FullName)) }
+    if ($skipped.Count) {
+      $record.artifactsSkipped = @($skipped)
+      Write-Warning "testor: artifacts over the run's $([math]::Round($maxRunBytes / 1MB)) MB limit (artifacts.maxRunMB) were not kept: $($skipped -join ', ')"
+    }
+  } catch { Write-Warning "testor: artifacts: $_" }
+  try {
+    $kept = @(Get-ChildItem -LiteralPath $artDir -Recurse -File -Force -ErrorAction SilentlyContinue)
+    $record.artifacts = $kept.Count
+    $record.artifactsBytes = [long]($kept | Measure-Object -Property Length -Sum).Sum
+    if ($kept.Count -eq 0) { Remove-Item -LiteralPath $artDir -Recurse -Force -ErrorAction SilentlyContinue }
   } catch { Write-Warning "testor: $_" }
   Save-Record
 }

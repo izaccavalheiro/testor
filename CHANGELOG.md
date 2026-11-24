@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Artifacts**: `ARTIFACTS` in a task (`remote.yml`; `run.ps1 -Artifacts`) keeps the files and
+  folders a run writes (coverage, HTML reports, Markdown, JUnit XML, ...) with the run, up to
+  `artifacts.maxRunMB` per run; Playwright's videos and `$env:TESTOR_ARTIFACT_DIR` are kept too.
+  Run pages list them (reports as one entry, videos with a player), an Artifacts page lists
+  every run's, and the janitor limits them by age and size (`artifacts.*`). They are served
+  sandboxed (`Content-Security-Policy: sandbox`), with byte ranges.
+- **Maintenance**: a Maintenance page and `/api/maintenance` measure what testing leaves on the
+  runner (idle project snapshots, old temporary files, the npm, pip, Go and Cargo caches, old
+  Playwright browsers) and delete the targets chosen and confirmed, when `maintenance.enabled`
+  is set in `config.json` and nothing runs.
+- The janitor leaves a run's empty screenshot or artifact folder alone for an hour, so a run
+  the store has not seen yet keeps it.
+
 ## 0.1.0
 
 The first release. Runners can be Windows, Linux or macOS machines, and the workstation any of

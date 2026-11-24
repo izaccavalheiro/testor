@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>testor</title>
+<link rel="icon" href="data:,">
 <style>
 :root {
   --bg: #f6f7f9; --panel: #fff; --text: #1b1f24; --muted: #646d78; --line: #e3e6ea; --hover: #f0f2f5;
@@ -86,6 +87,10 @@ button.small { padding: 2px 8px; font-size: 12px; }
 .shot img { width: 100%; height: 150px; object-fit: cover; object-position: top; display: block; background: var(--bg); cursor: zoom-in; }
 .shot .cap { padding: 8px 10px; font-size: 12px; }
 .shot .cap div { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin-top: 12px; }
+.shot video { width: 100%; height: 200px; display: block; background: #000; }
+h3.group { font-size: 13px; font-weight: 400; margin: 18px 0 8px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+td.path { word-break: break-all; color: var(--muted); }
 .thumb { width: 54px; height: 34px; object-fit: cover; object-position: top; border-radius: 4px; border: 1px solid var(--line); vertical-align: middle; cursor: zoom-in; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; padding: 14px; margin: 0; }
 .kv dt { color: var(--muted); }
@@ -135,8 +140,10 @@ button.small { padding: 2px 8px; font-size: 12px; }
   <h1 id="title">testor</h1>
   <nav>
     <a href="#/" data-nav="runs">Runs</a>
+    <a href="#/artifacts" data-nav="artifacts">Artifacts</a>
     <a href="#/shots" data-nav="shots">Screenshots</a>
     <a href="#/device" data-nav="device">Device</a>
+    <a href="#/maintenance" data-nav="maintenance">Maintenance</a>
   </nav>
   <div class="right"><span id="usage"></span><span id="disk"></span><span><span class="dot" id="conn"></span> <span id="conn-text">connecting…</span></span></div>
 </header>
@@ -154,7 +161,10 @@ const S = { runs: new Map(), sessions: [], stats: null, config: null, host: "", 
 const procSort = { key: "cpu" };
 const filters = { project: "", kind: "", status: "", q: "" };
 const shotFilters = { project: "" };
+const artFilters = { project: "" };
 let route = parseRoute(), detail = null, runES = null, shots = null, shotsDirty = true, flashIds = new Set();
+let arts = null, artsDirty = true, maint = null;
+const maintSel = { scanId: null, ids: new Set() };
 
 // --- formatting ---------------------------------------------------------------------------------
 function bytes(n) {
@@ -237,7 +247,7 @@ function connect() {
     S.runs = new Map([...d.running, ...d.history].map((r) => [r.id, r]));
     Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, paths: d.paths, ready: true });
     if (d.device) S.device = { static: d.device.static, sample: d.device.sample, history: d.device.history || [] };
-    shotsDirty = true;
+    shotsDirty = artsDirty = true;
     setConn("live");
   });
   on("run", (r) => {
@@ -247,7 +257,7 @@ function connect() {
     if (prev?.status === "running" && r.status !== "running") {
       toast(r, `<b>${esc(r.project)}</b> · ${esc(r.kind)} ${badge(r.status)} in ${dur(r.durationMs)}`);
       flashIds.add(r.id); setTimeout(() => flashIds.delete(r.id), 2000);
-      shotsDirty = true;
+      shotsDirty = artsDirty = true;
     }
     if (detail && detail.run.id === r.id) detail.run = { ...detail.run, ...r };
   });
@@ -256,9 +266,10 @@ function connect() {
     if (r && r.status === "running") Object.assign(r, d);
     if (detail && detail.run.id === d.id && detail.run.status === "running") Object.assign(detail.run, d);
   });
-  on("run_removed", (d) => { S.runs.delete(d.id); shotsDirty = true; });
+  on("run_removed", (d) => { S.runs.delete(d.id); shotsDirty = artsDirty = true; });
   on("sessions", (list) => { S.sessions = list; });
-  on("stats", (stats) => { S.stats = stats; shotsDirty = true; });
+  on("stats", (stats) => { S.stats = stats; shotsDirty = artsDirty = true; });
+  on("maintenance", (m) => { maint = m; });
   on("device", (d) => { S.device.sample = d.sample; S.device.history = [...S.device.history, d.point].slice(-360); });
   on("device_static", (st) => { S.device.static = st; });
   es.onopen = () => setConn("live");
@@ -270,6 +281,8 @@ function parseRoute() {
   const h = location.hash.replace(/^#\/?/, "");
   if (h.startsWith("run/")) return { name: "run", id: decodeURIComponent(h.slice(4)) };
   if (h.startsWith("shots")) return { name: "shots" };
+  if (h.startsWith("artifacts")) return { name: "artifacts" };
+  if (h.startsWith("maintenance")) return { name: "maintenance" };
   if (h.startsWith("device")) return { name: "device" };
   return { name: "runs" };
 }
@@ -282,6 +295,8 @@ function enter() {
   if (route.name === "run") openRun(route.id);
   if (route.name === "device") app.innerHTML = `<div id="device-view"></div>`;
   if (route.name === "shots") { app.innerHTML = `<div id="shots-view"></div>`; shotsDirty = true; }
+  if (route.name === "artifacts") { app.innerHTML = `<div id="arts-view"></div>`; artsDirty = true; }
+  if (route.name === "maintenance") { app.innerHTML = `<div id="maint-view"></div>`; loadMaint(); }
   if (route.name === "runs") app.innerHTML = `<div id="runs-view"></div>`;
   schedule();
 }
@@ -297,6 +312,8 @@ function render() {
   $("#usage").textContent = smp ? `CPU ${Math.round(smp.cpu ?? 0)}% · RAM ${memPct != null ? Math.round(memPct) : "–"}%` : "";
   if (route.name === "run") renderRun();
   else if (route.name === "shots") renderShots();
+  else if (route.name === "artifacts") renderArts();
+  else if (route.name === "maintenance") renderMaint();
   else if (route.name === "device") renderDevice();
   else renderRuns();
 }
@@ -332,6 +349,8 @@ function renderRuns() {
       <div class="sub">${history[0] ? `${esc(history[0].kind)} · ${ago(history[0].endedAt ?? history[0].startedAt)}` : ""}</div></div>
     <div class="tile"><div class="label">Screenshots</div><div class="value">${st?.screenshots?.count ?? "–"}</div>
       <div class="sub">${bytes(st?.screenshots?.bytes)} of ${cfg.screenshots.maxTotalMB} MB · kept ${cfg.screenshots.maxAgeDays} d</div></div>
+    <div class="tile"><div class="label">Artifacts</div><div class="value">${st?.artifacts ? `${st.artifacts.runs} runs` : "–"}</div>
+      <div class="sub">${bytes(st?.artifacts?.bytes)} of ${cfg.artifacts.maxTotalMB} MB · kept ${cfg.artifacts.maxAgeDays} d</div></div>
     <div class="tile"><div class="label">Disk free</div><div class="value">${st?.disk ? bytes(st.disk.free) : "–"}</div>
       <div class="sub">${st?.disk ? `of ${bytes(st.disk.total)}` : ""}</div></div>
   </div>
@@ -374,7 +393,7 @@ function renderRuns() {
     <span class="muted">${rows.length} of ${history.length} · keeps ${cfg.runs.maxRuns} runs, ${cfg.runs.maxAgeDays} d</span>
   </div>
   <div class="panel">${rows.length ? `<table>
-    <thead><tr><th>Started</th><th>Project</th><th>Type</th><th class="hide-sm">Command</th><th>Status</th><th class="num">Duration</th><th>Specs</th><th>Shots</th></tr></thead>
+    <thead><tr><th>Started</th><th>Project</th><th>Type</th><th class="hide-sm">Command</th><th>Status</th><th class="num">Duration</th><th>Specs</th><th>Shots</th><th class="hide-sm">Artifacts</th></tr></thead>
     <tbody>${rows.slice(0, 300).map((r) => `
       <tr class="click${flashIds.has(r.id) ? " flash" : ""}" data-run="${esc(r.id)}">
         <td title="${esc(r.startedAt)}">${when(r.startedAt)}</td>
@@ -385,6 +404,7 @@ function renderRuns() {
         <td class="num">${dur(r.durationMs)}</td>
         <td>${specCell(r.summary)}</td>
         <td>${shotCell(r.screenshots)}</td>
+        <td class="hide-sm">${r.artifacts ? `<span class="tag">${r.artifacts} file${r.artifacts > 1 ? "s" : ""}</span>` : `<span class="muted">–</span>`}</td>
       </tr>`).join("")}</tbody></table>` : `<div class="empty">No finished runs${filters.project || filters.kind || filters.status || filters.q ? " match the filters" : " yet"}.</div>`}</div>`, () => {
     app.querySelectorAll("[data-run]").forEach((el) => el.addEventListener("click", () => { location.hash = `#/run/${encodeURIComponent(el.dataset.run)}`; }));
     app.querySelectorAll("[data-device]").forEach((el) => el.addEventListener("click", () => { location.hash = "#/device"; }));
@@ -404,7 +424,7 @@ async function cancelRun(id) {
 // --- run view -----------------------------------------------------------------------------------
 const MAX_LOG_LINES = 5000;
 function openRun(id) {
-  app.innerHTML = `<div id="run-top"><div class="panel empty">Loading…</div></div>
+  app.innerHTML = `<div id="run-top"><div class="panel empty">Loading…</div></div><div id="run-artifacts"></div>
     <h2 id="log-head">Output</h2><div class="panel"><pre class="log mono" id="log"></pre></div>`;
   const es = runES = new EventSource(`/events/runs/${encodeURIComponent(id)}`);
   const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
@@ -417,6 +437,7 @@ function openRun(id) {
   on("specs", (specs) => { if (detail) detail.specs = specs; });
   on("run", (r) => { if (detail) detail.run = r; });
   on("screenshots", (list) => { if (detail) detail.screenshots = list; });
+  on("artifacts", (list) => { if (detail) detail.artifacts = list; });
   on("removed", () => { location.hash = "#/"; });
   es.onerror = () => {
     if (es.readyState === EventSource.CLOSED && !detail) paint($("#run-top"), `<div class="panel empty">No such run. <a href="#/">All runs</a></div>`);
@@ -482,12 +503,128 @@ function renderRun() {
   ${unmatched && specs.length ? `<p class="muted">${unmatched} screenshot(s) did not match a spec file.</p>` : ""}`, () => {
     $("#cancel")?.addEventListener("click", () => cancelRun(run.id));
     $("#delete")?.addEventListener("click", async () => {
-      if (!confirm("Delete this run, its log and its screenshots?")) return;
+      if (!confirm("Delete this run, its log, its screenshots and its artifacts?")) return;
       try { await api(`/api/runs/${encodeURIComponent(run.id)}`, { method: "DELETE" }); location.hash = "#/"; } catch (e) { alert(e.message); }
     });
     bindLightbox();
   });
+  renderRunArtifacts();
   paint($("#log-head"), `Output <span class="plain muted">· ${bytes(detail.logBytes)}${live ? ` · <span style="color:var(--blue)">streaming</span>` : ""}${detail.truncated || detail.trimmed ? " · showing the end" : ""} · <a href="/api/runs/${encodeURIComponent(run.id)}/log?tail=67108864" target="_blank">full log</a></span>`);
+}
+
+// --- artifacts ----------------------------------------------------------------------------------
+// Artifacts open in a new tab, served sandboxed (an opaque origin): reports run their scripts
+// there, never with this page's access to the API.
+const sep = () => ((S.paths?.home ?? "").includes("\\") ? "\\" : "/");
+function artifactTable(list) {
+  return `<table><thead><tr><th>Artifact</th><th>Type</th><th class="num hide-sm">Files</th><th class="num">Size</th><th class="hide-sm">Modified</th></tr></thead>
+    <tbody>${list.map((a) => `<tr>
+      <td class="mono"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.path)}</a></td><td><span class="tag">${esc(a.kind)}</span></td>
+      <td class="num hide-sm">${a.files}</td><td class="num">${bytes(a.bytes)}</td><td class="hide-sm">${when(a.modifiedAt)}</td></tr>`).join("")}</tbody></table>`;
+}
+function renderRunArtifacts() {
+  const { run, artifacts = [] } = detail;
+  const live = run.status === "running", videos = artifacts.filter((a) => a.kind === "video");
+  paint($("#run-artifacts"), `
+  <h2>Artifacts (${artifacts.length})${run.artifactsBytes ? ` <span class="plain muted">· ${bytes(run.artifactsBytes)}</span>` : ""}</h2>
+  ${run.artifactsSkipped?.length ? `<div class="panel warn" style="padding:10px 14px;margin-bottom:12px">⚠ Not kept, over the run's ${esc(S.config?.artifacts?.maxRunMB)} MB limit (artifacts.maxRunMB): ${esc(run.artifactsSkipped.join(", "))}</div>` : ""}
+  ${artifacts.length ? `<div class="panel">${artifactTable(artifacts)}</div>
+    ${videos.length ? `<div class="vgrid">${videos.map((v) => `<div class="shot"><video controls preload="metadata" src="${esc(v.url)}"></video>
+      <div class="cap"><div class="mono" title="${esc(v.path)}">${esc(v.path)}</div><div class="muted">${bytes(v.bytes)}</div></div></div>`).join("")}</div>` : ""}`
+    : `<div class="panel empty">${live ? "Artifacts are collected when the run ends (or saved live to $env:TESTOR_ARTIFACT_DIR)."
+      : "No artifacts. Name reports, coverage or other files with ARTIFACTS in the task (remote.yml), or save them to $env:TESTOR_ARTIFACT_DIR; videos under test-results are kept on their own."}</div>`}`);
+}
+let artsLoading = false;
+async function loadArts() {
+  if (artsLoading) return;
+  artsLoading = true; artsDirty = false;
+  try { arts = await (await api("/api/artifacts")).json(); } catch { artsDirty = true; }
+  artsLoading = false;
+  schedule();
+}
+async function cleanupNow(e) {
+  e.target.disabled = true; e.target.textContent = "Cleaning…";
+  try { await api("/api/cleanup", { method: "POST" }); shotsDirty = artsDirty = true; schedule(); } catch (err) { alert(err.message); }
+  e.target.disabled = false; e.target.textContent = "Clean up now";
+}
+function renderArts() {
+  if (artsDirty) loadArts();
+  if (!arts) return;
+  const list = arts.filter((g) => !artFilters.project || g.project === artFilters.project);
+  const projects = [...new Set(arts.map((g) => g.project).filter(Boolean))].sort();
+  const c = S.config.artifacts, a = S.stats?.artifacts, used = a?.bytes ?? 0, cap = c.maxTotalMB * 1048576;
+  paint($("#arts-view"), `
+  <div class="panel" style="padding:14px">
+    <div class="row"><b>Artifacts folder</b> <span class="mono muted">${esc(S.paths?.home ?? "")}${sep()}artifacts</span>
+      <button id="cleanup" style="margin-left:auto">Clean up now</button></div>
+    <div class="muted" style="margin-top:6px">${a ? `${a.runs} runs · ${a.files} files · ` : ""}${bytes(used)} of ${c.maxTotalMB} MB · up to ${c.maxRunMB} MB per run ·
+      artifacts older than ${c.maxAgeDays} days are deleted, then the oldest runs' artifacts until the folder fits</div>
+    <div class="bar"><span style="width:${Math.min(100, 100 * used / cap)}%;background:${used > cap * .9 ? "var(--red)" : "var(--blue)"}"></span></div>
+  </div>
+  <h2>All artifacts</h2>
+  <div class="filters"><select id="a-project"><option value="">All projects</option>${projects.map((p) => `<option ${p === artFilters.project ? "selected" : ""}>${esc(p)}</option>`).join("")}</select>
+    <span class="muted">${list.length} runs</span></div>
+  ${list.length ? list.slice(0, 200).map((g) => `
+    <h3 class="group">${g.project ? `<a href="#/run/${encodeURIComponent(g.runId)}"><b>${esc(g.project)}</b> · ${esc(g.kind)}</a> ${badge(g.status)}` : `<span class="mono">${esc(g.runId)}</span> <span class="muted">(run deleted)</span>`}
+      <span class="muted">${when(g.startedAt)}</span></h3>
+    <div class="panel">${artifactTable(g.artifacts)}</div>`).join("")
+    : `<div class="panel empty">No artifacts yet. Name them with ARTIFACTS in a task (remote.yml) or save them to $env:TESTOR_ARTIFACT_DIR.</div>`}`, () => {
+    $("#a-project").addEventListener("change", (e) => { artFilters.project = e.target.value; schedule(); });
+    $("#cleanup").addEventListener("click", cleanupNow);
+  });
+}
+
+// --- maintenance --------------------------------------------------------------------------------
+async function loadMaint() {
+  try { maint = await (await api("/api/maintenance")).json(); } catch (e) { maint = { error: e.message }; }
+  schedule();
+}
+function renderMaint() {
+  if (!maint) { paint($("#maint-view"), `<div class="panel empty">Loading…</div>`); return; }
+  const scan = maint.scan, busy = maint.scanning || maint.cleaning;
+  if (scan && maintSel.scanId !== scan.id) { maintSel.scanId = scan.id; maintSel.ids = new Set(scan.targets.filter((t) => t.suggested).map((t) => t.id)); }
+  const running = [...S.runs.values()].filter((r) => r.status === "running").length + S.sessions.length;
+  const chosen = scan ? scan.targets.filter((t) => maintSel.ids.has(t.id)) : [];
+  const total = chosen.reduce((n, t) => n + t.bytes, 0);
+  const last = maint.lastClean, lastErrors = last ? last.targets.reduce((n, t) => n + t.errors.length, 0) : 0;
+  const canPick = maint.enabled && !busy;
+  paint($("#maint-view"), `
+  <div class="panel" style="padding:14px">
+    <div class="row"><b>Maintenance</b> <span class="muted">reclaims the space testing leaves on this machine: idle project snapshots, old temporary files, tool caches, old Playwright browsers</span>
+      <button id="m-scan" style="margin-left:auto" ${busy ? "disabled" : ""}>${maint.scanning ? "Scanning…" : scan ? "Scan again" : "Scan"}</button></div>
+    ${maint.enabled === false ? `<div class="warn" style="margin-top:8px">Cleaning is off: a scan only measures. To clean from here, set <span class="mono">"maintenance": { "enabled": true }</span> in ${esc(S.paths?.home ?? "")}${sep()}config.json.</div>` : ""}
+    ${maint.error ? `<div style="color:var(--red);margin-top:8px">${esc(maint.error)}</div>` : ""}
+    ${last ? `<div class="muted" style="margin-top:6px">Last cleaning ${ago(last.at)}: freed ${bytes(last.freed)}${lastErrors ? ` · some files could not be removed (in use?): ${esc(last.targets.flatMap((t) => t.errors).slice(0, 3).join("; "))}` : ""}</div>` : ""}
+  </div>
+  <h2>Targets${scan ? ` <span class="plain muted">· scanned ${ago(scan.at)}</span>` : ""}</h2>
+  ${scan ? (scan.targets.length ? `<div class="panel"><table>
+    <thead><tr><th></th><th>Target</th><th class="hide-sm">Path</th><th class="num">Size</th><th class="num hide-sm">Files</th><th>Last used</th></tr></thead>
+    <tbody>${scan.targets.map((t) => `<tr>
+      <td><input type="checkbox" data-target="${esc(t.id)}" ${maintSel.ids.has(t.id) ? "checked" : ""} ${canPick ? "" : "disabled"}></td>
+      <td><b>${esc(t.label)}</b> <span class="tag">${esc(t.kind)}</span><div class="muted" style="font-size:12px">${esc(t.note)}</div></td>
+      <td class="hide-sm mono path">${esc(t.path)}</td><td class="num">${bytes(t.bytes)}</td><td class="num hide-sm">${t.files}</td>
+      <td>${t.lastUsed ? ago(t.lastUsed) : "–"}</td></tr>`).join("")}</tbody></table></div>
+    <div class="row" style="margin-top:12px"><span class="muted">${chosen.length} chosen · ${bytes(total)}${running ? ` · cleaning waits until nothing runs (${running} running)` : ""}</span>
+      <button class="danger" id="m-clean" style="margin-left:auto" ${!canPick || running || !chosen.length ? "disabled" : ""}>${maint.cleaning ? "Cleaning…" : "Clean chosen"}</button></div>`
+    : `<div class="panel empty">Nothing to reclaim.</div>`)
+    : `<div class="panel empty">${maint.scanning ? "Measuring… walking dependency folders can take a minute." : "Not scanned yet. A scan only measures; nothing is deleted until you choose targets and confirm."}</div>`}`, () => {
+    $("#m-scan").addEventListener("click", async () => {
+      try { maint = await (await api("/api/maintenance/scan", { method: "POST" })).json(); schedule(); } catch (e) { alert(e.message); }
+    });
+    app.querySelectorAll("[data-target]").forEach((el) => el.addEventListener("change", () => {
+      if (el.checked) maintSel.ids.add(el.dataset.target); else maintSel.ids.delete(el.dataset.target);
+      schedule();
+    }));
+    $("#m-clean")?.addEventListener("click", async () => {
+      const list = chosen.map((t) => `• ${t.label} (${bytes(t.bytes)}): ${t.path}`).join("\n");
+      if (!confirm(`Delete ${chosen.length} target${chosen.length > 1 ? "s" : ""}, ${bytes(total)}? This cannot be undone.\n\n${list}`)) return;
+      try {
+        maint = await (await api("/api/maintenance/clean", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scanId: scan.id, targets: chosen.map((t) => t.id) }) })).json();
+        schedule();
+      } catch (e) { alert(e.message); loadMaint(); }
+    });
+  });
 }
 
 // --- screenshots view ---------------------------------------------------------------------------
@@ -512,11 +649,11 @@ function renderShots() {
   const c = S.config.screenshots, used = S.stats?.screenshots?.bytes ?? 0, cap = c.maxTotalMB * 1048576, last = S.stats?.lastCleanup;
   paint($("#shots-view"), `
   <div class="panel" style="padding:14px">
-    <div class="row"><b>Screenshots folder</b> <span class="mono muted">${esc(S.paths?.home ?? "")}\\screenshots</span>
+    <div class="row"><b>Screenshots folder</b> <span class="mono muted">${esc(S.paths?.home ?? "")}${sep()}screenshots</span>
       <button id="cleanup" style="margin-left:auto">Clean up now</button></div>
     <div class="muted" style="margin-top:6px">${S.stats?.screenshots?.count ?? 0} images · ${bytes(used)} of ${c.maxTotalMB} MB ·
       images older than ${c.maxAgeDays} days are deleted, then the oldest runs' images until the folder fits; history keeps ${S.config.runs.maxRuns} runs for ${S.config.runs.maxAgeDays} days ·
-      cleanup every ${S.config.cleanupIntervalMinutes} min${last?.removed ? `, last ${ago(last.at)} (${esc(last.reason)}: removed ${last.removed.runs} runs, ${last.removed.screenshotFolders + last.removed.looseFiles} screenshot sets, ${bytes(last.removed.bytes)})` : ""}</div>
+      cleanup every ${S.config.cleanupIntervalMinutes} min${last?.removed ? `, last ${ago(last.at)} (${esc(last.reason)}: removed ${last.removed.runs} runs, ${last.removed.screenshotFolders} screenshot and ${last.removed.artifactFolders ?? 0} artifact sets, ${bytes(last.removed.bytes)})` : ""}</div>
     <div class="bar"><span style="width:${Math.min(100, 100 * used / cap)}%;background:${used > cap * .9 ? "var(--red)" : "var(--blue)"}"></span></div>
   </div>
   <h2>All screenshots</h2>
@@ -526,11 +663,7 @@ function renderShots() {
       x.runId ? `<a href="#/run/${encodeURIComponent(x.runId)}">${esc(x.project ?? x.runId)}${x.kind ? ` · ${esc(x.kind)}` : ""}</a> ${x.status ? badge(x.status) : ""}${x.spec ? ` · <span class="mono">${esc(x.spec)}</span>` : ""}` : "dropped in the folder")).join("")}</div>`
     : `<div class="panel empty">No screenshots yet.</div>`}`, () => {
     $("#s-project").addEventListener("change", (e) => { shotFilters.project = e.target.value; schedule(); });
-    $("#cleanup").addEventListener("click", async (e) => {
-      e.target.disabled = true; e.target.textContent = "Cleaning…";
-      try { await api("/api/cleanup", { method: "POST" }); shotsDirty = true; schedule(); } catch (err) { alert(err.message); }
-      e.target.disabled = false; e.target.textContent = "Clean up now";
-    });
+    $("#cleanup").addEventListener("click", cleanupNow);
     bindLightbox();
   });
 }

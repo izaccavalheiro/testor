@@ -6,8 +6,9 @@ defmodule Testor.Web.SSE do
   gets a fresh snapshot, so no event id bookkeeping is needed.
 
     * `GET /events`: `snapshot`, `run`, `live`, `run_removed`, `sessions`, `stats`, `device`,
-      `device_static`
-    * `GET /events/runs/:id`: `snapshot`, `log`, `specs`, `run`, `screenshots`, `removed`
+      `device_static`, `maintenance`
+    * `GET /events/runs/:id`: `snapshot`, `log`, `specs`, `run`, `screenshots`, `artifacts`,
+      `removed`
   """
   import Plug.Conn
   alias Testor.{Device, Events, Sessions, Views}
