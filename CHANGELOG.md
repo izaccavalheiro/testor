@@ -1,6 +1,13 @@
 # Changelog
 
+Every notable change to testor. The format follows [Keep a Changelog](https://keepachangelog.com)
+and testor follows [Semantic Versioning](https://semver.org): see [VERSIONING.md](VERSIONING.md)
+for what a version number promises. Sections use **Breaking**, **Added**, **Changed**,
+**Deprecated**, **Removed**, **Fixed** and **Security**.
+
 ## Unreleased
+
+### Added
 
 - **Versioned API** (`/api/v1`): runs filtered and paged, a run's log searched with context,
   projects, sessions, stats, device, screenshots, artifacts, maintenance, cancel and delete;
@@ -15,16 +22,6 @@
   artifacts, an audit log of state-changing requests. Managed with `task testor:user` and
   `task testor:token` (or `Testor.Auth.CLI` through the release). `TESTOR_BIND` sets the
   listening address.
-- State-changing requests are also accepted with a JSON body or a Bearer token instead of
-  `X-Testor: 1`, and refused from another `Origin`.
-- `GET /api/health` reports versions and paths only to callers with the `read` scope.
-- The store forgets a run whose record disappears even when a scan failed halfway, and does
-  not write back the record of a run that was deleted while its tracker settled it.
-- Tests: integration tests that run the whole server, 100% line coverage enforced (platform
-  adapters excepted), a smoke test that covers the API, MCP, cancelling a process tree and
-  authentication; `task testor:ci`, `task testor:smoke` and `task testor:format` run them on
-  the runner.
-
 - **Artifacts**: `ARTIFACTS` in a task (`remote.yml`; `run.ps1 -Artifacts`) keeps the files and
   folders a run writes (coverage, HTML reports, Markdown, JUnit XML, ...) with the run, up to
   `artifacts.maxRunMB` per run; Playwright's videos and `$env:TESTOR_ARTIFACT_DIR` are kept too.
@@ -35,13 +32,41 @@
   runner (idle project snapshots, old temporary files, the npm, pip, Go and Cargo caches, old
   Playwright browsers) and delete the targets chosen and confirmed, when `maintenance.enabled`
   is set in `config.json` and nothing runs.
+- **Documentation site** (`website/`, Docusaurus): concepts, guides for every feature, real
+  deployment scenarios, caveats, configuration and operations, the reference pages from
+  `docs/`, the roadmap; published to GitHub Pages from `main`.
+- **Semantic versioning** ([VERSIONING.md](VERSIONING.md)): the public surfaces a version covers,
+  Conventional Commits checked on pull requests, `scripts/release.mjs` (`next`, `bump`, `check`,
+  `notes`, `lint-commits`), and a release workflow that builds and attests per-OS archives and
+  publishes the GitHub release from a `v*` tag.
+- Project files: `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `ROADMAP.md`, issue and
+  pull request templates.
+- Tests: integration tests that run the whole server, 100% line coverage enforced (platform
+  adapters excepted), a smoke test that covers the API, MCP, cancelling a process tree and
+  authentication; `task testor:ci`, `task testor:smoke` and `task testor:format` run them on
+  the runner.
+
+### Changed
+
+- State-changing requests are also accepted with a JSON body or a Bearer token instead of
+  `X-Testor: 1`, and refused from another `Origin`.
+- `GET /api/health` reports versions and paths only to callers with the `read` scope.
 - The janitor leaves a run's empty screenshot or artifact folder alone for an hour, so a run
   the store has not seen yet keeps it.
+
+### Fixed
+
+- The store forgets a run whose record disappears even when a scan failed halfway, and does
+  not write back the record of a run that was deleted while its tracker settled it.
+- Vitest spec lines with a project label (`|unit| tests/a.test.ts`) are parsed.
+- `install.ps1` exits 0 when it succeeds.
 
 ## 0.1.0
 
 The first release. Runners can be Windows, Linux or macOS machines, and the workstation any of
 them: commands run in PowerShell 7 everywhere and reach the runner base64-encoded.
+
+### Added
 
 - **Orchestrator** (Elixir/OTP, Bandit + Plug): follows the runs `run.ps1` records, parses spec
   results from their output (Vitest, Playwright, pytest, go test, cargo test), and streams runs,

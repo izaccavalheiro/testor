@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://izaccavalheiro.github.io/testor/
+    about: Guides, scenarios, caveats and the reference
+  - name: Report a vulnerability
+    url: https://github.com/izaccavalheiro/testor/security/advisories/new
+    about: Privately, never in a public issue

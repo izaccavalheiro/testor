@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # The release workflow runs this whole pipeline on the tagged commit.
+  workflow_call:
 
 permissions:
   contents: read
@@ -143,3 +145,47 @@ jobs:
           for t in check test deploy status logs uninstall; do task --dry testor:$t; done
           cd examples/node-project
           TESTOR_RUNNER=ci-runner task --dry test
+
+  versioning:
+    name: Versioning (release tool, changelog, commit subjects)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.nvmrc
+      - name: Tests of scripts/release.mjs
+        run: node --test scripts/release.test.mjs
+      - name: mix.exs and CHANGELOG.md agree
+        run: node scripts/release.mjs check
+      - name: Commit subjects are Conventional Commits (VERSIONING.md)
+        if: github.event_name == 'pull_request'
+        env:
+          RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+        run: node scripts/release.mjs lint-commits "$RANGE"
+      - name: The version the changes since the last release call for
+        run: node scripts/release.mjs next >> "$GITHUB_STEP_SUMMARY"
+
+  site:
+    name: Documentation site
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.nvmrc
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+      - name: Type-check
+        run: npm run typecheck
+      - name: Build (fails on any broken link or anchor)
+        run: npm run build
