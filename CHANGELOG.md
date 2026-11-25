@@ -7,6 +7,15 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Archive to object storage**: `archive` in `config.json` copies each finished, signed run
+  (record, log, screenshots, artifacts, attestations) to an S3-compatible bucket (AWS S3,
+  MinIO, R2, GCS, Ceph), with server-side encryption (`AES256`, or SSE-KMS with your key) and
+  optional Object Lock retention; each object's SHA-256 is checked by the server. SigV4 with no
+  SDK; credentials from the AWS variables or a web identity (IRSA) through STS. `archived` on a
+  run.
+
 ## 0.9.0 - 2026-11-25
 
 ### Added

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # testor and its agent in containers on one network, as in Kubernetes: a job queued through the
-# API is taken by the agent container, run, and its run sent back to testor.
+# API is taken by the agent container, run, and its run sent back to testor, which archives it
+# to an S3-compatible server (versitygw, which checks SigV4 signatures and checksums).
 #
 #   scripts/container-e2e.sh <testor image> <agent image>
 set -euo pipefail
@@ -12,18 +13,23 @@ AGENT=${2:-testor-agent:ci}
 NET=testor-e2e-$$
 WORK=$(mktemp -d)
 PASS=e2e-password-1234
-cleanup() { docker rm -f "$NET-testor" "$NET-agent" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
+# S3: versitygw over a folder (a bucket is a folder of it).
+S3_IMAGE=versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
+cleanup() { docker rm -f "$NET-testor" "$NET-agent" "$NET-s3" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
 trap cleanup EXIT
 
 docker network create "$NET" >/dev/null
+mkdir -p "$WORK/s3/evidence" && chmod -R 777 "$WORK/s3"
+docker run -d --name "$NET-s3" --network "$NET" --network-alias s3 -v "$WORK/s3:/data" "$S3_IMAGE" \
+  --access e2e-access --secret e2e-secret-key-12345 posix /data >/dev/null
 # The agent reaches testor by its container name: a name testor must be told to answer.
 docker run -d --name "$NET-testor" --network "$NET" --network-alias testor -p 127.0.0.1::6767 \
-  -e TESTOR_ALLOWED_HOSTS=testor --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "$TESTOR" >/dev/null
+  -e TESTOR_ALLOWED_HOSTS=testor -e AWS_ACCESS_KEY_ID=e2e-access -e AWS_SECRET_ACCESS_KEY=e2e-secret-key-12345 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "$TESTOR" >/dev/null
 for _ in $(seq 1 30); do docker exec "$NET-testor" /app/bin/testor eval 'Testor.Probe.check()' >/dev/null 2>&1 && break; sleep 2; done
 PORT=$(docker port "$NET-testor" 6767/tcp | head -1 | sed 's/.*://')
 BASE=http://127.0.0.1:$PORT
 
-docker exec "$NET-testor" sh -c 'echo "{\"execution\": {\"enabled\": true}}" > /data/workspaces/.testor/config.json'
+docker exec "$NET-testor" sh -c 'echo "{\"execution\": {\"enabled\": true}, \"archive\": {\"bucket\": \"evidence\", \"region\": \"us-east-1\", \"endpoint\": \"http://s3:7070\", \"pathStyle\": true, \"prefix\": \"e2e\"}}" > /data/workspaces/.testor/config.json'
 docker exec -e TESTOR_PASSWORD=$PASS "$NET-testor" /app/bin/testor eval 'Testor.Auth.CLI.user ~s[admin], ~s[admin]' >/dev/null
 docker exec -e TESTOR_PASSWORD=$PASS "$NET-testor" /app/bin/testor eval 'Testor.Auth.CLI.user ~s[k8s-agent], ~s[agent]' >/dev/null
 sleep 2
@@ -73,4 +79,13 @@ open(f"{work}/sig.der", "wb").write(base64.b64decode(env["signatures"][0]["sig"]
 PY
   openssl dgst -sha256 -verify "$WORK/agent.pem" -signature "$WORK/sig.der" "$WORK/pae.bin" || { echo "FAIL: OpenSSL does not verify the agent's signature"; exit 1; }
 fi
-echo "ok: a job ran in an agent container, its run reached testor, signed by the agent"
+# Archived to the bucket once signed: the run's log is there, as written.
+for _ in $(seq 1 30); do
+  [ "$(curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN" | json run.archived)" = True ] && break
+  sleep 1
+done
+[ "$(curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN" | json run.archived)" = True ] || { docker logs "$NET-testor" | tail -20; echo "FAIL: the run was not archived"; exit 1; }
+ARCHIVED_LOG=$(cat "$WORK/s3/evidence/e2e/logs/$RUN.log" 2>/dev/null || sudo cat "$WORK/s3/evidence/e2e/logs/$RUN.log")
+echo "$ARCHIVED_LOG" | grep -q "hello from a pod" || { echo "FAIL: the archived log is not the run's"; exit 1; }
+[ -n "$(ls "$WORK/s3/evidence/e2e/attestations/" 2>/dev/null || sudo ls "$WORK/s3/evidence/e2e/attestations/")" ] || { echo "FAIL: the attestations were not archived"; exit 1; }
+echo "ok: a job ran in an agent container, its run reached testor, signed by the agent, and was archived to S3"

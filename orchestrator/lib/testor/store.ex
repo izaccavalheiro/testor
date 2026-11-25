@@ -159,6 +159,8 @@ defmodule Testor.Store do
         File.rm(Path.join(Config.cancel_dir(), id))
         File.rm(Path.join(Config.attestations_dir(), id <> ".dsse.json"))
         File.rm(Path.join(Config.attestations_dir(), id <> ".agent.dsse.json"))
+        # The bucket keeps the run's archive: only the note that it was made goes.
+        File.rm(Testor.Archive.manifest(id))
         File.rm_rf(Path.join(Config.shots_dir(), id))
         File.rm_rf(Path.join(Config.artifacts_dir(), id))
         {:reply, :ok, forget(state, id)}

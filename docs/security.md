@@ -390,7 +390,8 @@ store, take `TESTOR_JWT_SECRET` and `TESTOR_TOKEN_KEY` from the environment inst
 
 ## Encryption at rest
 
-testor does not encrypt the files it keeps (runs, logs, screenshots, artifacts, keys) itself: a
+testor does not encrypt the files it keeps on the runner (runs, logs, screenshots, artifacts,
+keys) itself: a
 key it held would sit on the same disk, next to what it protects, and videos and reports are
 served by byte range straight from their files. Encrypt the storage instead:
 
@@ -404,9 +405,38 @@ served by byte range straight from their files. Encrypt the storage instead:
 
 With volume encryption, what a stolen disk or snapshot holds is unreadable; what a process on
 the running machine can read is not changed by it: that is what accounts, permissions and the
-separate test account above are for. When logs and artifacts can go to object storage
-([ports](design/ports.md)), the bucket's server-side encryption (SSE-KMS or equivalent) will be
-the place for it.
+separate test account above are for.
+
+### Archive to object storage
+
+Runs can also be kept off the runner, encrypted, for as long as you must keep evidence:
+`archive` in `config.json` copies each finished, signed run (record, log, screenshots,
+artifacts, attestations) to an S3-compatible bucket (AWS S3, MinIO, Cloudflare R2, Google Cloud
+Storage's interoperability API, Ceph, versitygw).
+
+```json
+{ "archive": {
+    "bucket": "acme-test-evidence", "region": "eu-west-1", "prefix": "testor/runner-1",
+    "encryption": "aws:kms", "kmsKeyId": "arn:aws:kms:eu-west-1:123456789012:key/...",
+    "objectLock": { "mode": "COMPLIANCE", "days": 365 } } }
+```
+
+| Key | Meaning |
+| --- | ------- |
+| `bucket`, `region`, `prefix` | where; objects go under `<prefix>/runs/`, `logs/`, `screenshots/<id>/`, `artifacts/<id>/`, `attestations/` |
+| `endpoint`, `pathStyle` | another server than AWS (`https://minio.example.com:9000`, `pathStyle: true`) |
+| `encryption`, `kmsKeyId` | server-side encryption: `AES256` (the bucket's keys) or `aws:kms` with your key |
+| `objectLock` | retention on each object (`GOVERNANCE` or `COMPLIANCE`, `days`) in a bucket with Object Lock: no one deletes or rewrites the evidence before then, the runner's credentials included |
+
+- Each object carries its SHA-256 (`x-amz-checksum-sha256`), which the server checks; requests
+  are signed with SigV4 (no SDK in the release).
+- Credentials as AWS's SDKs take them: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_SESSION_TOKEN`, or `AWS_ROLE_ARN` with `AWS_WEB_IDENTITY_TOKEN_FILE` (IAM roles for
+  service accounts) traded with STS. Give them `s3:PutObject` on the prefix only: testor never
+  reads, lists or deletes there.
+- A run is archived once it ends and is signed; a failure is tried again three times, then
+  logged. `archived` on the run says it is there (`<home>/archive/<id>.json` lists the keys).
+  Deleting a run on the runner leaves its archive.
 
 ## Running tests in a separate account
 

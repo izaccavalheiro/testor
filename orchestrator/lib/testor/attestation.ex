@@ -88,7 +88,11 @@ defmodule Testor.Attestation do
 
   @doc "Attests run `id` in the background: hashing a run's artifacts can take a while."
   def attest_later(id) do
-    Task.Supervisor.start_child(Testor.TaskSupervisor, fn -> safe_attest(id) end)
+    # Then copied to object storage, signed, when an archive is set up (Testor.Archive).
+    Task.Supervisor.start_child(Testor.TaskSupervisor, fn ->
+      safe_attest(id)
+      Testor.Archive.maybe(id)
+    end)
   end
 
   @doc "`attest/1`, logging why it failed instead of raising."
