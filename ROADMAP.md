@@ -42,6 +42,8 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 - **Secrets for jobs** (done, in the next release): agents resolve a job's secrets on their
   machine (Vault, AWS, GCP, Azure secret managers, SOPS, environment, files) with the
   machine's workload identity, masked in its logs.
+- **Identity tokens for jobs** (done, in the next release): testor as an OpenID Connect
+  issuer, so jobs trade a short token for cloud or Vault credentials, with no stored keys.
 
 ### 0.9: many testors, other backends
 

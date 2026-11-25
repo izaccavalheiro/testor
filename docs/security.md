@@ -344,6 +344,12 @@ cannot be read fails the job naming the secret only ([jobs.md](jobs.md#secrets))
 workload identities (IAM roles for service accounts, GKE and Azure workload identity, Vault's
 Kubernetes login) to long-lived keys on the runner.
 
+testor can also be that identity: with `jobTokens` in `auth.json`, the agent holding a job's
+lease gets an OpenID Connect token for it (RS256, `sub` = `project:<p>:kind:<k>`, 15 minutes by
+default, for a listed audience only), which clouds and Vault trade for credentials scoped to
+that project ([jobs.md](jobs.md#identity-tokens)). Its keys are published at
+`/.well-known/jwks.json` with the discovery document at `/.well-known/openid-configuration`.
+
 ## Run attestations
 
 Every finished run is signed (Ed25519, an in-toto statement in a DSSE envelope) with
