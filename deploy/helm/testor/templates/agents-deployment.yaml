@@ -1,0 +1,58 @@
+{{- if .Values.agents.enabled }}
+{{- if not .Values.agents.tokenSecret }}{{ fail "agents.tokenSecret: a Secret with the agent's token" }}{{ end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "testor.fullname" . }}-agent
+  labels: {{- include "testor.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.agents.autoscaling.keda }}
+  replicas: {{ .Values.agents.replicas }}
+  {{- end }}
+  selector:
+    matchLabels: {{- include "testor.agentSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "testor.agentSelector" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/agents-configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      # A job in progress gets time to end and be sent before the pod goes.
+      terminationGracePeriodSeconds: 120
+      containers:
+        - name: agent
+          image: {{ include "testor.agentImage" . }}
+          imagePullPolicy: {{ .Values.agents.image.pullPolicy }}
+          env:
+            - name: TESTOR_AGENT_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ .Values.agents.tokenSecret }}, key: token } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{- toYaml .Values.agents.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/testor-agent, readOnly: true }
+            - { name: home, mountPath: /home/agent }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap: { name: {{ include "testor.fullname" . }}-agent }
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

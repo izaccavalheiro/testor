@@ -1,0 +1,18 @@
+{{- if and .Values.agents.enabled .Values.agents.autoscaling.keda }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "testor.fullname" . }}-agent
+  labels: {{- include "testor.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "testor.fullname" . }}-agent
+  minReplicaCount: {{ .Values.agents.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.agents.autoscaling.maxReplicas }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.agents.autoscaling.prometheusServer }}
+        query: sum(testor_jobs{status="queued"}) + sum(testor_jobs{status=~"leased|running"})
+        threshold: {{ .Values.agents.autoscaling.queuedPerAgent | quote }}
+{{- end }}

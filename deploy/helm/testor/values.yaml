@@ -67,3 +67,33 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 podAnnotations: {}
+
+# Agents (runner/agent.ps1 in ghcr.io/izaccavalheiro/testor-agent): pods that take jobs from
+# this testor and send their runs to it. Jobs must be on (execution.enabled in config.json).
+# Build an image FROM the agent's with your projects' tools, and list its projects below.
+agents:
+  enabled: false
+  replicas: 1
+  image:
+    repository: ghcr.io/izaccavalheiro/testor-agent
+    tag: ""
+    digest: ""
+    pullPolicy: IfNotPresent
+  # A Secret with a key "token": a token of a user with the agent role (task testor:token).
+  tokenSecret: ""
+  # testor's address as agents reach it; by default its Service (https with built-in TLS: the
+  # certificate must then name the Service, or set server to a name it holds).
+  server: ""
+  labels: [linux]
+  # agent.json's projects: { "my-app": { "repository": "https://...", "commands": { "test": "..." } } }
+  projects: {}
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 2Gi }
+  # KEDA scales agents on queued jobs (testor_jobs{status="queued"} from Prometheus).
+  autoscaling:
+    keda: false
+    minReplicas: 0
+    maxReplicas: 5
+    prometheusServer: http://prometheus-server.monitoring.svc
+    queuedPerAgent: 1

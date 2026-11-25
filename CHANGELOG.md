@@ -9,6 +9,15 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ### Added
 
+- **Agents in containers and Kubernetes**: the agent image `ghcr.io/izaccavalheiro/testor-agent`
+  (`runner/Dockerfile`: PowerShell 7, git, unprivileged, read-only root), published with
+  provenance; the Helm chart's `agents` (a Deployment of agent pods, their `agent.json`, and an
+  optional KEDA `ScaledObject` scaling them on queued jobs); `testor_jobs{status}` in
+  `/metrics`. A project in `agent.json` may name a `repository`, cloned for its first job.
+  `scripts/container-e2e.sh` runs testor and an agent container through a job, in CI.
+
+### Added
+
 - **Vitest 5**: spec results from Vitest's verbose reporter (` ✓ tests/a.test.ts > adds 3ms`),
   counted per file. Vitest 5's default reporter prints only failed files when it is not on a
   terminal, as under testor: run it with `--reporter=verbose` to see every file. A file's own

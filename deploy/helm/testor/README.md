@@ -26,6 +26,28 @@ helm install testor deploy/helm/testor \
 The pod runs as uid 10001, non-root, read-only root file system, no capabilities, seccomp
 `RuntimeDefault`, without a service account token.
 
-What it does not do yet: run tests in the cluster. Runs reach this testor through its
-volume; a runner agent that takes work from it is designed in
-[docs/design/agent-protocol.md](../../../docs/design/agent-protocol.md).
+### Agents: running tests in the cluster
+
+With jobs on (`execution.enabled` in config.json) and an agent user's token in a Secret:
+
+```sh
+kubectl create secret generic testor-agent --from-literal=token="$(task testor:token USER=k8s-agent DAYS=30 SCOPE=agent)"
+helm upgrade testor deploy/helm/testor --reuse-values \
+  --set agents.enabled=true --set agents.tokenSecret=testor-agent \
+  --set agents.image.repository=registry.example.com/my-agent \
+  --set agents.projects.web.repository=https://github.com/me/web.git \
+  --set 'agents.projects.web.commands.test=npm ci; npm test'
+```
+
+| Value | Default | |
+| ----- | ------- | - |
+| `agents.enabled` | `false` | a Deployment of agent pods (`runner/agent.ps1`), sending their runs to this testor |
+| `agents.image` | `ghcr.io/izaccavalheiro/testor-agent` | an image built FROM it with your projects' tools |
+| `agents.tokenSecret` | | a Secret with `token`: a token of a user with the `agent` role |
+| `agents.projects` | `{}` | agent.json's projects: a `repository` to clone, the `commands` jobs may run |
+| `agents.labels` | `[linux]` | jobs asking for labels go to agents that have them all |
+| `agents.autoscaling.keda` | `false` | a KEDA ScaledObject on `testor_jobs` (Prometheus), from `minReplicas` (0) to `maxReplicas` |
+
+Agent pods are separate from testor's (their own `app.kubernetes.io/name`), hardened the same
+way, and admitted by testor's NetworkPolicy. Their egress (testor, your git server, package
+registries) is not restricted by the chart.

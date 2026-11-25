@@ -15,7 +15,9 @@
 #     "upload": false,                         # true on another machine than testor's: see below
 #     "projects": {
 #       "my-app": { "workspace": "~/test-run/my-app", "git": false,
-#                   "commands": { "test": "npm test", "lint": "npm run lint" } } } }
+#                   "commands": { "test": "npm test", "lint": "npm run lint" } },
+#       "my-lib": { "repository": "https://github.com/me/my-lib.git",   # cloned when missing
+#                   "commands": { "test": "cargo test" } } } }
 #
 # A job names only a project and a task (kind): the command is the one this file gives, and a
 # job for anything else is refused. That is the boundary: testor, or anyone with the execute
@@ -153,10 +155,15 @@ function Resolve-Job($job) {
   if (-not $project) { return @{ error = "project $($job.project) is not in this agent's configuration" } }
   $command = if ($project.commands) { $project.commands[$job.kind] } else { $null }
   if (-not $command) { return @{ error = "task $($job.kind) of $($job.project) is not in this agent's configuration" } }
-  $workspace = Expand $project.workspace
-  if (-not $workspace -or -not (Test-Path -LiteralPath $workspace)) { return @{ error = "workspace of $($job.project) not found: $workspace" } }
-  if ($job.ref -and $project.git -ne $true) { return @{ error = "this agent does not check out refs for $($job.project) (git: true)" } }
-  @{ command = $command; workspace = $workspace; git = $project.git -eq $true }
+  # With a repository, the workspace (by default <home>/workspaces/<project>) is cloned when
+  # missing, and refs can be checked out.
+  $repository = $project.repository
+  $workspace = if ($project.workspace) { Expand $project.workspace } elseif ($repository) { Join-Path (Join-Path $home_ "workspaces") $job.project } else { $null }
+  $git = $project.git -eq $true -or [bool]$repository
+  $clone = $repository -and $workspace -and -not (Test-Path -LiteralPath $workspace)
+  if (-not $workspace -or (-not $clone -and -not (Test-Path -LiteralPath $workspace))) { return @{ error = "workspace of $($job.project) not found: $workspace" } }
+  if ($job.ref -and -not $git) { return @{ error = "this agent does not check out refs for $($job.project) (git: true)" } }
+  @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null } }
 }
 
 function Invoke-Job($job) {
@@ -165,6 +172,14 @@ function Invoke-Job($job) {
     Log "$($job.id) refused: $($plan.error)"
     $null = Call "/agent/jobs/$($job.id)/finish" @{ error = $plan.error }
     return
+  }
+  if ($plan.clone) {
+    $null = New-Item -ItemType Directory -Force (Split-Path -Parent $plan.workspace)
+    git clone --quiet -- $plan.clone $plan.workspace
+    if ($LASTEXITCODE) {
+      $null = Call "/agent/jobs/$($job.id)/finish" @{ error = "git clone of $($job.project) failed" }
+      return
+    }
   }
   if ($job.ref) {
     # The ref matched testor's pattern (no leading dash); -- ends git's options anyway.

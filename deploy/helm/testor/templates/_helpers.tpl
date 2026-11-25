@@ -27,3 +27,17 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "testor.scheme" -}}{{ if .Values.tls.existingSecret }}HTTPS{{ else }}HTTP{{ end }}{{- end -}}
+
+{{- define "testor.agentSelector" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}-agent
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "testor.agentImage" -}}
+{{- $a := .Values.agents.image -}}
+{{- if $a.digest -}}{{ $a.repository }}@{{ $a.digest }}{{- else -}}{{ $a.repository }}:{{ $a.tag | default .Chart.AppVersion }}{{- end -}}
+{{- end -}}
+
+{{- define "testor.agentServer" -}}
+{{- if .Values.agents.server -}}{{ .Values.agents.server }}{{- else -}}{{ include "testor.scheme" . | lower }}://{{ include "testor.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}{{- end -}}
+{{- end -}}

@@ -19,6 +19,7 @@ defmodule Testor.MetricsTest do
     assert body =~ ~r/^testor_last_run_duration_seconds\{kind="test",project="metrics \\"app\\""\} 1\.234$/m
     assert body =~ ~r/^testor_last_run_timestamp_seconds\{.*project="metrics \\"app\\""\} \d+$/m
     assert body =~ ~r/^testor_event_streams \d+$/m
+    assert body =~ ~r/^testor_jobs\{status="queued"\} \d+$/m
   end
 
   test "a run without an end or a duration has no samples for them" do

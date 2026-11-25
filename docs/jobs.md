@@ -99,6 +99,30 @@ reaches the agent at its next heartbeat; the agent asks `run.ps1` to end it.
 The agent only connects out (HTTPS to testor): the machine needs no inbound port, so it can sit
 behind NAT, in another network or in a cloud.
 
+## Agents in containers and Kubernetes
+
+`ghcr.io/izaccavalheiro/testor-agent` is the agent as an image (linux/amd64): PowerShell 7,
+git, `run.ps1` and `agent.ps1`, unprivileged, fit for a read-only root file system. Build your
+projects' image from it, with their tools:
+
+```dockerfile
+FROM ghcr.io/izaccavalheiro/testor-agent:0.6.0
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*
+USER 10001:10001
+```
+
+It reads `agent.json` from `$TESTOR_AGENT_CONFIG` (`/etc/testor-agent/agent.json`) and its token
+from `$TESTOR_AGENT_TOKEN`; its home is `/home/agent` (a volume). A project with a
+`repository` is cloned there for its first job.
+
+The Helm chart runs them next to testor (`agents.enabled`): a Deployment of agent pods with the
+chart's hardening, `agent.json` from `agents.projects`, and, with `agents.autoscaling.keda`, a
+KEDA `ScaledObject` that scales them on `testor_jobs{status="queued"}` (from zero, when nothing
+is queued). See [deploy/helm/testor](../deploy/helm/testor/README.md).
+`scripts/container-e2e.sh` runs testor and an agent container on one network and a job through
+them, as CI does.
+
 ## A job
 
 | Field | Meaning |
