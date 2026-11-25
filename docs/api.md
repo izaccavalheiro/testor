@@ -32,6 +32,8 @@ where they page), errors `{"error": {"code", "message"}}`.
 | ------- | ------- |
 | `GET /api/v1/health` | `{ok, app, version, auth}`, plus versions and paths with the `read` scope |
 | `POST /api/v1/auth/token` | with Basic credentials: `{access_token, token_type: "Bearer", expires_in, scope}`. Body (JSON or form, optional): `grant_type=client_credentials`, `scope` (a subset of the user's), `expires_in` (seconds). Errors as OAuth 2.0: `{error, error_description}` |
+| `GET /auth/login`, `GET /auth/callback` | sign-in with the identity provider (`?return=/path`), for browsers |
+| `POST /auth/logout` | ends the dashboard's session |
 | `GET /.well-known/jwks.json` | the public keys tokens are signed with (JSON Web Key Set, Ed25519), without credentials |
 | `GET /api/v1/auth/me` | `{authEnabled, user, via, scopes, expiresAt}` |
 | `GET /api/v1/runs?status=&project=&kind=&q=&limit=&before=` | runs, newest first: `{data, next}`; `next` is the `before` of the next page |

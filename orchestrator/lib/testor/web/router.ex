@@ -8,6 +8,7 @@ defmodule Testor.Web.Router do
     GET    /metrics                Prometheus metrics (Testor.Metrics)
     GET    /api/health             liveness and versions
     GET    /.well-known/jwks.json  the public keys tokens are signed with (Testor.Auth.TokenKeys)
+    *      /auth/...               sign-in with an OpenID Connect provider (Testor.Web.SignIn)
     GET    /api/state              everything /events starts with
     GET    /api/runs/:id           one run, its specs and screenshots
     GET    /api/runs/:id/log       its output as text (?tail=bytes)
@@ -57,6 +58,7 @@ defmodule Testor.Web.Router do
 
   forward("/api/v1", to: Testor.Web.ApiV1)
   forward("/mcp", to: Testor.Web.MCP)
+  forward("/auth", to: Testor.Web.SignIn)
 
   get "/" do
     conn

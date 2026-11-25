@@ -34,20 +34,23 @@ defmodule Testor.Auth.JWT do
   @doc """
   The claims of a valid token, or why it is not valid. `keys` is `%{hs256: secret | nil,
   eddsa: %{kid => %{public, retired}}}`, or a binary secret alone (`HS256` only). A token of a
-  retired key must have been issued before it was retired.
+  retired key must have been issued before it was retired. `audience` is what `aud` must be
+  or hold: `"testor"` for API tokens, another value for other uses of the same keys (the
+  dashboard's sessions), so one cannot stand for the other.
   """
-  def verify(token, keys, now \\ System.system_time(:second))
+  def verify(token, keys, now \\ System.system_time(:second), audience \\ @issuer)
 
-  def verify(token, key, now) when is_binary(key), do: verify(token, %{hs256: key, eddsa: %{}}, now)
+  def verify(token, key, now, audience) when is_binary(key),
+    do: verify(token, %{hs256: key, eddsa: %{}}, now, audience)
 
-  def verify(token, %{} = keys, now) when is_binary(token) do
+  def verify(token, %{} = keys, now, audience) when is_binary(token) do
     with [header, payload, signature] <- String.split(token, "."),
          {:ok, %{} = head} <- decode_json(header),
          {:ok, check} <- checker(head, keys),
          {:ok, signature} <- Base.url_decode64(signature, padding: false),
          true <- check.(header <> "." <> payload, signature) || {:error, :signature},
          {:ok, %{} = claims} <- decode_json(payload),
-         :ok <- check_claims(claims, now),
+         :ok <- check_claims(claims, now, audience),
          :ok <- check_retired(head, keys, claims) do
       {:ok, claims}
     else
@@ -56,7 +59,7 @@ defmodule Testor.Auth.JWT do
     end
   end
 
-  def verify(_token, _keys, _now), do: {:error, :malformed}
+  def verify(_token, _keys, _now, _audience), do: {:error, :malformed}
 
   # A critical extension testor does not know must be refused (RFC 7515, 4.1.11).
   defp checker(%{"crit" => _}, _keys), do: {:error, :malformed}
@@ -83,10 +86,10 @@ defmodule Testor.Auth.JWT do
 
   defp check_retired(_head, _keys, _claims), do: :ok
 
-  defp check_claims(claims, now) do
+  defp check_claims(claims, now, audience) do
     cond do
       claims["iss"] != @issuer -> {:error, :issuer}
-      not audience?(claims["aud"]) -> {:error, :audience}
+      not audience?(claims["aud"], audience) -> {:error, :audience}
       not is_integer(claims["exp"]) -> {:error, :malformed}
       now >= claims["exp"] + @leeway -> {:error, :expired}
       is_integer(claims["nbf"]) and claims["nbf"] > now + @leeway -> {:error, :not_yet_valid}
@@ -96,11 +99,12 @@ defmodule Testor.Auth.JWT do
     end
   end
 
-  defp audience?(@issuer), do: true
-  defp audience?(list) when is_list(list), do: @issuer in list
-  defp audience?(_), do: false
+  defp audience?(audience, audience), do: true
+  defp audience?(list, audience) when is_list(list), do: audience in list
+  defp audience?(_aud, _audience), do: false
 
-  defp decode_json(part) do
+  @doc "A base64url part of a token, decoded as JSON."
+  def decode_json(part) do
     with {:ok, json} <- Base.url_decode64(part, padding: false) do
       case JSON.decode(json) do
         {:ok, value} -> {:ok, value}

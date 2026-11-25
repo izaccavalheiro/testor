@@ -8,7 +8,14 @@ defmodule Testor.Web.Auth do
   (private ones by default), so a runner on a public address is not open to the internet.
 
   Public paths, answered without credentials: `GET /api/health`, `GET /api/v1/health`,
-  `GET /api/v1/openapi.json`, and the signed file links under `/s/`, which their route checks.
+  `GET /api/v1/openapi.json`, `GET /.well-known/jwks.json`, the sign-in pages (`/auth/login`,
+  `/auth/callback`, `/auth/signed-out`, `POST /auth/logout`), and the signed file links under
+  `/s/`, which their route checks.
+
+  With an OpenID Connect provider set up (`Testor.Auth.OIDC`), a request without credentials
+  may carry a session cookie; the dashboard's page sends a visitor without either to
+  `/auth/login`, and only `/?basic` asks a browser for Basic credentials (the break-glass
+  sign-in), so an expired session never brings up the browser's password dialog.
 
   Scopes required:
 
@@ -24,6 +31,7 @@ defmodule Testor.Web.Auth do
   import Plug.Conn
   require Logger
   alias Testor.Auth
+  alias Testor.Auth.OIDC
   alias Testor.Web.Reply
 
   @unsafe ["POST", "PUT", "PATCH", "DELETE"]
@@ -69,6 +77,9 @@ defmodule Testor.Web.Auth do
 
   defp authenticate(conn, settings) do
     public = public?(conn)
+    conn = fetch_cookies(conn)
+    password_login = conn.path_info == [] and conn.query_string == "basic"
+    basic = settings.oidc == nil or password_login
 
     case credentials(conn, settings) do
       {:ok, principal} ->
@@ -78,8 +89,11 @@ defmodule Testor.Web.Auth do
       _ when public ->
         assign(conn, :principal, Auth.public())
 
+      :none when conn.method == "GET" and conn.path_info == [] and not basic ->
+        conn |> put_resp_header("location", "/auth/login") |> send_resp(302, "") |> halt()
+
       :none ->
-        unauthorized(conn, nil, "authentication required: Basic credentials or a Bearer token")
+        unauthorized(conn, nil, "authentication required: Basic credentials or a Bearer token", basic)
 
       {:error, {:rate_limited, seconds}} ->
         conn
@@ -94,16 +108,16 @@ defmodule Testor.Web.Auth do
         |> halt()
 
       {:error, :expired} ->
-        unauthorized(conn, "invalid_token", "the token has expired")
+        unauthorized(conn, "invalid_token", "the token has expired", basic)
 
       {:error, :revoked} ->
-        unauthorized(conn, "invalid_token", "the token has been revoked")
+        unauthorized(conn, "invalid_token", "the token has been revoked", basic)
 
       {:error, :invalid_token} ->
-        unauthorized(conn, "invalid_token", "the token is not valid")
+        unauthorized(conn, "invalid_token", "the token is not valid", basic)
 
       {:error, _} ->
-        unauthorized(conn, nil, "invalid credentials")
+        unauthorized(conn, nil, "invalid credentials", basic)
     end
   end
 
@@ -125,10 +139,20 @@ defmodule Testor.Web.Auth do
         end
 
       [] ->
-        :none
+        session(conn, settings)
 
       _ ->
         {:error, :scheme}
+    end
+  end
+
+  # A dashboard session (Testor.Auth.OIDC). One that has expired or ended is no credentials.
+  defp session(conn, settings) do
+    with token when is_binary(token) <- conn.req_cookies[OIDC.session_cookie()],
+         {:ok, principal} <- OIDC.session(settings, token) do
+      {:ok, principal}
+    else
+      _ -> :none
     end
   end
 
@@ -176,22 +200,22 @@ defmodule Testor.Web.Auth do
       ["api", "v1", "health"] -> true
       ["api", "v1", "openapi.json"] -> true
       [".well-known", "jwks.json"] -> true
+      ["auth", page] when page in ["login", "callback", "signed-out"] -> true
       ["s", _cap, area | _] when area in ["shots", "artifacts"] -> true
       _ -> false
     end
   end
 
+  def public?(%Plug.Conn{method: "POST", path_info: ["auth", "logout"]}), do: true
   def public?(_conn), do: false
 
   # Basic comes first: browsers prompt for the first scheme they support.
-  defp unauthorized(conn, error, message) do
+  defp unauthorized(conn, error, message, basic) do
     bearer = if error, do: ~s(Bearer realm="testor", error="#{error}"), else: ~s(Bearer realm="testor")
+    basic = if basic, do: [{"www-authenticate", ~s(Basic realm="testor", charset="UTF-8")}], else: []
 
     conn
-    |> prepend_resp_headers([
-      {"www-authenticate", ~s(Basic realm="testor", charset="UTF-8")},
-      {"www-authenticate", bearer}
-    ])
+    |> prepend_resp_headers(basic ++ [{"www-authenticate", bearer}])
     |> Reply.error(401, "unauthorized", message)
     |> halt()
   end

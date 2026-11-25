@@ -22,6 +22,13 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   `Testor.Auth.CLI.roll_token_key` adds a new key while the previous one verifies its tokens
   until they expire; `TESTOR_TOKEN_KEY` shares one key across replicas.
 
+- **Single sign-on**: the dashboard signs people in with an OpenID Connect provider (`oidc` in
+  `auth.json`): the code flow with PKCE, ID tokens checked against the provider's JWKS
+  (RS256, ES256, EdDSA), groups mapped to a role and to projects, a session cookie
+  (`HttpOnly`, `SameSite=Lax`, `Secure` over https) that is not a Bearer token. A visitor is
+  sent to the provider; `/?basic` keeps the password sign-in for break-glass use. The
+  dashboard shows who is signed in and signs out.
+
 ### Changed
 
 - New tokens are EdDSA. HS256 tokens (all of those issued before) are still accepted until
