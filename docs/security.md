@@ -228,6 +228,13 @@ the agent runs only the commands its own `agent.json` lists, so a stolen `execut
 run nothing the runner's owner did not write down. A job's `ref` must look like a git ref (no
 leading `-`). Run agents as the account tests run as, never as the service's.
 
+An agent on another machine sends its runs (`/api/v1/agent/jobs/:id/run`, `/log`, `/files`).
+It can write only the run of a job it holds; the record's `project`, `kind` and `job` are the
+job's, whatever the agent sends, and its `pid` is dropped. A run whose record is final cannot
+change. Log chunks are appended only at the log's current size (1 MB each); files keep to the
+same path rules as the file routes, screenshots must be images, and a run's artifacts stay
+under `artifacts.maxRunMB`. Use HTTPS (`TESTOR_TLS_CERT` or a proxy) between agents and testor.
+
 ## Run attestations
 
 Every finished run is signed (Ed25519, an in-toto statement in a DSSE envelope) with

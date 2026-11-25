@@ -156,6 +156,26 @@ defmodule Testor.Web.OpenAPI do
         "post" =>
           op("agents", "Renew the lease; answers whether to cancel (scope agent)", %{"type" => "object"})
       },
+      "/agent/jobs/{id}/run" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "put" => op("agents", "A remote agent's run record for the job (scope agent)", %{"type" => "object"})
+      },
+      "/agent/jobs/{id}/log" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" =>
+          op("agents", "Append a chunk (1 MB at most) to the job's run log at ?offset= (scope agent)", %{
+            "type" => "object"
+          })
+      },
+      "/agent/jobs/{id}/files/{area}/{path}" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "put" =>
+          op(
+            "agents",
+            "A screenshot or artifact of the job's run (area: screenshots, artifacts) (scope agent)",
+            %{"type" => "object"}
+          )
+      },
       "/agent/jobs/{id}/finish" => %{
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" =>

@@ -64,6 +64,9 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `POST /api/v1/agent/lease` | agent | `{labels, wait}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most) |
 | `POST /api/v1/agent/jobs/:id/heartbeat` | agent | renew the lease: `{"cancel": bool}` |
 | `POST /api/v1/agent/jobs/:id/finish` | agent | `{exitCode, error?}` |
+| `PUT /api/v1/agent/jobs/:id/run` | agent | a remote agent's run record (run.ps1's): binds the run to the job |
+| `POST /api/v1/agent/jobs/:id/log?offset=` | agent | append a chunk (1 MB at most) at the log's size; `409` with `X-Log-Size` otherwise |
+| `PUT /api/v1/agent/jobs/:id/files/<screenshots or artifacts>/<path>` | agent | a screenshot or artifact of the run |
 
 See [jobs.md](jobs.md).
 

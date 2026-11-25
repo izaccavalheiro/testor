@@ -7,6 +7,17 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Agents on other machines** (the agent protocol's second step): with `"upload": true`, an
+  agent keeps a home of its own and sends each run to testor while it runs (its record, its log
+  in chunks at offsets, then screenshots, artifacts and the final record), then deletes its
+  copy. testor writes them into its home, so remote runs are live, parsed, signed and sent to
+  webhooks like local ones. Agents only connect out. A remote run's job lease watches it (an
+  agent that stops answering aborts its run), and cancelling reaches the agent at its next
+  heartbeat. `PUT /api/v1/agent/jobs/:id/run`, `POST .../log?offset=`, `PUT .../files/...`;
+  runs record `remote`.
+
 ## 0.4.0 - 2026-11-25
 
 ### Added

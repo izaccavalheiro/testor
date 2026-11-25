@@ -9,7 +9,7 @@ defmodule Testor.Web.ApiV1 do
   """
   use Plug.Router
   import Testor.Web.Reply
-  alias Testor.{Auth, Device, Janitor, Jobs, Maintenance, Query, Sessions, Stats, Views}
+  alias Testor.{Auth, Device, Janitor, Jobs, Maintenance, Query, Remote, Sessions, Stats, Views}
   alias Testor.Web.{Actions, OpenAPI, SSE}
 
   plug(:match)
@@ -304,6 +304,57 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # A remote agent's run (Testor.Remote): its record, its log in chunks, its files.
+  put "/agent/jobs/:id/run" do
+    with_agent(conn, id, fn conn, agent ->
+      case body_params(conn) do
+        {:ok, params, conn} -> id |> Remote.record(agent, params) |> remote_reply(conn)
+        {:error, conn} -> conn
+      end
+    end)
+  end
+
+  post "/agent/jobs/:id/log" do
+    with_agent(conn, id, fn conn, agent ->
+      conn = fetch_query_params(conn)
+
+      offset =
+        case Integer.parse(conn.query_params["offset"] || "") do
+          {n, ""} when n >= 0 -> n
+          _ -> nil
+        end
+
+      case read_body(conn, length: Application.get_env(:testor, :remote_chunk_max, 1_048_576)) do
+        {:ok, data, conn} when is_integer(offset) ->
+          case Remote.append_log(id, agent, offset, data) do
+            {:ok, size} -> json(conn, 200, %{"size" => size})
+            error -> remote_reply(error, conn)
+          end
+
+        {:ok, _data, conn} ->
+          error(conn, 400, "bad_request", "offset is the size of the log before this chunk")
+
+        {_, _data, conn} ->
+          error(conn, 413, "too_large", "a log chunk is 1 MB at most")
+      end
+    end)
+  end
+
+  put "/agent/jobs/:id/files/:area/*path" do
+    with_agent(conn, id, fn conn, agent ->
+      case read_body(conn, length: Application.get_env(:testor, :remote_file_max, 64 * 1024 * 1024)) do
+        {:ok, data, conn} ->
+          case Remote.put_file(id, agent, area, path, data) do
+            {:ok, bytes} -> json(conn, 200, %{"bytes" => bytes})
+            error -> remote_reply(error, conn)
+          end
+
+        {_, _data, conn} ->
+          error(conn, 413, "too_large", "a file is 64 MB at most")
+      end
+    end)
+  end
+
   match _ do
     error(
       conn,
@@ -353,6 +404,27 @@ defmodule Testor.Web.ApiV1 do
         end
     end
   end
+
+  defp remote_reply({:ok, data}, conn), do: json(conn, 200, data)
+
+  defp remote_reply({:error, :final}, conn),
+    do: error(conn, 409, "final", "the run has ended: it cannot change")
+
+  defp remote_reply({:error, :other_run}, conn), do: error(conn, 409, "other_run", "the job has another run")
+  defp remote_reply({:error, :no_run}, conn), do: error(conn, 409, "no_run", "send the run's record first")
+  defp remote_reply({:error, :too_large}, conn), do: error(conn, 413, "too_large", "over the run's limit")
+
+  defp remote_reply({:error, {:offset, size}}, conn) do
+    conn
+    |> put_resp_header("x-log-size", to_string(size))
+    |> error(409, "offset", "the log has #{size} bytes: send from there")
+  end
+
+  defp remote_reply({:error, reason}, conn)
+       when reason in [:bad_run_id, :bad_status, :bad_path, :not_an_image],
+       do: error(conn, 400, "bad_request", "not accepted: #{reason}")
+
+  defp remote_reply(error, conn), do: agent_reply(error, conn)
 
   defp agent_reply({:ok, data}, conn), do: json(conn, 200, data)
   defp agent_reply({:error, :not_found}, conn), do: error(conn, 404, "not_found", "no such job")

@@ -33,9 +33,9 @@ agent on the runner ◀───────────────────
   cancelled the usual way (the run ends its own process tree) and the agent hears it at its
   next heartbeat.
 
-Today an agent runs on the same machine as testor, writing its runs into testor's home.
-Agents on other machines, which send their runs' output to testor over the network, are the
-next step of the [agent protocol](design/agent-protocol.md).
+An agent on testor's own machine writes its runs straight into testor's home. An agent on
+**another machine** keeps its own home and sends each run to testor as it happens: see
+[agents on other machines](#agents-on-other-machines).
 
 ## Turning it on
 
@@ -75,6 +75,29 @@ next step of the [agent protocol](design/agent-protocol.md).
 
    `GET /api/v1/jobs/<id>` follows it: `queued`, `leased`, `running`, then `passed`, `failed`,
    `cancelled` or `expired`, with `runId`, the run it produced.
+
+## Agents on other machines
+
+Give the agent a home of its own (a folder holding `run.ps1`: download it with `agent.ps1`
+from a release, checking them against `SHA256SUMS`) and `"upload": true`:
+
+```json
+{ "server": "https://testor.example.com", "tokenFile": "agent.token", "upload": true,
+  "home": "~/testor-agent", "labels": ["linux", "gpu"],
+  "projects": { "my-app": { "workspace": "~/src/my-app", "git": true,
+                            "commands": { "test": "npm ci; npm test" } } } }
+```
+
+`run.ps1` records the run in that home; the agent sends it to testor while it runs (the record
+as it changes, the log in chunks every second) and at its end (screenshots, artifacts, then the
+final record), then deletes its copy. testor writes them into its own home as `run.ps1` would,
+so the run is live on the dashboard, its specs are parsed, it is signed and its webhooks are
+sent like any other. A run on another machine has `remote` (the agent) and no `pid`: its job's
+lease watches it, and a run whose agent stops answering is settled as `aborted`. Cancelling it
+reaches the agent at its next heartbeat; the agent asks `run.ps1` to end it.
+
+The agent only connects out (HTTPS to testor): the machine needs no inbound port, so it can sit
+behind NAT, in another network or in a cloud.
 
 ## A job
 
