@@ -44,6 +44,19 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   `<home>/service.json` and kept by later deploys. The Linux unit adds `NoNewPrivileges` and
   `UMask=0077`.
 
+- **Install without Elixir**: `install.ps1 -FromRelease <version|latest>` installs a prebuilt
+  release after checking it against the release's `SHA256SUMS` and, with `gh`, its provenance
+  attestation (`-RequireAttestation` to insist).
+- **Container image** (`orchestrator/Dockerfile`, published as `ghcr.io/izaccavalheiro/testor`
+  for linux/amd64 and linux/arm64 with provenance): unprivileged, read-only root, logs to
+  stdout (`TESTOR_LOG=stdout`), `TESTOR_ANONYMOUS=loopback` until a user exists; a Compose
+  example in `examples/compose`. `bin/testor eval 'Testor.Probe.check()'` is a health probe
+  for images without an HTTP client.
+- Releases carry `run.ps1`, `install.ps1` and `setup.ps1` (in `SHA256SUMS` and the provenance
+  attestation) and an SPDX SBOM with its own attestation; the quick start downloads
+  `setup.ps1` from a release instead of the `main` branch.
+- An OpenSSF Scorecard workflow, and Dependabot for the image's base images.
+
 ### Fixed
 
 - `task testor:test` clears the runner's ExUnit `tmp` folder: a junction a failed test left

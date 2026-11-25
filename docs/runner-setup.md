@@ -124,6 +124,29 @@ there and installs a service:
 Redeploying swaps the new release in after it is built, so the dashboard is down for a few
 seconds. `task testor:uninstall` removes the service and keeps the data.
 
+### Without Elixir: a prebuilt release
+
+From 0.3.0 every GitHub release carries the orchestrator built for Windows (x64), Linux (x64)
+and macOS (arm64), and the runner's scripts. On the runner, with only PowerShell 7:
+
+```sh
+curl -fsSLO https://github.com/izaccavalheiro/testor/releases/latest/download/install.ps1
+pwsh install.ps1 -FromRelease latest            # or a version: -FromRelease 0.3.0
+```
+
+The installer downloads the archive for the machine and `run.ps1`, refuses them unless they
+match the release's `SHA256SUMS`, and, with the [GitHub CLI](https://cli.github.com) on the
+PATH, unless their provenance attestation shows they were built by this repository's release
+workflow (`-RequireAttestation` makes that check mandatory). It installs the same service as
+`deploy`, with the same options (`-Bind`, `-AllowedHosts`, ...), in `~/test-run/.testor` or
+`-TestorHome`.
+
+### In a container
+
+`orchestrator/Dockerfile` builds an image that runs as an unprivileged user on a read-only
+root file system; tagged releases publish it as `ghcr.io/izaccavalheiro/testor`. See
+[examples/compose](../examples/compose/README.md).
+
 ## Troubleshooting
 
 | Symptom                                      | Look at                                                   |

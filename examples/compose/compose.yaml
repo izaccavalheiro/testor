@@ -1,0 +1,39 @@
+# testor's dashboard, API and MCP in a container, over a testor home kept in a volume.
+# See README.md next to this file. Start it with: docker compose up -d
+name: testor
+
+services:
+  testor:
+    image: ghcr.io/izaccavalheiro/testor:${TESTOR_VERSION:-latest}
+    # Or build it from this repository:
+    # build: ../../orchestrator
+    restart: unless-stopped
+    ports:
+      # Published on loopback only: put a TLS proxy (Caddy, nginx, tailscale serve) in front, or
+      # change it to "6767:6767" on a private network once a user exists.
+      - "127.0.0.1:6767:6767"
+    environment:
+      # The names browsers use to reach it (DNS rebinding protection); IP addresses always work.
+      TESTOR_ALLOWED_HOSTS: ${TESTOR_ALLOWED_HOSTS:-localhost}
+      # A reverse proxy in front: its address, so testor sees the client's.
+      TESTOR_TRUSTED_PROXIES: ${TESTOR_TRUSTED_PROXIES:-}
+    volumes:
+      - testor-data:/data
+    # The image needs no privilege and writes only to /data and /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      # The image has no curl: the release asks its own health endpoint over TCP.
+      test: ["CMD", "/app/bin/testor", "eval", "Testor.Probe.check()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  testor-data:

@@ -7,7 +7,9 @@
 #   1. runs the whole CI pipeline on the tagged commit (Windows, Linux, macOS);
 #   2. checks that the tag, mix.exs and the changelog agree, and that a stable version is
 #      tagged on a commit of main;
-#   3. builds the release on each OS, packs it with SHA256 sums and attests its provenance;
+#   3. builds the release on each OS, packs it with the runner's scripts (run.ps1, install.ps1,
+#      setup.ps1), SHA256 sums and an SPDX SBOM, and attests the provenance of every file and
+#      the SBOM of the archives (`gh attestation verify <file> --repo <owner>/testor`);
 #   4. creates the GitHub release, with the changelog section as notes (a version with a
 #      pre-release suffix, such as 1.0.0-rc.1, is marked as a pre-release).
 
@@ -112,12 +114,29 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - name: The runner's scripts, so an install never fetches them from a branch
+        run: cp runner/run.ps1 runner/install.ps1 runner/setup.ps1 dist/
       - name: Checksums
         working-directory: dist
-        run: sha256sum *.tar.gz > SHA256SUMS
+        run: sha256sum *.tar.gz *.ps1 > SHA256SUMS
+      - name: SBOM of the orchestrator's dependencies (SPDX)
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: orchestrator
+          format: spdx-json
+          output-file: dist/testor.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.ps1
+            dist/SHA256SUMS
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
           subject-path: dist/*.tar.gz
+          sbom-path: dist/testor.spdx.json
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -125,6 +144,6 @@ jobs:
           node scripts/release.mjs notes "$GITHUB_REF_NAME" > "$RUNNER_TEMP/notes.md"
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.ps1 dist/testor.spdx.json dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --title "testor ${GITHUB_REF_NAME#v}" \
             --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $prerelease

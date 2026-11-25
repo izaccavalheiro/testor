@@ -102,6 +102,9 @@ git push origin v0.2.0
    stable version is tagged on a commit of `main`;
 3. builds the release on each OS and packs it (`testor-<version>-<os>-<arch>.tar.gz`) with
    `SHA256SUMS`, and attests the archives' build provenance;
+   from 0.3.0 the runner's scripts (`run.ps1`, `install.ps1`, `setup.ps1`) and an SPDX SBOM
+   are assets too, the scripts covered by `SHA256SUMS` and the provenance attestation, and the
+   container workflow publishes `ghcr.io/izaccavalheiro/testor:<version>` with its own;
 4. creates the GitHub release with the changelog section as its notes; a version with a
    pre-release suffix is marked as a pre-release.
 
