@@ -1,6 +1,6 @@
 # Agent protocol
 
-Status: proposed. Builds on: signed attestations, cooperative cancel, the actor record,
+Status: step 1 done (0.4: [jobs and a local agent](../jobs.md)); steps 2 to 4 proposed. Builds on: signed attestations, cooperative cancel, the actor record,
 separate accounts (0.3).
 
 ## Problem
@@ -53,6 +53,7 @@ that need no file system.
 
 ## Order of work
 
-1. Queue and leases in the controller (in-process queue, the files store), the agent as a
-   `process` executor, SSH unchanged. 2. Signed agent results. 3. Container and Kubernetes
+1. **Done.** Queue and leases in the controller (in-process queue, the files store), the agent
+   as a `process` executor on the controller's machine, SSH unchanged. The agent's own
+   configuration holds the commands; jobs only name a project and a task. 2. Signed agent results. 3. Container and Kubernetes
    executors, the Helm chart's agent. 4. Hub view across controllers.

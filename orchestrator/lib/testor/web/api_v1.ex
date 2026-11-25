@@ -9,7 +9,7 @@ defmodule Testor.Web.ApiV1 do
   """
   use Plug.Router
   import Testor.Web.Reply
-  alias Testor.{Auth, Device, Janitor, Maintenance, Query, Sessions, Stats, Views}
+  alias Testor.{Auth, Device, Janitor, Jobs, Maintenance, Query, Sessions, Stats, Views}
   alias Testor.Web.{Actions, OpenAPI, SSE}
 
   plug(:match)
@@ -225,6 +225,85 @@ defmodule Testor.Web.ApiV1 do
     end
   end
 
+  # --- jobs and agents (Testor.Jobs) ---------------------------------------------------------
+
+  get "/jobs" do
+    conn = fetch_query_params(conn)
+    status = conn.query_params["status"]
+
+    if status in [nil | Jobs.statuses()],
+      do: json(conn, 200, %{"data" => Jobs.list(status)}),
+      else: error(conn, 400, "bad_request", "status is one of #{Enum.join(Jobs.statuses(), ", ")}")
+  end
+
+  get "/jobs/:id" do
+    with_id(conn, id, fn conn ->
+      case Jobs.get(id) do
+        nil -> error(conn, 404, "not_found", "no such job")
+        job -> json(conn, 200, job)
+      end
+    end)
+  end
+
+  post "/jobs" do
+    with {:ok, who} <- signed_in(conn),
+         {:ok, params, conn} <- body_params(conn) do
+      case Jobs.enqueue(params, who) do
+        {:ok, job} ->
+          json(conn, 201, job)
+
+        {:error, :disabled} ->
+          error(conn, 403, "execution_disabled", "jobs are off: set execution.enabled in config.json")
+
+        {:error, message} ->
+          error(conn, 400, "bad_request", message)
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  post "/jobs/:id/cancel" do
+    with_id(conn, id, fn conn ->
+      case Jobs.cancel(id) do
+        {:ok, job} -> json(conn, 200, job)
+        {:error, :not_found} -> error(conn, 404, "not_found", "no such job")
+        {:error, :ended} -> error(conn, 409, "ended", "the job has ended")
+      end
+    end)
+  end
+
+  # An agent waits up to `wait` seconds (25 at most) for a job it can take: 200 with the job,
+  # or 204 when there is none.
+  post "/agent/lease" do
+    with {:ok, agent} <- signed_in(conn),
+         {:ok, params, conn} <- body_params(conn) do
+      labels = if is_list(params["labels"]), do: Enum.filter(params["labels"], &is_binary/1), else: []
+      wait = if is_integer(params["wait"]), do: params["wait"] |> max(0) |> min(25), else: 0
+      deadline = System.monotonic_time(:millisecond) + wait * 1000
+
+      case wait_for_job(agent, labels, deadline) do
+        {:ok, job} -> json(conn, 200, job)
+        :none -> send_resp(conn, 204, "")
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  post "/agent/jobs/:id/heartbeat" do
+    with_agent(conn, id, fn conn, agent -> Jobs.heartbeat(id, agent) |> agent_reply(conn) end)
+  end
+
+  post "/agent/jobs/:id/finish" do
+    with_agent(conn, id, fn conn, agent ->
+      case body_params(conn) do
+        {:ok, params, conn} -> Jobs.finish(id, agent, params) |> agent_reply(conn)
+        {:error, conn} -> conn
+      end
+    end)
+  end
+
   match _ do
     error(
       conn,
@@ -242,6 +321,47 @@ defmodule Testor.Web.ApiV1 do
   defp with_id(conn, id, fun) do
     if valid_id?(id), do: fun.(conn), else: error(conn, 400, "bad_request", "bad id")
   end
+
+  # Jobs are asked for and taken by someone: never anonymously, even with authentication off.
+  defp signed_in(conn) do
+    case conn.assigns.principal do
+      %{sub: sub} when is_binary(sub) -> {:ok, sub}
+      _ -> {:error, error(conn, 403, "authentication_required", "jobs need authentication: add users first")}
+    end
+  end
+
+  defp with_agent(conn, id, fun) do
+    with_id(conn, id, fn conn ->
+      case signed_in(conn) do
+        {:ok, agent} -> fun.(conn, agent)
+        {:error, conn} -> conn
+      end
+    end)
+  end
+
+  defp wait_for_job(agent, labels, deadline) do
+    case Jobs.lease(agent, labels) do
+      {:ok, job} ->
+        {:ok, job}
+
+      :none ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          :none
+        else
+          Process.sleep(Application.get_env(:testor, :lease_poll_ms, 500))
+          wait_for_job(agent, labels, deadline)
+        end
+    end
+  end
+
+  defp agent_reply({:ok, data}, conn), do: json(conn, 200, data)
+  defp agent_reply({:error, :not_found}, conn), do: error(conn, 404, "not_found", "no such job")
+
+  defp agent_reply({:error, :not_yours}, conn),
+    do: error(conn, 409, "not_yours", "another agent holds this job")
+
+  defp agent_reply({:error, :ended}, conn),
+    do: error(conn, 409, "ended", "the job has ended or its lease expired")
 
   defp oauth_error(conn, status, code, description) do
     json(conn, status, %{"error" => code, "error_description" => description})

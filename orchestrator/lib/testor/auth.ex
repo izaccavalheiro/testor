@@ -42,9 +42,11 @@ defmodule Testor.Auth do
   @roles %{
     "viewer" => ["read"],
     "operator" => ["read", "operate"],
-    "admin" => ["read", "operate", "maintain"]
+    "admin" => ["read", "operate", "maintain", "execute"],
+    # Runners' agents (runner/agent.ps1): they take jobs and report on them, nothing else.
+    "agent" => ["agent"]
   }
-  @scopes ["read", "operate", "maintain"]
+  @scopes ["read", "operate", "maintain", "execute", "agent"]
   @min_ttl 60
   @default_ttl 3600
   @max_ttl 30 * 86_400

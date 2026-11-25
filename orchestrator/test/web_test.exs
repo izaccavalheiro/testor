@@ -92,7 +92,7 @@ defmodule Testor.WebTest do
     end
 
     test "Basic credentials" do
-      assert %{"user" => "ada", "via" => "basic", "scopes" => ["read", "operate", "maintain"]} =
+      assert %{"user" => "ada", "via" => "basic", "scopes" => ["read", "operate", "maintain", "execute"]} =
                conn(:get, "/api/v1/auth/me") |> basic("ada") |> call() |> body()
 
       assert conn(:get, "/api/v1/auth/me") |> basic("ada", "wrong") |> call() |> Map.get(:status) == 401

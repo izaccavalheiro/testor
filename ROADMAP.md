@@ -31,6 +31,8 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
 - The [agent protocol](docs/design/agent-protocol.md): runners that connect out to a
   controller, take jobs by lease and sign their results; a `process` executor first, SSH kept.
+  **Step 1 is in:** [jobs and a local agent](docs/jobs.md); next, agents on other machines
+  sending their runs' output over the network.
 - A per-project queue, so a second run of a project waits instead of overwriting the snapshot
   the first one uses; per-run workspaces.
 - API-triggered runs: an `execute` scope, commands limited to a project's allow-list at a

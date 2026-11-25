@@ -47,7 +47,10 @@ defmodule Testor.Integration.AuthFilesTest do
     assert capture_io(fn -> CLI.user("val") end) =~ "val (viewer)"
 
     applied(fn -> me([]).status != 200 end)
-    assert %{"user" => "ada", "scopes" => ["read", "operate", "maintain"]} = me([basic("ada")]) |> json()
+
+    assert %{"user" => "ada", "scopes" => ["read", "operate", "maintain", "execute"]} =
+             me([basic("ada")]) |> json()
+
     assert %{status: 401} = me([basic("ada", "nope")])
     assert %{"ok" => true, "auth" => true} = health = http(:get, "/api/health") |> json()
     refute Map.has_key?(health, "home")
@@ -65,7 +68,7 @@ defmodule Testor.Integration.AuthFilesTest do
     cli_token = capture_io(fn -> CLI.token("ada", 1, "read") end) |> String.trim()
     assert %{"scopes" => ["read"]} = me([bearer(cli_token)]) |> json()
     all = capture_io(fn -> CLI.token("ada") end) |> String.trim()
-    assert %{"scopes" => ["read", "operate", "maintain"]} = me([bearer(all)]) |> json()
+    assert %{"scopes" => ["read", "operate", "maintain", "execute"]} = me([bearer(all)]) |> json()
 
     # Signed links work without credentials, and only for their run.
     id = record(%{"status" => "passed", "project" => "signed"})

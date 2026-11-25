@@ -23,6 +23,7 @@ defmodule Testor.Application do
     [
       {DynamicSupervisor, name: Testor.TrackerSupervisor, strategy: :one_for_one},
       Testor.Store,
+      Testor.Jobs,
       Testor.Sessions,
       Testor.Stats,
       Testor.Janitor,
