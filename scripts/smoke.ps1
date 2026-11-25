@@ -399,6 +399,41 @@ try {
   Check "identity: testor publishes its issuer and the job tokens' RS256 key" ($discovery.issuer -eq "https://testor.example.com" -and @($jwks.keys | Where-Object kty -eq "RSA").Count -eq 1) "($($discovery | ConvertTo-Json -Compress))"
   Remove-Item Env:SMOKE_SOURCE_SECRET
 
+  # Isolation: each job runs in a worktree (git) or a copy of the workspace, removed after, so
+  # what one run writes is not there for the next.
+  $isoGit = New-Item -ItemType Directory -Force (Join-Path $work "iso-git")
+  Set-Content -LiteralPath (Join-Path $isoGit "tracked.txt") -Value "tracked"
+  git -C $isoGit init --quiet
+  git -C $isoGit add tracked.txt
+  git -C $isoGit -c user.name=smoke -c user.email=smoke@example.invalid commit --quiet -m init
+  $isoCopy = New-Item -ItemType Directory -Force (Join-Path $work "iso-copy")
+  Set-Content -LiteralPath (Join-Path $isoCopy "tracked.txt") -Value "tracked"
+  $isoConfig = Join-Path $work "agent-isolated.json"
+  $probe = "if (Test-Path leftover.txt) { 'iso-dirty' } else { 'iso-clean' }; if (Test-Path tracked.txt) { 'iso-has-files' }; Set-Content leftover.txt 'from a job'"
+  @{ server = $base; home = $testorHome; labels = @("smoke")
+     projects = @{ "iso-git" = @{ workspace = "$isoGit"; git = $true; isolate = "worktree"; commands = @{ probe = $probe } }
+                   "iso-copy" = @{ workspace = "$isoCopy"; isolate = "copy"; commands = @{ probe = $probe } } } } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $isoConfig
+  foreach ($isoProject in "iso-git", "iso-copy") {
+    $isoLogs = foreach ($attempt in 1, 2) {
+      $isoJob = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs" `
+        -Body (@{ project = $isoProject; kind = "probe"; labels = @("smoke") } | ConvertTo-Json)
+      pwsh -NoProfile -File $agentScript -Config $isoConfig -Once -Wait 5 | Out-Null
+      $deadline = (Get-Date).AddSeconds(15)
+      do {
+        $isoDone = Get-Job $isoJob.id
+        $isoLog = if ($isoDone.runId) { try { "$(Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($isoDone.runId)/log")" } catch { "" } }
+        if ($isoLog -notmatch "iso-") { Start-Sleep -Milliseconds 300 }
+      } until ($isoLog -match "iso-" -or (Get-Date) -gt $deadline)
+      "$($isoDone.status): $isoLog"
+    }
+    $workspaceDir = if ($isoProject -eq "iso-git") { $isoGit } else { $isoCopy }
+    $leftovers = @(Get-ChildItem -LiteralPath (Join-Path $testorHome "isolated") -ErrorAction SilentlyContinue).Count
+    Check "isolation ($isoProject): each job starts clean, with the workspace's files, and leaves nothing behind" (
+      @($isoLogs | Where-Object { $_ -match "^passed: .*iso-clean.*iso-has-files" }).Count -eq 2 -and
+      -not (Test-Path -LiteralPath (Join-Path $workspaceDir "leftover.txt")) -and $leftovers -eq 0) "($($isoLogs -join ' | '); left: $leftovers)"
+  }
+
   $slowJob = New-Job "slow"
   $slowAgent = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-File", $agentScript, "-Config", $agentConfig, "-Once", "-Wait", "5"
   $deadline = (Get-Date).AddSeconds(30)

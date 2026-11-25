@@ -44,6 +44,8 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
   machine's workload identity, masked in its logs.
 - **Identity tokens for jobs** (done, in the next release): testor as an OpenID Connect
   issuer, so jobs trade a short token for cloud or Vault credentials, with no stored keys.
+- **Isolated workspaces for jobs** (done, in the next release): a git worktree or a copy per
+  job, removed after its run.
 
 ### 0.9: many testors, other backends
 
@@ -56,7 +58,7 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 ### Later
 
 - Release gates on signed attestations; check runs on pull requests from webhooks.
-- A per-project queue for SSH runs too, and per-run workspaces.
+- A per-project queue for SSH runs too, and per-run workspaces for them.
 
 ## 1.0: stable
 

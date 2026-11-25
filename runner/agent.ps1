@@ -32,6 +32,11 @@
 # as it happens (the record, the log in chunks, then screenshots, artifacts and the final
 # record), then deletes its copy. testor treats it like a run of its own.
 #
+# Isolation: with a project's "isolate": "worktree" (a git workspace) each job runs in a git
+# worktree of its own, at the job's ref (or the workspace's HEAD: committed files only); with
+# "copy", in a copy of the workspace. Either is under <home>/isolated and removed when the run
+# ends, so nothing a job writes (build output, caches, a planted file) is there for the next.
+#
 # Secrets: a project's "secrets" maps environment variables its commands get to where their
 # values are, resolved on this machine for each job (testor never sees them) and written as
 # *** in the run's log (run.ps1, TESTOR_MASK):
@@ -233,7 +238,10 @@ function Resolve-Job($job) {
   $clone = $repository -and $workspace -and -not (Test-Path -LiteralPath $workspace)
   if (-not $workspace -or (-not $clone -and -not (Test-Path -LiteralPath $workspace))) { return @{ error = "workspace of $($job.project) not found: $workspace" } }
   if ($job.ref -and -not $git) { return @{ error = "this agent does not check out refs for $($job.project) (git: true)" } }
-  @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null } }
+  $isolate = $project.isolate
+  if ($isolate -notin @($null, $false, "worktree", "copy")) { return @{ error = "isolate of $($job.project) is worktree, copy or false" } }
+  if ($isolate -eq "worktree" -and -not $git) { return @{ error = "isolate: worktree needs a git workspace for $($job.project) (git: true)" } }
+  @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null }; isolate = $isolate }
 }
 
 function Tool([string]$name) { if ($tools[$name]) { Expand $tools[$name] } else { $name } }
@@ -355,6 +363,26 @@ function Resolve-Secrets($job) {
   @{ vars = $values }
 }
 
+# Isolated workspaces live under <home>/isolated; one left behind (the agent was stopped) goes
+# at the next start.
+$isolatedRoot = Join-Path $home_ "isolated"
+function Remove-Isolated([string]$workspace, [string]$dir) {
+  if (Test-Path -LiteralPath (Join-Path $dir ".git")) { git -C $workspace worktree remove --force $dir 2>$null }
+  if (Test-Path -LiteralPath $dir) {
+    try { Remove-Item -Recurse -Force -LiteralPath $dir } catch { Log "could not remove $dir`: $($_.Exception.Message)" }
+  }
+  if (Test-Path -LiteralPath (Join-Path $workspace ".git")) { git -C $workspace worktree prune 2>$null }
+}
+if (Test-Path -LiteralPath $isolatedRoot) {
+  foreach ($left in @(Get-ChildItem -LiteralPath $isolatedRoot -Directory)) {
+    try { Remove-Item -Recurse -Force -LiteralPath $left.FullName } catch { Log "could not remove $($left.FullName)" }
+  }
+  foreach ($project in $projects.Values) {
+    $ws = if ($project.workspace) { Expand $project.workspace } else { $null }
+    if ($ws -and (Test-Path -LiteralPath (Join-Path $ws ".git"))) { git -C $ws worktree prune 2>$null }
+  }
+}
+
 function Invoke-Job($job) {
   $plan = Resolve-Job $job
   if (-not $plan.error) {
@@ -385,9 +413,30 @@ function Invoke-Job($job) {
   if ($job.ref) {
     # The ref matched testor's pattern (no leading dash); -- ends git's options anyway.
     git -C $plan.workspace fetch --quiet --all --tags
-    git -C $plan.workspace checkout --quiet --detach $job.ref --
+    # An isolated job checks its ref out in its own worktree, below.
+    if ($plan.isolate -ne "worktree") { git -C $plan.workspace checkout --quiet --detach $job.ref -- }
     if ($LASTEXITCODE) {
       $null = Call "/agent/jobs/$($job.id)/finish" @{ error = "git checkout $($job.ref) failed" }
+      return
+    }
+  }
+
+  $runDir = $plan.workspace
+  if ($plan.isolate) {
+    $runDir = Join-Path $isolatedRoot $job.id
+    $null = New-Item -ItemType Directory -Force $isolatedRoot
+    $made = try {
+      if ($plan.isolate -eq "worktree") {
+        git -C $plan.workspace worktree add --quiet --detach $runDir $(if ($job.ref) { $job.ref } else { "HEAD" })
+        -not $LASTEXITCODE
+      } else {
+        Copy-Item -Recurse -Force -LiteralPath $plan.workspace -Destination $runDir
+        $true
+      }
+    } catch { $false }
+    if (-not $made) {
+      Remove-Isolated $plan.workspace $runDir
+      $null = Call "/agent/jobs/$($job.id)/finish" @{ error = "the isolated workspace ($($plan.isolate)) of $($job.project) could not be made" }
       return
     }
   }
@@ -395,7 +444,7 @@ function Invoke-Job($job) {
   # Encoded: Start-Process passes arguments without escaping their double quotes, which would
   # break any command holding one.
   $quote = { param($text) "'" + ($text -replace "'", "''") + "'" }
-  $script = "Set-Location -LiteralPath $(& $quote $plan.workspace); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Body { $($plan.command) }"
+  $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Body { $($plan.command) }"
   $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
   $env:TESTOR_JOB_ID = $job.id
@@ -473,6 +522,7 @@ function Invoke-Job($job) {
   }
   $process.WaitForExit()
   Remove-Item "$out.out", "$out.err", "$out.jwt" -ErrorAction SilentlyContinue
+  if ($plan.isolate) { Remove-Isolated $plan.workspace $runDir }
   if ($upload -and -not $lost) {
     try { Complete-Run $job $state ($null -ne $cancelledAt) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
   }

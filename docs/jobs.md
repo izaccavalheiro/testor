@@ -127,6 +127,29 @@ is queued). See [deploy/helm/testor](../deploy/helm/testor/README.md).
 `scripts/container-e2e.sh` runs testor and an agent container on one network and a job through
 them, as CI does.
 
+## Isolation
+
+By default a project's jobs run in its workspace, one at a time, so a run finds what the one
+before it left: build output, caches, and anything a test or a dependency wrote there. With
+`"isolate"` each job gets a workspace of its own, removed when its run ends:
+
+```json
+"my-app": { "workspace": "~/src/my-app", "git": true, "isolate": "worktree",
+            "commands": { "test": "npm ci; npm test" } }
+```
+
+| `isolate` | The job runs in |
+| --------- | --------------- |
+| `"worktree"` | a `git worktree` of the workspace at the job's `ref` (fetched first), or at the workspace's `HEAD`: committed files only. Fast: it shares the repository's objects. Needs a git workspace (`git: true` or a `repository`) |
+| `"copy"` | a copy of the workspace, uncommitted files and all (and `node_modules`, so a large one takes a while) |
+| `false` (default) | the workspace itself; a `ref` is checked out there |
+
+Isolated workspaces are under `<home>/isolated/<job id>`; one an agent could not remove (it
+was stopped mid-run) goes when it starts again. The workspace itself is not changed, so a run
+cannot plant something for the next one. Isolation is per job, not a sandbox: the run still
+has its account's access to the machine (see [running tests in a separate
+account](security.md#running-tests-in-a-separate-account), and containers for more).
+
 ## Secrets
 
 A job's command often needs a secret: a registry token, a database password, a cloud key.
