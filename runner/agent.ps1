@@ -366,6 +366,7 @@ function Invoke-Job($job) {
   $quote = { param($text) "'" + ($text -replace "'", "''") + "'" }
   $script = "Set-Location -LiteralPath $(& $quote $plan.workspace); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Body { $($plan.command) }"
   $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
+  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
   $env:TESTOR_JOB_ID = $job.id
   $env:TESTOR_ACTOR = "agent:$([Environment]::MachineName.ToLower()) for $($job.requestedBy)"
   # The run gets the secrets in its environment, and run.ps1 writes their values as ***.
@@ -374,7 +375,7 @@ function Invoke-Job($job) {
   if ($secrets.vars.Count) { $env:TESTOR_MASK = (@($maskBefore) + @($secrets.vars.Keys) | Where-Object { $_ }) -join "," }
   try {
     $process = Start-Process pwsh -PassThru -NoNewWindow -RedirectStandardOutput "$out.out" -RedirectStandardError "$out.err" `
-      -ArgumentList "-NoProfile", "-NonInteractive", "-EncodedCommand", [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+      -ArgumentList "-NoProfile", "-NonInteractive", "-EncodedCommand", $encoded
     # Windows keeps the exit code only for a process whose handle was opened while it ran.
     $null = $process.Handle
   } finally {
