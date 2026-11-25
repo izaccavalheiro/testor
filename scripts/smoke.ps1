@@ -334,7 +334,8 @@ try {
   $deadline = (Get-Date).AddSeconds(15)
   do {
     $farJob = Get-Job $far.id
-    $farRun = if ($farJob.runId) { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)") }
+    # The job names its run as soon as the agent opens it; the store has it within a moment.
+    $farRun = if ($farJob.runId) { try { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)" } catch { $null } }
     if (-not ($farRun.run.attested -and $farRun.run.status -ne "running")) { Start-Sleep -Milliseconds 500 }
   } until (($farRun.run.attested -and $farRun.run.status -ne "running") -or (Get-Date) -gt $deadline)
   $farLog = if ($farJob.runId) { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)/log" }
@@ -349,7 +350,11 @@ try {
   $null = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs/$($farSlow.id)/cancel" -Body "{}"
   $farEnded = $farAgent.WaitForExit(60000)
   $farCancelled = Get-Job $farSlow.id
-  $farCancelledRun = if ($farCancelled.runId) { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farCancelled.runId)").run }
+  $deadline = (Get-Date).AddSeconds(10)
+  do {
+    $farCancelledRun = if ($farCancelled.runId) { try { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farCancelled.runId)").run } catch { $null } }
+    if ($farCancelledRun.status -ne "cancelled") { Start-Sleep -Milliseconds 300 }
+  } until ($farCancelledRun.status -eq "cancelled" -or (Get-Date) -gt $deadline)
   Check "remote: cancelling reaches the other machine" ($farRunning.Count -eq 1 -and $farEnded -and $farCancelled.status -eq "cancelled" -and $farCancelledRun.status -eq "cancelled") "($($farCancelled | ConvertTo-Json -Compress); run $($farCancelledRun.status))"
   Remove-Item Env:TESTOR_AGENT_TOKEN
 } finally {
