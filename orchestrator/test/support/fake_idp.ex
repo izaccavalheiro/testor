@@ -15,13 +15,26 @@ defmodule Testor.Test.FakeIdP do
   @doc "Starts it under the test's supervisor: returns its issuer URL."
   def start do
     keys = %{"RS256" => key("RS256"), "ES256" => key("ES256"), "EdDSA" => key("EdDSA")}
-    ExUnit.Callbacks.start_supervised!(%{id: __MODULE__.State, start: {Agent, :start_link, [fn -> %{} end, [name: __MODULE__.State]]}})
-    pid = ExUnit.Callbacks.start_supervised!({Bandit, plug: __MODULE__, ip: :loopback, port: 0, startup_log: false})
-    {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
-    issuer = "http://127.0.0.1:#{port}"
 
-    Agent.update(__MODULE__.State, fn _ ->
-      %{issuer: issuer, keys: keys, published: Map.keys(keys), meta: %{}, codes: %{}, requests: [], token: nil}
+    ExUnit.Callbacks.start_supervised!(%{
+      id: __MODULE__.State,
+      start: {Agent, :start_link, [fn -> %{} end, [name: __MODULE__.State]]}
+    })
+
+    pid =
+      ExUnit.Callbacks.start_supervised!(
+        {Bandit, plug: __MODULE__, ip: :loopback, port: 0, startup_log: false}
+      )
+
+      %{
+        issuer: issuer,
+        keys: keys,
+        published: Map.keys(keys),
+        meta: %{},
+        codes: %{},
+        requests: [],
+        token: nil
+      }
     end)
 
     issuer
@@ -33,11 +46,14 @@ defmodule Testor.Test.FakeIdP do
 
     case alg do
       "RS256" ->
-        {:RSAPrivateKey, _, n, e, _, _, _, _, _, _, _} = private = :public_key.generate_key({:rsa, 2048, 65_537})
-        {kid, private, %{"kty" => "RSA", "n" => b64(:binary.encode_unsigned(n)), "e" => b64(:binary.encode_unsigned(e))}}
+        {:RSAPrivateKey, _, n, e, _, _, _, _, _, _, _} =
+          private = :public_key.generate_key({:rsa, 2048, 65_537})
+        {kid, private,
+         %{"kty" => "RSA", "n" => b64(:binary.encode_unsigned(n)), "e" => b64(:binary.encode_unsigned(e))}}
 
-      "ES256" ->
-        {:ECPrivateKey, _, _, _, <<4, x::binary-32, y::binary-32>>, _} = private = :public_key.generate_key({:namedCurve, @p256})
+        {:ECPrivateKey, _, _, _, <<4, x::binary-32, y::binary-32>>, _} =
+          private = :public_key.generate_key({:namedCurve, @p256})
+
         {kid, private, %{"kty" => "EC", "crv" => "P-256", "x" => b64(x), "y" => b64(y)}}
 
       "EdDSA" ->
@@ -106,7 +122,9 @@ defmodule Testor.Test.FakeIdP do
     %{keys: keys, published: published} = state()
 
     jwks =
-      for alg <- published, {kid, _, jwk} <- [keys[alg]], do: Map.merge(jwk, %{"kid" => kid, "alg" => alg, "use" => "sig"})
+      for alg <- published,
+          {kid, _, jwk} <- [keys[alg]],
+          do: Map.merge(jwk, %{"kid" => kid, "alg" => alg, "use" => "sig"})
 
     json(conn, 200, %{"keys" => jwks})
   end

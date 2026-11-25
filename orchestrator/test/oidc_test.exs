@@ -205,7 +205,12 @@ defmodule Testor.OIDCTest do
 
       me = conn(:get, "/api/v1/auth/me") |> with_session(session) |> Router.call(@opts) |> body()
 
-      assert %{"user" => "grace@example.com", "via" => "session", "scopes" => ["read", "operate"], "projects" => ["web*"]} =
+      assert %{
+               "user" => "grace@example.com",
+               "via" => "session",
+               "scopes" => ["read", "operate"],
+               "projects" => ["web*"]
+             } =
                me
 
       assert (conn(:get, "/") |> with_session(session) |> Router.call(@opts)).status == 200
@@ -247,7 +252,11 @@ defmodule Testor.OIDCTest do
     end
 
     test "everyone, every project", %{issuer: issuer} do
-      configure(issuer, %{"roles" => %{"viewer" => ["*"]}, "projects" => %{"*" => ["web"], "platform" => ["*"]}})
+      configure(issuer, %{
+        "roles" => %{"viewer" => ["*"]},
+        "projects" => %{"*" => ["web"], "platform" => ["*"]}
+      })
+
       flow = sign_in(issuer, %{"groups" => nil})
       me = conn(:get, "/api/v1/auth/me") |> with_session(session_of(flow)) |> Router.call(@opts) |> body()
       assert %{"scopes" => ["read"], "projects" => ["web"]} = me
@@ -269,7 +278,10 @@ defmodule Testor.OIDCTest do
 
       # A minute later the set is fetched again.
       cache = :persistent_term.get({OIDC, :cache})
-      old = Map.new(cache, fn {url, {_at, doc}} -> {url, {System.monotonic_time(:millisecond) - 61_000, doc}} end)
+
+      old =
+        Map.new(cache, fn {url, {_at, doc}} -> {url, {System.monotonic_time(:millisecond) - 61_000, doc}} end)
+
       :persistent_term.put({OIDC, :cache}, old)
       assert %{callback: %{status: 302}} = sign_in(issuer)
     end
@@ -309,7 +321,10 @@ defmodule Testor.OIDCTest do
       assert refused(issuer, %{}, state: "forged") =~ "state does not match"
 
       # A signature of the wrong key, and an ES256 signature of the wrong size.
-      FakeIdP.update(fn s -> put_in(s.keys["RS256"], put_elem(FakeIdP.key("RS256"), 0, elem(s.keys["RS256"], 0))) end)
+      FakeIdP.update(fn s ->
+        put_in(s.keys["RS256"], put_elem(FakeIdP.key("RS256"), 0, elem(s.keys["RS256"], 0)))
+      end)
+
       assert refused(issuer, %{}) =~ "signature does not hold"
     end
 
@@ -332,7 +347,9 @@ defmodule Testor.OIDCTest do
         assert (conn(:get, "/auth/callback?code=x&state=y") |> Router.call(@opts)).resp_body =~ "expired"
 
         forged =
-          conn(:get, "/auth/callback?code=x&state=y") |> put_req_cookie("testor_oidc", "forged") |> Router.call(@opts)
+          conn(:get, "/auth/callback?code=x&state=y")
+          |> put_req_cookie("testor_oidc", "forged")
+          |> Router.call(@opts)
 
         assert forged.resp_body =~ "expired"
 
@@ -421,7 +438,14 @@ defmodule Testor.OIDCTest do
 
       forged =
         JWT.sign(
-          %{"iss" => "testor", "aud" => "testor-session", "sub" => "x", "iat" => now, "exp" => now + 60, "role" => "root"},
+          %{
+            "iss" => "testor",
+            "aud" => "testor-session",
+            "sub" => "x",
+            "iat" => now,
+            "exp" => now + 60,
+            "role" => "root"
+          },
           settings.token_keys.signing
         )
 
@@ -442,7 +466,10 @@ defmodule Testor.OIDCTest do
   end
 
   test "without a provider" do
-    Application.put_env(:testor, :auth, %{"users" => %{"ada" => %{"password" => Password.hash(@password, 1000)}}})
+    Application.put_env(:testor, :auth, %{
+      "users" => %{"ada" => %{"password" => Password.hash(@password, 1000)}}
+    })
+
     assert (conn(:get, "/auth/login") |> Router.call(@opts)).status == 404
     capture_log(fn -> assert (conn(:get, "/auth/callback") |> Router.call(@opts)).status == 404 end)
     assert (conn(:get, "/auth/signed-out") |> Router.call(@opts)).resp_body =~ ~s(href="/")
@@ -488,10 +515,15 @@ defmodule Testor.OIDCTest do
       OIDC.reset_cache()
       [h, p, _] = String.split(token, ".")
       short = Enum.join([h, p, Base.url_encode64("short", padding: false)], ".")
-      assert {:error, "the ID token's signature does not hold"} = OIDC.verify_id_token(short, oidc, meta, "n", now)
+
+      assert {:error, "the ID token's signature does not hold"} =
+               OIDC.verify_id_token(short, oidc, meta, "n", now)
 
       # A set that is not a set.
-      :persistent_term.put({OIDC, :cache}, %{meta["jwks_uri"] => {System.monotonic_time(:millisecond), %{"no" => 1}}})
+      :persistent_term.put({OIDC, :cache}, %{
+        meta["jwks_uri"] => {System.monotonic_time(:millisecond), %{"no" => 1}}
+      })
+
       assert {:error, _} = OIDC.verify_id_token(token, oidc, meta, "n", now)
 
       # A set that cannot be fetched, at first or again.

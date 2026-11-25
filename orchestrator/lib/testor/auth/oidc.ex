@@ -114,9 +114,11 @@ defmodule Testor.Auth.OIDC do
   defp projects(nil), do: {:ok, nil}
 
   defp projects(%{} = projects) do
-    if Enum.all?(projects, fn {_group, patterns} -> is_list(patterns) and Enum.all?(patterns, &Testor.Access.valid_pattern?/1) end),
-      do: {:ok, projects},
-      else: {:error, "projects maps groups to lists of project names or patterns"}
+    if Enum.all?(projects, fn {_group, patterns} ->
+         is_list(patterns) and Enum.all?(patterns, &Testor.Access.valid_pattern?/1)
+       end),
+       do: {:ok, projects},
+       else: {:error, "projects maps groups to lists of project names or patterns"}
   end
 
   defp projects(_), do: {:error, "projects maps groups to lists of project names or patterns"}
@@ -130,7 +132,10 @@ defmodule Testor.Auth.OIDC do
   @doc "An absolute http(s) URL with a host."
   def url?(url) do
     is_binary(url) and
-      match?(%URI{scheme: scheme, host: host} when scheme in ["https", "http"] and host not in [nil, ""], URI.parse(url))
+      match?(
+        %URI{scheme: scheme, host: host} when scheme in ["https", "http"] and host not in [nil, ""],
+        URI.parse(url)
+      )
   end
 
   @doc "An https URL, or http on loopback (a provider on the same machine, tests)."
@@ -173,7 +178,9 @@ defmodule Testor.Auth.OIDC do
 
       endpoint = meta["authorization_endpoint"]
       separator = if String.contains?(endpoint, "?"), do: "&", else: "?"
-      {:ok, endpoint <> separator <> query, Plug.Crypto.encrypt(key, @login_cookie, login, max_age: @login_max_age)}
+
+      {:ok, endpoint <> separator <> query,
+       Plug.Crypto.encrypt(key, @login_cookie, login, max_age: @login_max_age)}
     end
   end
 
@@ -194,12 +201,14 @@ defmodule Testor.Auth.OIDC do
   def callback(settings, params, cookie, now \\ System.system_time(:second))
 
   def callback(_settings, %{"error" => error} = params, _cookie, _now) do
-    {:error, "the identity provider refused the sign-in: #{error} #{params["error_description"]}" |> String.trim()}
+    {:error,
+     "the identity provider refused the sign-in: #{error} #{params["error_description"]}" |> String.trim()}
   end
 
   def callback(%{oidc: oidc, key: key} = settings, params, cookie, now) do
     with {:ok, login} <- decrypt(key, cookie),
-         :ok <- check(state?(params["state"], login["state"]), "the sign-in's state does not match; start again"),
+         :ok <-
+           check(state?(params["state"], login["state"]), "the sign-in's state does not match; start again"),
          :ok <- check(is_binary(params["code"]), "the identity provider sent no code"),
          {:ok, meta} <- metadata(oidc),
          {:ok, id_token} <- exchange(oidc, meta, params["code"], login["verifier"]),
@@ -389,7 +398,8 @@ defmodule Testor.Auth.OIDC do
         {:error, "the identity provider has not verified #{name}'s email"}
 
       not Auth.valid_name?(name) ->
-        {:error, "the identity provider sent no usable #{oidc.username_claim} (letters, digits, _ . @ -; up to 64)"}
+        {:error,
+         "the identity provider sent no usable #{oidc.username_claim} (letters, digits, _ . @ -; up to 64)"}
 
       true ->
         case Enum.find(@roles, &member?(oidc.roles[&1], groups)) do
@@ -410,7 +420,11 @@ defmodule Testor.Auth.OIDC do
 
   defp projects_of(projects, groups) do
     patterns =
-      for {group, patterns} <- projects, group == "*" or group in groups, pattern <- patterns, uniq: true, do: pattern
+      for {group, patterns} <- projects,
+          group == "*" or group in groups,
+          pattern <- patterns,
+          uniq: true,
+          do: pattern
 
     if "*" in patterns, do: nil, else: patterns
   end

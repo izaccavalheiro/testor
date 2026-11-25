@@ -33,7 +33,13 @@ defmodule Testor.Web.SignIn do
 
       {:error, why} ->
         Logger.error("auth: oidc: #{why}")
-        page(conn, 502, "Sign-in is unavailable", "The identity provider cannot be reached. Try again in a minute.")
+
+        page(
+          conn,
+          502,
+          "Sign-in is unavailable",
+          "The identity provider cannot be reached. Try again in a minute."
+        )
     end
   end
 
@@ -50,7 +56,11 @@ defmodule Testor.Web.SignIn do
 
       conn
       |> delete_resp_cookie(OIDC.login_cookie(), path: "/auth")
-      |> put_resp_cookie(OIDC.session_cookie(), signed_in.session, cookie_options(oidc, "/", signed_in.max_age))
+      |> put_resp_cookie(
+        OIDC.session_cookie(),
+        signed_in.session,
+        cookie_options(oidc, "/", signed_in.max_age)
+      )
       |> redirect(signed_in.return)
     else
       nil ->
@@ -91,7 +101,13 @@ defmodule Testor.Web.SignIn do
   defp provider(_settings), do: nil
 
   defp no_provider(conn) do
-    page(conn, 404, "Sign-in is not set up", "testor has no identity provider.", {"/?basic", "Sign in with a password"})
+    page(
+      conn,
+      404,
+      "Sign-in is not set up",
+      "testor has no identity provider.",
+      {"/?basic", "Sign in with a password"}
+    )
   end
 
   defp cookie_options(oidc, path, max_age),
@@ -121,7 +137,10 @@ defmodule Testor.Web.SignIn do
 
     conn
     |> put_resp_header("cache-control", "no-store")
-    |> put_resp_header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+    |> put_resp_header(
+      "content-security-policy",
+      "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'"
+    )
     |> put_resp_content_type("text/html")
     |> send_resp(status, html)
   end
