@@ -292,7 +292,12 @@ try {
   # The store reads the run's record within a moment of its end; the job links it then.
   $deadline = (Get-Date).AddSeconds(10)
   do { $done = Get-Job $hello.id; if (-not $done.runId) { Start-Sleep -Milliseconds 300 } } until ($done.runId -or (Get-Date) -gt $deadline)
-  $run = if ($done.runId) { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)").run }
+  # The run's end reaches the store within a moment too: wait for it to settle.
+  $deadline = (Get-Date).AddSeconds(10)
+  do {
+    $run = if ($done.runId) { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)").run }
+    if ($run.status -eq "running") { Start-Sleep -Milliseconds 300 }
+  } until ($run.status -ne "running" -or (Get-Date) -gt $deadline)
   $runLog = if ($done.runId) { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)/log" }
   Check "jobs: an agent runs a queued job" ($done.status -eq "passed" -and $done.exitCode -eq 0) "($($done | ConvertTo-Json -Compress))"
   Check "jobs: the job's run is recorded and names the job" ($run.job -eq $hello.id -and $run.status -eq "passed" -and "$runLog" -match "hello from a job") "($($run | ConvertTo-Json -Compress))"
