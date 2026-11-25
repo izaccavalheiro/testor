@@ -52,6 +52,10 @@ defmodule Testor.TracingTest do
     %{port: port}
   end
 
+  # Spans go in the background: wait until no send is left (a refused connection takes a
+  # couple of seconds on Windows).
+  defp sent, do: wait_until(fn -> Task.Supervisor.children(Testor.TaskSupervisor) == [] end)
+
   defp span(%{"resourceSpans" => [%{"scopeSpans" => [%{"spans" => [span]}]}]}), do: span
   defp attr(span, key), do: Enum.find_value(span["attributes"], &(&1["key"] == key && &1["value"]))
 
@@ -195,7 +199,7 @@ defmodule Testor.TracingTest do
         })
 
         assert_receive {:otlp, _, _}, 5_000
-        Process.sleep(200)
+        sent()
       end)
 
     assert log =~ "answered 500"
@@ -205,7 +209,7 @@ defmodule Testor.TracingTest do
     log =
       capture_log(fn ->
         Tracing.run_ended(%{"startedAt" => "2026-11-25T10:00:00Z", "status" => "passed"})
-        Process.sleep(500)
+        sent()
       end)
 
     assert log =~ "cannot be reached"
