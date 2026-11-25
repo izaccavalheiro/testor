@@ -455,8 +455,9 @@ defmodule Testor.OIDCTest do
     end
 
     test "a session limited to projects sees those only", %{issuer: issuer} do
-      web = record(%{"project" => "web-app"})
-      other = record(%{"project" => "secret-app"})
+      # Finished runs: a running one cannot be deleted, and would hold up other tests.
+      web = record(%{"project" => "web-app", "status" => "passed"})
+      other = record(%{"project" => "secret-app", "status" => "passed"})
       on_exit(fn -> Enum.each([web, other], &Testor.Store.delete/1) end)
 
       session = issuer |> sign_in() |> session_of()
