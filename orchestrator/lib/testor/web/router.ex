@@ -25,7 +25,8 @@ defmodule Testor.Web.Router do
     *      /api/v1/...             the versioned API (Testor.Web.ApiV1)
     POST   /mcp                    the MCP server (Testor.Web.MCP)
 
-  Every request passes `Testor.Web.Auth` first: authentication and scopes (once `auth.json`
+  Every request passes `Testor.Web.Edge` first (the client's address behind trusted proxies, the
+  `Host` allow-list), then `Testor.Web.Auth`: authentication and scopes (once `auth.json`
   has users), the CSRF guard (POST and DELETE need a Bearer token, the header `X-Testor: 1` or
   a JSON body, and no foreign `Origin`), and an audit line for each state-changing request.
 
@@ -43,6 +44,7 @@ defmodule Testor.Web.Router do
 
   plug(Plug.RequestId)
   plug(:security_headers)
+  plug(Testor.Web.Edge)
   plug(Testor.Web.Auth)
   plug(:csrf)
   plug(:audit)
@@ -114,7 +116,7 @@ defmodule Testor.Web.Router do
 
       bytes =
         case Integer.parse(conn.query_params["tail"] || "") do
-          {n, ""} when n > 0 -> min(n, 64 * 1024 * 1024)
+          {n, ""} when n > 0 -> min(n, Testor.Query.max_tail())
           _ -> 512 * 1024
         end
 
@@ -251,7 +253,8 @@ defmodule Testor.Web.Router do
     end
   end
 
-  # The file the URL segments name under `root`, or nil when they would leave it.
+  # The file the URL segments name under `root`, or nil when they would leave it, by name or
+  # through a symbolic link a run left there.
   defp inside(root, segments) do
     root = Path.expand(root)
     full = Path.expand(Path.join([root | segments]))
@@ -260,7 +263,7 @@ defmodule Testor.Web.Router do
       segments != [] and
         Enum.all?(segments, &(&1 not in ["", ".", ".."] and not String.contains?(&1, ["/", "\\", ":"])))
 
-    if safe and String.starts_with?(full, root <> "/"), do: full
+    if safe and String.starts_with?(full, root <> "/") and Files.no_links?(root, segments), do: full
   end
 
   defp download_name(path), do: path |> Path.basename() |> String.replace(~r/[^\w.-]/u, "_")

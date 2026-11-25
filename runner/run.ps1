@@ -68,6 +68,8 @@ function Save-Record {
 # Images and videos under the folders test runners write screenshots to.
 function Find-Media([string]$dir, [bool]$inShotFolder) {
   foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue) {
+    # Links are never followed nor copied: one could point at files outside the project.
+    if ($item.LinkType) { continue }
     if ($item.PSIsContainer) {
       if ($item.Name -in "node_modules", "target", ".git", ".venv", "playwright-report") { continue }
       $shots = $inShotFolder -or ($item.Name -in "test-results", "__screenshots__", "screenshots", ".vitest-attachments")
@@ -106,11 +108,12 @@ function Save-Artifacts {
     $pattern = $pattern.Trim()
     if ([IO.Path]::IsPathRooted($pattern)) { Write-Warning "testor: artifact '$pattern' is not relative to the working folder; skipped"; continue }
     foreach ($item in @(Get-Item -Path (Join-Path $workdir $pattern) -Force -ErrorAction SilentlyContinue)) {
+      if ($item.LinkType) { Write-Warning "testor: artifact '$pattern' is a link; skipped"; continue }
       $rel = [IO.Path]::GetRelativePath($workdir, $item.FullName)
       if ($rel -eq "." -or $rel -eq ".." -or $rel.StartsWith("..$([IO.Path]::DirectorySeparatorChar)") -or [IO.Path]::IsPathRooted($rel)) {
         Write-Warning "testor: artifact '$pattern' is outside the working folder; skipped"; continue
       }
-      $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force -ErrorAction SilentlyContinue) } else { @($item) }
+      $files = if ($item.PSIsContainer) { @(Get-ChildItem -LiteralPath $item.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType }) } else { @($item) }
       # Reports copy their assets with the original dates, so one new file is enough.
       if (-not ($files | Where-Object { $_.LastWriteTime -ge $since } | Select-Object -First 1)) { continue }
       Copy-Artifact $files $rel

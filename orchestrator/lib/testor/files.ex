@@ -56,7 +56,8 @@ defmodule Testor.Files do
   end
 
   def read_json(path) do
-    with {:ok, text} <- File.read(path),
+    with {:file, _, _} <- entry(path),
+         {:ok, text} <- File.read(path),
          {:ok, data} when is_map(data) <- JSON.decode(Config.strip_bom(text)) do
       {:ok, data}
     else
@@ -70,16 +71,18 @@ defmodule Testor.Files do
     File.rename!(tmp, path)
   end
 
+  @doc "The size of a regular file; 0 for anything else, a symbolic link included."
   def size(path) do
-    case File.stat(path) do
-      {:ok, %{size: size}} -> size
+    case entry(path) do
+      {:file, size, _} -> size
       _ -> 0
     end
   end
 
+  @doc "The modification time of a file or a folder; nil for anything else, a symbolic link included."
   def mtime(path) do
-    case File.stat(path, time: :posix) do
-      {:ok, %{mtime: mtime}} -> mtime
+    case File.lstat(path, time: :posix) do
+      {:ok, %{type: type, mtime: mtime}} when type in [:regular, :directory] -> mtime
       _ -> nil
     end
   end
@@ -135,25 +138,36 @@ defmodule Testor.Files do
   @doc "Every file under `dir`: %{full, rel, size, mtime}."
   def walk(dir), do: walk(dir, dir)
 
-  # Anything but a regular file is walked: a folder lists its files, the rest lists nothing.
+  # Symbolic links (and junctions) are never followed: a run could point one at testor's
+  # secrets, or at a parent folder to make the walk endless.
   defp walk(dir, base) do
-    case File.ls(dir) do
-      {:ok, names} ->
-        Enum.flat_map(names, fn name ->
-          full = Path.join(dir, name)
+    Enum.flat_map(ls(dir), fn name ->
+      full = Path.join(dir, name)
 
-          case File.stat(full, time: :posix) do
-            {:ok, %{type: :regular, size: size, mtime: mtime}} ->
-              [%{full: full, rel: Path.relative_to(full, base), size: size, mtime: mtime}]
+      case entry(full) do
+        {:file, size, mtime} -> [%{full: full, rel: Path.relative_to(full, base), size: size, mtime: mtime}]
+        :dir -> walk(full, base)
+        :skip -> []
+      end
+    end)
+  end
 
-            _ ->
-              walk(full, base)
-          end
-        end)
+  @doc "What a walk does with a path, without following links: `{:file, size, mtime}`, `:dir` or `:skip`."
+  def entry(path), do: path |> File.lstat(time: :posix) |> kind()
 
-      _ ->
-        []
-    end
+  @doc false
+  def kind({:ok, %{type: :regular, size: size, mtime: mtime}}), do: {:file, size, mtime}
+  def kind({:ok, %{type: :directory}}), do: :dir
+  def kind(_), do: :skip
+
+  @doc """
+  Whether `segments` under `root` name a path without a symbolic link (or junction) in it:
+  files are served only from inside testor's folders.
+  """
+  def no_links?(root, segments) do
+    segments
+    |> Enum.scan(root, &Path.join(&2, &1))
+    |> Enum.all?(&(File.lstat(&1) |> kind() != :skip))
   end
 
   def iso(nil), do: nil
@@ -236,13 +250,16 @@ defmodule Testor.Files do
           Enum.flat_map(names, fn name ->
             full = Path.join(dir, name)
 
-            case File.stat(full, time: :posix) do
-              {:ok, %{type: :regular, size: size, mtime: mtime}} ->
+            case entry(full) do
+              {:file, size, mtime} ->
                 rel = Path.relative_to(full, root)
                 [%{rel: rel, target: rel, kind: artifact_kind(rel), size: size, files: 1, mtime: mtime}]
 
-              _ ->
+              :dir ->
                 collect_artifacts(full, root)
+
+              :skip ->
+                []
             end
           end)
         end
@@ -308,8 +325,11 @@ defmodule Testor.Files do
 
   @doc "Specs of a finished run, from its whole log."
   def log_specs(id) do
-    case File.read(Config.log_file(id)) do
-      {:ok, text} -> SpecParser.parse(text)
+    path = Config.log_file(id)
+
+    with {:file, _, _} <- entry(path), {:ok, text} <- File.read(path) do
+      SpecParser.parse(text)
+    else
       _ -> []
     end
   end

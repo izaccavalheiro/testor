@@ -23,8 +23,9 @@ defmodule Testor.OS do
         _ -> true
       end
     else
-      case System.cmd("ps", ["-p", "#{pid}", "-o", "pid="], stderr_to_stdout: true) do
-        {out, 0} -> String.trim(out) == "#{pid}"
+      # A zombie (ended, not yet reaped by its parent) has ended: its state starts with Z.
+      case System.cmd("ps", ["-p", "#{pid}", "-o", "stat="], stderr_to_stdout: true) do
+        {out, 0} -> (state = String.trim(out)) != "" and not String.starts_with?(state, "Z")
         {_, 1} -> false
         _ -> true
       end
@@ -52,25 +53,81 @@ defmodule Testor.OS do
 
   @doc "Every process under `pid` (Unix), from `ps`."
   def descendants(pid) do
-    case System.cmd("ps", ["-A", "-o", "pid=,ppid="], stderr_to_stdout: true) do
-      {out, 0} ->
-        children =
-          out
-          |> String.split("\n", trim: true)
-          |> Enum.flat_map(fn line ->
-            case String.split(line) do
-              [child, parent] -> [{String.to_integer(parent), String.to_integer(child)}]
-              _ -> []
-            end
-          end)
-          |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+    children = parents() |> Enum.group_by(&elem(&1, 1), &elem(&1, 0))
+    walk(children, [pid], [])
+  end
 
-        walk(children, [pid], [])
+  @doc "`[{pid, parent pid}]` of every process."
+  def parents do
+    if windows?() do
+      script =
+        "Get-CimInstance Win32_Process | ForEach-Object { \"$($_.ProcessId) $($_.ParentProcessId)\" }"
 
-      _ ->
-        []
+      case powershell(script) do
+        {:ok, out} -> pairs(out)
+        _ -> []
+      end
+    else
+      case System.cmd("ps", ["-A", "-o", "pid=,ppid="], stderr_to_stdout: true) do
+        {out, 0} -> pairs(out)
+        _ -> []
+      end
     end
   end
+
+  defp pairs(out) do
+    out
+    |> String.split("\n", trim: true)
+    |> Enum.flat_map(fn line ->
+      with [child, parent] <- String.split(line),
+           {child, ""} <- Integer.parse(child),
+           {parent, ""} <- Integer.parse(parent) do
+        [{child, parent}]
+      else
+        _ -> []
+      end
+    end)
+  end
+
+  @doc """
+  The processes above `pid`, nearest first. Pid reuse can make the parent links of old
+  processes loop (Windows keeps a dead parent's pid in its children), so each pid is visited once.
+  """
+  def ancestors(pid) do
+    parent = Map.new(parents())
+    climb(parent, Map.get(parent, pid), [pid])
+  end
+
+  defp climb(_parent, nil, seen), do: tl(Enum.reverse(seen))
+  defp climb(_parent, 0, seen), do: tl(Enum.reverse(seen))
+
+  defp climb(parent, pid, seen) do
+    if pid in seen, do: tl(Enum.reverse(seen)), else: climb(parent, Map.get(parent, pid), [pid | seen])
+  end
+
+  @doc "When process `pid` started (UTC), or nil when there is no such process."
+  def started_at(pid) when is_integer(pid) and pid > 0 do
+    if windows?() do
+      script =
+        "$p = Get-CimInstance Win32_Process -Filter 'ProcessId=#{pid}'; " <>
+          "if ($p) { $p.CreationDate.ToUniversalTime().ToString('o') }"
+
+      with {:ok, out} <- powershell(script),
+           {:ok, time, _} <-
+             out |> String.trim() |> String.replace(~r/(\.\d{6})\d+/, "\\1") |> DateTime.from_iso8601() do
+        time
+      else
+        _ -> nil
+      end
+    else
+      case System.cmd("ps", ["-p", "#{pid}", "-o", "etime="], stderr_to_stdout: true) do
+        {out, 0} -> DateTime.add(DateTime.utc_now(), -elapsed(String.trim(out)), :second)
+        _ -> nil
+      end
+    end
+  end
+
+  def started_at(_), do: nil
 
   defp walk(_children, [], found), do: found
 

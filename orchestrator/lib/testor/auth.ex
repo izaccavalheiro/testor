@@ -56,8 +56,8 @@ defmodule Testor.Auth do
   @doc "A user name testor accepts."
   def valid_name?(name), do: is_binary(name) and Regex.match?(~r/^[A-Za-z0-9_.@-]{1,64}$/, name)
 
-  def auth_file, do: Path.join(Config.data_dir(), "auth.json")
-  def key_file, do: Path.join(Config.data_dir(), "jwt.key")
+  def auth_file, do: Path.join(Config.secrets_dir(), "auth.json")
+  def key_file, do: Path.join(Config.secrets_dir(), "jwt.key")
 
   # --- settings ------------------------------------------------------------------------------
 
@@ -242,24 +242,32 @@ defmodule Testor.Auth do
     with :ok <- unblocked(address) do
       case settings.users[name] do
         nil ->
-          Password.dummy_verify()
-          failure(address, "unknown user #{inspect(name)}", :invalid_credentials)
+          Guard.hashing(fn ->
+            Password.dummy_verify()
+            failure(address, "unknown user #{inspect(name)}", :invalid_credentials)
+          end)
 
         user ->
           key = Guard.cache_key([name, password, user.hash])
 
-          cond do
-            Guard.cached?(key) ->
-              {:ok, principal(name, user, :basic)}
-
-            Password.verify(password, user.hash) ->
-              Guard.remember(key)
-              {:ok, principal(name, user, :basic)}
-
-            true ->
-              failure(address, "wrong password for #{inspect(name)}", :invalid_credentials)
+          if Guard.cached?(key) do
+            {:ok, principal(name, user, :basic)}
+          else
+            with :ok <- unblocked({:user, name}) do
+              Guard.hashing(fn -> check_password(name, password, user, key, address) end)
+            end
           end
       end
+    end
+  end
+
+  defp check_password(name, password, user, key, address) do
+    if Password.verify(password, user.hash) do
+      Guard.remember(key)
+      {:ok, principal(name, user, :basic)}
+    else
+      Guard.failed({:user, name})
+      failure(address, "wrong password for #{inspect(name)}", :invalid_credentials)
     end
   end
 
@@ -290,8 +298,8 @@ defmodule Testor.Auth do
     end
   end
 
-  defp unblocked(address) do
-    case Guard.check(address) do
+  defp unblocked(key) do
+    case Guard.check(key) do
       :ok -> :ok
       {:blocked, seconds} -> {:error, {:rate_limited, seconds}}
     end

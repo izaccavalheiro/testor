@@ -19,7 +19,8 @@
 #
 # Optional vars: PORT (6767), WORKSPACES (test-run, under the runner user's home), HOME_DIR
 # (<WORKSPACES>/.testor), ALLOW_FROM (Windows firewall: remote addresses, comma separated;
-# 100.64.0.0/10 is Tailscale's range).
+# 100.64.0.0/10 is Tailscale's range); for deploy, BIND, ALLOWED_HOSTS, TRUSTED_PROXIES,
+# ANONYMOUS and SECRETS_DIR (see docs/security.md), which the runner keeps between deploys.
 version: "3"
 
 # go-task gives an included Taskfile's own vars precedence over the ones passed to it, so the
@@ -56,7 +57,8 @@ tasks:
           STDIN: tar -czf - -C "{{._ROOT}}" --exclude=_build --exclude=deps --exclude=cover orchestrator runner scripts
           SCRIPT: |
             $null = New-Item -ItemType Directory -Force -Path $src
-            foreach ($d in "runner", "scripts", "orchestrator/lib", "orchestrator/priv", "orchestrator/test", "orchestrator/config", "orchestrator/rel") {
+            # orchestrator/tmp too: ExUnit's tmp_dir cannot delete a junction a failed test left.
+            foreach ($d in "runner", "scripts", "orchestrator/lib", "orchestrator/priv", "orchestrator/test", "orchestrator/config", "orchestrator/rel", "orchestrator/tmp") {
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $src $d)
             }
             tar -xzf - -C $src
@@ -121,7 +123,15 @@ tasks:
       - task: ps
         vars:
           LABEL: install.ps1 -Port {{._PORT}}
-          SCRIPT: "& $installer -Port {{._PORT}} -AllowFrom {{._ALLOW_FROM}}"
+          # BIND, ALLOWED_HOSTS, TRUSTED_PROXIES, ANONYMOUS, SECRETS_DIR: the service's settings,
+          # kept by the runner until changed (set one to "" to remove it).
+          SCRIPT: >-
+            & $installer -Port {{._PORT}} -AllowFrom {{._ALLOW_FROM}}
+            {{if ne .BIND nil}}-Bind '{{.BIND | replace "'" "''"}}'{{end}}
+            {{if ne .ALLOWED_HOSTS nil}}-AllowedHosts '{{.ALLOWED_HOSTS | replace "'" "''"}}'{{end}}
+            {{if ne .TRUSTED_PROXIES nil}}-TrustedProxies '{{.TRUSTED_PROXIES | replace "'" "''"}}'{{end}}
+            {{if ne .ANONYMOUS nil}}-Anonymous '{{.ANONYMOUS | replace "'" "''"}}'{{end}}
+            {{if ne .SECRETS_DIR nil}}-SecretsDir '{{.SECRETS_DIR | replace "'" "''"}}'{{end}}
 
   status:
     desc: Show testor's service and health on the runner

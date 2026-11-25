@@ -84,10 +84,12 @@ tailscale serve --bg 6767
 - **Origin checks.** State-changing requests are refused when their `Origin` is not the server.
   Keep the `Host` header the browser used (Caddy does by default; nginx with
   `proxy_set_header Host $host`).
-- **Rate limiting** counts failed logins per connection address; testor does not read
-  `X-Forwarded-For`. Behind a proxy every client shares the proxy's address, so one person's
-  typos can lock out others for 15 minutes.
-- **Audit lines** name the connection address too, which is the proxy's: keep the proxy's own
-  access log for the real client addresses.
+- **The public name.** testor answers only host names it knows: add the proxy's
+  (`task testor:deploy ALLOWED_HOSTS=testor.example.com`).
+- **Client addresses.** Name the proxy in `TRUSTED_PROXIES` (`127.0.0.1` for one on the same
+  machine): rate limiting, the audit log and the private-address check then use the client's
+  address from `X-Forwarded-For`. Without it every client has the proxy's address, so one
+  person's typos lock out the others, and with authentication off a local proxy makes every
+  client look local.
 - Event streams send a comment every 15 seconds; proxy idle timeouts shorter than that close
   them (the dashboard reconnects, but it flickers).

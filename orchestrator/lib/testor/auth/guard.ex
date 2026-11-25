@@ -8,7 +8,8 @@ defmodule Testor.Auth.Guard do
       keyed with a secret drawn at start. Nothing in the table can be turned back into a
       password, and changing the password (the stored hash) forgets it at once.
     * failed attempts by client address: after #{10} failures in #{15} minutes the address is
-      refused (429) until the window ends.
+      refused (429) until the window ends; and by user, after #{30}, for password guesses
+      spread over many addresses (credentials already verified still pass).
   """
   use GenServer
 
@@ -17,6 +18,7 @@ defmodule Testor.Auth.Guard do
   @cache_ttl 300
   @window 900
   @max_failures 10
+  @max_user_failures 30
   @sweep_ms 60_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
@@ -32,10 +34,15 @@ defmodule Testor.Auth.Guard do
 
   def remember(key, now \\ now()), do: :ets.insert(@cache, {key, now + @cache_ttl})
 
-  @doc "`:ok`, or `{:blocked, seconds}` while `address` has failed too often."
-  def check(address, now \\ now()) do
-    case :ets.lookup(@failures, address) do
-      [{_, count, since}] when count >= @max_failures and now < since + @window ->
+  @doc """
+  `:ok`, or `{:blocked, seconds}` while `key` has failed too often: an address (#{10} failures
+  in #{15} minutes), or `{:user, name}` (#{30}: passwords guessed from many addresses).
+  """
+  def check(key, now \\ now()) do
+    max = if match?({:user, _}, key), do: @max_user_failures, else: @max_failures
+
+    case :ets.lookup(@failures, key) do
+      [{_, count, since}] when count >= max and now < since + @window ->
         {:blocked, since + @window - now}
 
       _ ->
@@ -53,6 +60,27 @@ defmodule Testor.Auth.Guard do
     :ok
   end
 
+  @doc """
+  Runs `fun` (a password hash) unless `max_hashing` (twice the schedulers) already run:
+  PBKDF2 costs a few hundred milliseconds of a core on purpose, so guesses sent from many
+  addresses at once must not take every core. `{:error, :busy}` when they would.
+  """
+  def hashing(fun) do
+    slots = :persistent_term.get({__MODULE__, :slots})
+
+    if :atomics.add_get(slots, 1, 1) <=
+         Application.get_env(:testor, :max_hashing, System.schedulers_online() * 2) do
+      try do
+        fun.()
+      after
+        :atomics.sub(slots, 1, 1)
+      end
+    else
+      :atomics.sub(slots, 1, 1)
+      {:error, :busy}
+    end
+  end
+
   @doc "Forgets everything (tests)."
   def reset do
     :ets.delete_all_objects(@cache)
@@ -65,6 +93,7 @@ defmodule Testor.Auth.Guard do
     :ets.new(@cache, [:named_table, :public, :set, read_concurrency: true])
     :ets.new(@failures, [:named_table, :public, :set, write_concurrency: true])
     :persistent_term.put({__MODULE__, :secret}, :crypto.strong_rand_bytes(32))
+    :persistent_term.put({__MODULE__, :slots}, :atomics.new(1, signed: true))
     Process.send_after(self(), :sweep, @sweep_ms)
     {:ok, nil}
   end

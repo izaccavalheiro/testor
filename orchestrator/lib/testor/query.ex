@@ -11,6 +11,11 @@ defmodule Testor.Query do
 
   def statuses, do: @statuses
 
+  @max_tail 8 * 1024 * 1024
+
+  @doc "The most of a log one request reads (8 MB): a larger tail would hold that much memory per request."
+  def max_tail, do: @max_tail
+
   @doc "A run without its process details (pid, workdir), with its live progress when it runs."
   def compact(run) do
     run = Store.with_live(run)

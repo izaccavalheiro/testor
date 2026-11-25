@@ -60,8 +60,10 @@ lists them honestly; many are on the [roadmap](project/roadmap.md).
 - **Authentication is off by default** so a private setup works at once; turn it on before
   anyone else can reach the port.
 - **Local users only**, per runner; no single sign-on yet (planned for 0.7).
-- **Behind a proxy**, rate limiting and audit see the proxy's address
+- **Behind a proxy**, list it in `TESTOR_TRUSTED_PROXIES` and its public name in
+  `TESTOR_ALLOWED_HOSTS`, or rate limiting and audit see the proxy's address and its name is refused
   ([details](operations/reverse-proxy-tls.md#things-to-know-behind-a-proxy)).
+- **Authentication off answers private addresses only** (`TESTOR_ANONYMOUS=any` to change it).
 - **The runner's user runs everything.** Anyone with an SSH key runs code as that user and can
   read every project's snapshot on the runner.
 

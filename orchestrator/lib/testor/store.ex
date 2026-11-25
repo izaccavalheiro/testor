@@ -110,9 +110,19 @@ defmodule Testor.Store do
     state = load(state, id, signature(id))
 
     case get(id) do
-      %{"status" => "running", "pid" => pid} ->
-        result = OS.kill_tree(pid)
-        Logger.info("store: cancelled #{id} (pid #{pid}): #{inspect(result)}")
+      %{"status" => "running", "pid" => pid} = run ->
+        beam = String.to_integer(System.pid())
+
+        case kill_check(run, [beam | OS.ancestors(beam)], OS.started_at(pid)) do
+          :kill ->
+            result = OS.kill_tree(pid)
+            Logger.info("store: cancelled #{id} (pid #{pid}): #{inspect(result)}")
+
+          {:skip, why} ->
+            Logger.warning("store: cancelled #{id} without killing pid #{inspect(pid)}: #{why}")
+            :ets.insert(@table, {id, Map.put(run, "warning", "cancelled without killing a process: #{why}")})
+        end
+
         {state, run} = settle_run(state, id, "cancelled")
         {:reply, {:ok, run}, state}
 
@@ -135,6 +145,33 @@ defmodule Testor.Store do
         File.rm_rf(Path.join(Config.shots_dir(), id))
         File.rm_rf(Path.join(Config.artifacts_dir(), id))
         {:reply, :ok, forget(state, id)}
+    end
+  end
+
+  @doc """
+  Whether cancelling `run` may kill its process: `:kill`, or `{:skip, why}`. The pid comes from
+  the run's own record, which the run could rewrite, so it is checked first: it must be a
+  process id, not testor nor one of the processes above it (`protected`: killing a tree that
+  holds testor would stop the service), and a process that did not start after the run did
+  (`started`, nil when there is none): a later one has reused the pid of a run that is gone.
+  """
+  def kill_check(run, protected, started) do
+    pid = run["pid"]
+
+    cond do
+      not is_integer(pid) or pid <= 0 -> {:skip, "the record has no valid process id"}
+      pid in protected -> {:skip, "process #{pid} is testor or runs it"}
+      started == nil -> {:skip, "process #{pid} has already ended"}
+      reused?(run["startedAt"], started) -> {:skip, "process #{pid} started after the run: its id was reused"}
+      true -> :kill
+    end
+  end
+
+  # run.ps1 records the start after its PowerShell started; a few seconds of clock skew pass.
+  defp reused?(run_started, process_started) do
+    case parse_time(run_started) do
+      {:ok, time} -> DateTime.diff(process_started, time, :second) > 5
+      _ -> false
     end
   end
 
@@ -168,8 +205,8 @@ defmodule Testor.Store do
   # mtime has a resolution of one second, so the size is part of the signature: a run that
   # starts and ends within the same second still changes its record's size.
   defp signature(id) do
-    case File.stat(Config.run_file(id), time: :posix) do
-      {:ok, %{mtime: mtime, size: size}} -> {mtime, size}
+    case Files.entry(Config.run_file(id)) do
+      {:file, size, mtime} -> {mtime, size}
       _ -> nil
     end
   end
@@ -189,13 +226,8 @@ defmodule Testor.Store do
     run = keep_annotations(run, prev)
     state = %{state | sigs: Map.put(state.sigs, id, sig)}
 
-    {state, run} =
-      if run["status"] != "running" and not Map.has_key?(run, "summary") do
-        finalize(state, run)
-      else
-        {state, run}
-      end
-
+    finalizing = run["status"] != "running" and not Map.has_key?(run, "summary")
+    {state, run} = if finalizing, do: finalize(state, run), else: {state, run}
     :ets.insert(@table, {id, run})
 
     cond do

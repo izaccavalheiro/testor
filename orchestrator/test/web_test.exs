@@ -319,7 +319,8 @@ defmodule Testor.WebTest do
         mcp("val", request("tools/call", %{"name" => "list_runs", "arguments" => %{"status" => "failed"}}))
         |> body()
 
-      assert length(runs) == 2
+      # Other tests may leave failed runs: count this module's.
+      assert runs |> Enum.filter(&String.starts_with?(&1["project"], "webt-")) |> length() == 2
 
       %{"result" => %{"content" => [%{"text" => text}]}} =
         mcp(

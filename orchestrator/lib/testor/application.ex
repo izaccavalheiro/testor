@@ -7,6 +7,8 @@ defmodule Testor.Application do
     base = [
       {Registry, keys: :duplicate, name: Testor.EventRegistry},
       {Registry, keys: :unique, name: Testor.TrackerRegistry},
+      # One entry per open event stream, under its user or address (Testor.Web.SSE's limits).
+      {Registry, keys: :duplicate, name: Testor.StreamRegistry},
       {Task.Supervisor, name: Testor.TaskSupervisor},
       Testor.Auth.Guard
     ]
