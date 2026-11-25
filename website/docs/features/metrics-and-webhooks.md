@@ -12,6 +12,8 @@ description: Prometheus metrics of runs, jobs and the machine, OpenTelemetry tra
 - **OpenTelemetry traces**: with `OTEL_EXPORTER_OTLP_ENDPOINT`, a span for each job and its
   run goes to your collector (Tempo, Jaeger, Honeycomb, Datadog). Queue a job with CI's
   `traceparent` and the pipeline, the job and the run are one trace.
+- **DORA metrics**: deployment frequency, change failure rate, time to restore and lead time
+  for changes, from a project's deploy runs (`/api/v1/projects/<p>/dora`).
 - **Commit statuses**: runs of a commit show on its pull request in GitHub or GitLab
   (`testor/<kind>`: pending, then success or failure, linked to the run), from
   `statuses.json`; make them required checks to block merging until tests pass.

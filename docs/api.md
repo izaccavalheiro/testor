@@ -111,6 +111,20 @@ Spans are sent once, in the background; a collector that cannot be reached is lo
 when given) as an SVG badge, `Cache-Control: no-cache`. Scope `read`, unless `config.json`'s
 `publicBadges` lists the project: its badge then answers without credentials. See [badges and
 Backstage](../website/docs/features/badges-and-backstage.md).
+## DORA metrics
+
+`GET /api/v1/projects/<project>/dora?kind=deploy&days=30` (scope `read`) gives the four DORA
+metrics of the runs of the task that delivers the project (`kind`, `deploy` by default: a job,
+a release pipeline's run) that ended in the last `days` (30, up to 365):
+
+| Field | Meaning |
+| ----- | ------- |
+| `deployments`, `deploymentsPerWeek` | its passed runs: deployment frequency |
+| `failures`, `changeFailureRate` | its failed runs, out of the passed and failed ones |
+| `restores`, `medianTimeToRestoreSeconds` | from the first failure of a streak to the pass that ends it |
+| `leadTimes`, `medianLeadTimeSeconds` | from a passed run's commit (`source.committedAt`, recorded by agents and `remote.yml`) to its end |
+
+Cancelled and aborted runs count as neither; a median without data is `null`.
 
 ## Prometheus metrics
 

@@ -16,6 +16,10 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 - **Status badges**: `GET /api/v1/projects/<p>/badge.svg?kind=` (public for `config.json`'s
   `publicBadges`), and a Backstage guide with a catalog annotation (`testor.io/project`) and a
   proxy configuration (`deploy/backstage`).
+- **DORA metrics**: `GET /api/v1/projects/<p>/dora?kind=deploy&days=30` gives deployment
+  frequency, change failure rate, time to restore and lead time for changes from the runs of
+  the task that delivers a project. Runs record when their commit was made
+  (`source.committedAt`, from the agent and `remote.yml`).
 - **Approvals for AI agents' actions**: `approvals` in `config.json` lists MCP tools (such as
   `delete_run`, `cancel_run`) that wait for a person: the agent's call records a request that
   someone else with the tool's scope approves or denies (the dashboard, `/api/v1/approvals`),

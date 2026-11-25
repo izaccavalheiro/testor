@@ -174,6 +174,15 @@ defmodule Testor.Web.OpenAPI do
         "get" =>
           op("runs", "The latest result as an SVG badge (public for config.json's publicBadges)", %{
             "type" => "string"
+      "/projects/{project}/dora" => %{
+        "parameters" => [
+          %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},
+          %{"name" => "kind", "in" => "query", "schema" => %{"type" => "string", "default" => "deploy"}},
+          %{"name" => "days", "in" => "query", "schema" => %{"type" => "integer", "default" => 30}}
+        ],
+        "get" =>
+          op("runs", "DORA metrics of the runs of the task that delivers the project, over days", %{
+            "type" => "object"
           })
       },
       "/gates" => %{
