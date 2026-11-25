@@ -28,6 +28,12 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   take `agents.env`, `agents.secretMounts`, `agents.vault` and `agents.serviceAccount` (cloud
   workload identity, Vault's Kubernetes login).
 - `run.ps1` also masks each line of a secret that spans lines.
+- **Identity tokens for jobs**: with `jobTokens` in `auth.json`, testor is an OpenID Connect
+  issuer for its jobs (`/.well-known/openid-configuration`, RS256 keys in the JWKS): the agent
+  holding a job gets a short token for it (`sub` = `project:<p>:kind:<k>`, `ref`, `job_id`...)
+  that AWS, Google Cloud, Azure and Vault trade for short-lived credentials. A project's
+  `identity` in `agent.json` writes it where the run's SDKs look (`AWS_WEB_IDENTITY_TOKEN_FILE`)
+  and renews it; `vault.jwtRole` logs in to Vault with it. `Testor.Auth.CLI.roll_job_token_key`.
 
 - **Single sign-on**: the dashboard signs people in with an OpenID Connect provider (`oidc` in
   `auth.json`): the code flow with PKCE, ID tokens checked against the provider's JWKS

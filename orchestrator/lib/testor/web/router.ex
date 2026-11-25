@@ -8,6 +8,7 @@ defmodule Testor.Web.Router do
     GET    /metrics                Prometheus metrics (Testor.Metrics)
     GET    /api/health             liveness and versions
     GET    /.well-known/jwks.json  the public keys tokens are signed with (Testor.Auth.TokenKeys)
+    GET    /.well-known/openid-configuration  testor as the issuer of job tokens (Testor.Auth.JobTokens)
     *      /auth/...               sign-in with an OpenID Connect provider (Testor.Web.SignIn)
     GET    /api/state              everything /events starts with
     GET    /api/runs/:id           one run, its specs and screenshots
@@ -86,12 +87,28 @@ defmodule Testor.Web.Router do
 
   # The public keys of testor's tokens (Testor.Auth.TokenKeys), for services that verify them.
   get "/.well-known/jwks.json" do
-    keys = if Auth.enabled?(), do: Auth.settings().token_keys
+    settings = Auth.settings()
+    %{"keys" => keys} = Testor.Auth.TokenKeys.jwks(if settings.enabled, do: settings.token_keys)
+    jobs = Testor.Auth.JobTokens.jwks(if settings.enabled, do: settings.job_token_keys)
 
     conn
     |> put_resp_content_type("application/jwk-set+json")
     |> put_resp_header("cache-control", "public, max-age=300")
-    |> send_resp(200, JSON.encode!(Testor.Auth.TokenKeys.jwks(keys)))
+    |> send_resp(200, JSON.encode!(%{"keys" => keys ++ jobs}))
+  end
+
+  # testor as the identity provider of its jobs' tokens (Testor.Auth.JobTokens).
+  get "/.well-known/openid-configuration" do
+    case Auth.settings() do
+      %{enabled: true, job_tokens: %{} = config} ->
+        conn
+        |> put_resp_content_type("application/json")
+        |> put_resp_header("cache-control", "public, max-age=300")
+        |> send_resp(200, JSON.encode!(Testor.Auth.JobTokens.discovery(config)))
+
+      _ ->
+        json(conn, 404, %{"error" => "testor issues no job tokens (jobTokens in auth.json)"})
+    end
   end
 
   get "/api/health" do

@@ -34,6 +34,7 @@ where they page), errors `{"error": {"code", "message"}}`.
 | `POST /api/v1/auth/token` | with Basic credentials: `{access_token, token_type: "Bearer", expires_in, scope}`. Body (JSON or form, optional): `grant_type=client_credentials`, `scope` (a subset of the user's), `expires_in` (seconds). Errors as OAuth 2.0: `{error, error_description}` |
 | `GET /auth/login`, `GET /auth/callback` | sign-in with the identity provider (`?return=/path`), for browsers |
 | `POST /auth/logout` | ends the dashboard's session |
+| `GET /.well-known/openid-configuration` | testor as the issuer of job identity tokens (with `jobTokens`), without credentials |
 | `GET /.well-known/jwks.json` | the public keys tokens are signed with (JSON Web Key Set, Ed25519), without credentials |
 | `GET /api/v1/auth/me` | `{authEnabled, user, via, scopes, expiresAt}` |
 | `GET /api/v1/runs?status=&project=&kind=&q=&limit=&before=` | runs, newest first: `{data, next}`; `next` is the `before` of the next page |
@@ -66,6 +67,7 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `POST /api/v1/jobs/:id/cancel` | execute | cancel a queued or running job |
 | `POST /api/v1/agent/lease` | agent | `{labels, wait}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most) |
 | `POST /api/v1/agent/jobs/:id/heartbeat` | agent | renew the lease: `{"cancel": bool}` |
+| `POST /api/v1/agent/jobs/:id/token` | agent | the held job's identity token for `{"audience"}`: `{token, expires_in}` (`jobTokens` in `auth.json`) |
 | `POST /api/v1/agent/jobs/:id/finish` | agent | `{exitCode, error?}` |
 | `PUT /api/v1/agent/jobs/:id/run` | agent | a remote agent's run record (run.ps1's): binds the run to the job |
 | `POST /api/v1/agent/jobs/:id/log?offset=` | agent | append a chunk (1 MB at most) at the log's size; `409` with `X-Log-Size` otherwise |

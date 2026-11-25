@@ -156,6 +156,13 @@ defmodule Testor.Web.OpenAPI do
         "post" =>
           op("agents", "Renew the lease; answers whether to cancel (scope agent)", %{"type" => "object"})
       },
+      "/agent/jobs/{id}/token" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" =>
+          op("agents", "The held job's identity token for an audience of jobTokens (scope agent)", %{
+            "type" => "object"
+          })
+      },
       "/agent/jobs/{id}/run" => %{
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "put" => op("agents", "A remote agent's run record for the job (scope agent)", %{"type" => "object"})

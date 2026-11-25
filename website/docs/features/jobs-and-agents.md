@@ -27,6 +27,8 @@ POST /api/v1/jobs {project, kind} ──▶ testor's queue ──lease──▶ 
 - **Secrets.** A project's secrets come from Vault, AWS, GCP or Azure secret managers, SOPS
   files, the environment or files, read by the agent on its machine with its own identity;
   testor never sees them, and the run's log shows `***`.
+- **Identity.** testor gives a job a short OpenID Connect token that AWS, Google Cloud,
+  Azure or Vault trade for credentials scoped to its project: no cloud keys on the runner.
 - **Signed by the agent.** A run an agent sends is signed with its own key, which testor pins:
   [signed results](signed-results.md).
 

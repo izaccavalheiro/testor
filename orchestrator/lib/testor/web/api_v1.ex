@@ -335,6 +335,28 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # An identity token for the job (Testor.Auth.JobTokens), to trade for cloud credentials.
+  post "/agent/jobs/:id/token" do
+    with_agent(conn, id, fn conn, agent ->
+      with {:ok, params, conn} <- body_params(conn),
+           {:ok, job} <- Jobs.held(id, agent) do
+        case Testor.Auth.JobTokens.issue(Testor.Auth.settings(), job, agent, params["audience"]) do
+          {:ok, token} ->
+            json(conn, 200, token)
+
+          {:error, :audience} ->
+            error(conn, 400, "audience", "the audience is not one of jobTokens.audiences")
+
+          {:error, :off} ->
+            error(conn, 404, "off", "testor issues no job tokens (jobTokens in auth.json)")
+        end
+      else
+        {:error, %Plug.Conn{} = conn} -> conn
+        error -> agent_reply(error, conn)
+      end
+    end)
+  end
+
   # A remote agent's run (Testor.Remote): its record, its log in chunks, its files.
   put "/agent/jobs/:id/run" do
     with_agent(conn, id, fn conn, agent ->

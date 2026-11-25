@@ -370,6 +370,33 @@ try {
   $broken = Get-Job $brokenJob.id
   Check "secrets: a secret that cannot be read fails the job, naming it" ($broken.status -eq "failed" -and $broken.error -match "S_MISSING" -and -not $broken.runId) "($($broken | ConvertTo-Json -Compress))"
   $vaultListener.Stop(); $vault.Dispose()
+
+  # Identity: testor issues a job its token (jobTokens in auth.json), which the agent writes where
+  # the run reads it; clouds and Vault check it against testor's published keys.
+  $authFile = Join-Path $testorHome "auth.json"
+  $auth = Get-Content -Raw -LiteralPath $authFile | ConvertFrom-Json -AsHashtable
+  $auth.jobTokens = @{ issuer = "https://testor.example.com"; audiences = @("smoke-audience") }
+  $auth | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $authFile
+  Start-Sleep -Milliseconds 2000
+  $idConfig = Join-Path $work "agent-identity.json"
+  $showToken = '$p = (Get-Content -Raw $env:SMOKE_TOKEN_FILE).Split(".")[1].Replace("-", "+").Replace("_", "/"); $p += "=" * ((4 - $p.Length % 4) % 4); $c = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p)) | ConvertFrom-Json; "sub=$($c.sub) aud=$($c.aud) role=$env:SMOKE_ROLE"; "token=$env:TESTOR_ID_TOKEN"'
+  @{ server = $base; home = $testorHome; labels = @("smoke")
+     projects = @{ "id-demo" = @{ workspace = "$jobsDir"; commands = @{ show = $showToken }
+                                  identity = @{ audience = "smoke-audience"; file = "SMOKE_TOKEN_FILE"; env = @{ SMOKE_ROLE = "role-of-the-job" } } } } } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $idConfig
+  $idJob = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs" `
+    -Body (@{ project = "id-demo"; kind = "show"; labels = @("smoke") } | ConvertTo-Json)
+  pwsh -NoProfile -File $agentScript -Config $idConfig -Once -Wait 5 | Out-Null
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    $idDone = Get-Job $idJob.id
+    $idLog = if ($idDone.runId) { try { "$(Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($idDone.runId)/log")" } catch { "" } }
+    if ($idLog -notmatch "token=") { Start-Sleep -Milliseconds 300 }
+  } until ($idLog -match "token=" -or (Get-Date) -gt $deadline)
+  Check "identity: a job gets its identity token from testor, where agent.json says" ($idDone.status -eq "passed" -and $idLog -match "sub=project:id-demo:kind:show aud=smoke-audience role=role-of-the-job" -and $idLog -match "token=\*\*\*") "($idLog)"
+  $discovery = Invoke-RestMethod "$base/.well-known/openid-configuration"
+  $jwks = Invoke-RestMethod "$base/.well-known/jwks.json"
+  Check "identity: testor publishes its issuer and the job tokens' RS256 key" ($discovery.issuer -eq "https://testor.example.com" -and @($jwks.keys | Where-Object kty -eq "RSA").Count -eq 1) "($($discovery | ConvertTo-Json -Compress))"
   Remove-Item Env:SMOKE_SOURCE_SECRET
 
   $slowJob = New-Job "slow"

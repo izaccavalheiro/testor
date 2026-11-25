@@ -44,7 +44,7 @@ defmodule Testor.Auth do
   """
   require Logger
   alias Testor.Config
-  alias Testor.Auth.{Guard, JWT, OIDC, Password, TokenKeys}
+  alias Testor.Auth.{Guard, JobTokens, JWT, OIDC, Password, TokenKeys}
 
   @roles %{
     "viewer" => ["read"],
@@ -86,7 +86,8 @@ defmodule Testor.Auth do
         build(
           raw,
           Application.get_env(:testor, :auth_key, String.duplicate("k", 32)),
-          Application.get_env(:testor, :auth_token_keys) || TokenKeys.from_seeds([<<1::256>>])
+          Application.get_env(:testor, :auth_token_keys) || TokenKeys.from_seeds([<<1::256>>]),
+          Application.get_env(:testor, :auth_job_token_keys)
         )
     end
   end
@@ -122,7 +123,7 @@ defmodule Testor.Auth do
       end
     end
 
-    {read.(auth_file()), read.(key_file()), read.(TokenKeys.file()),
+    {read.(auth_file()), read.(key_file()), read.(TokenKeys.file()), read.(JobTokens.file()),
      :erlang.phash2({
        System.get_env("TESTOR_JWT_SECRET"),
        System.get_env(TokenKeys.env()),
@@ -134,9 +135,12 @@ defmodule Testor.Auth do
   def load_settings do
     raw = read_raw()
 
-    if enabled_in?(raw),
-      do: build(raw, key!(), TokenKeys.load!()),
-      else: build(raw, nil, nil)
+    cond do
+      not enabled_in?(raw) -> build(raw, nil, nil, nil)
+      # The job tokens' RSA key is made only once they are on.
+      JobTokens.config(raw["jobTokens"]) -> build(raw, key!(), TokenKeys.load!(), JobTokens.load!())
+      true -> build(raw, key!(), TokenKeys.load!(), nil)
+    end
   rescue
     error ->
       Logger.error("auth: #{Exception.message(error)}; refusing every request until it is fixed")
@@ -180,6 +184,8 @@ defmodule Testor.Auth do
       users: %{},
       key: nil,
       token_keys: nil,
+      job_tokens: nil,
+      job_token_keys: nil,
       oidc: nil,
       algorithm: "EdDSA",
       accept_hs256: false,
@@ -188,7 +194,7 @@ defmodule Testor.Auth do
     }
   end
 
-  defp build(raw, key, token_keys) do
+  defp build(raw, key, token_keys, job_token_keys) do
     users =
       for {name, %{"password" => hash} = user} <- users_in(raw),
           valid_name?(name),
@@ -243,6 +249,8 @@ defmodule Testor.Auth do
       key: key,
       token_keys: token_keys,
       oidc: OIDC.config(raw["oidc"]),
+      job_tokens: JobTokens.config(raw["jobTokens"]),
+      job_token_keys: job_token_keys,
       algorithm: algorithm,
       # Tokens issued before 0.8 are HS256: accepted until the next major version unless refused.
       accept_hs256: algorithm == "HS256" or tokens["acceptHs256"] != false,

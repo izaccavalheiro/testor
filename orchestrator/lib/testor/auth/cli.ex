@@ -13,6 +13,7 @@ defmodule Testor.Auth.CLI do
       bin/testor eval 'Testor.Auth.CLI.token("ada", 30)'       # prints a token valid 30 days
       bin/testor eval 'Testor.Auth.CLI.token("ada", 30, "read")'
       bin/testor eval 'Testor.Auth.CLI.roll_token_key()'       # new token key, the old one verifies its tokens
+      bin/testor eval 'Testor.Auth.CLI.roll_job_token_key()'   # new key for jobs' identity tokens
       bin/testor eval 'Testor.Auth.CLI.rotate_key()'           # revokes every token and file link
       bin/testor eval 'Testor.Auth.CLI.list()'
 
@@ -162,6 +163,12 @@ defmodule Testor.Auth.CLI do
     path = token_keys_file!()
     kid = TokenKeys.roll!(Auth.load_settings().max_ttl)
     IO.puts("new token signing key #{kid} in #{path}; the previous ones verify until their tokens expire")
+  end
+
+  @doc "A new key for job tokens; the previous ones stay published an hour, until their tokens expire."
+  def roll_job_token_key do
+    kid = Testor.Auth.JobTokens.roll!()
+    IO.puts("new job token key #{kid} in #{Testor.Auth.JobTokens.file()}")
   end
 
   defp token_keys_file! do

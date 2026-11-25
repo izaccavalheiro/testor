@@ -1,7 +1,7 @@
 # Identity
 
 Status: in progress: single sign-on, asymmetric tokens, users limited to projects and the
-secrets broker are done (0.8); per-project roles and testor-issued job tokens remain. Builds
+secrets broker and identity tokens for jobs are done (0.8); per-project roles remain. Builds
 on: users, roles and scopes; HS256 tokens; signed links (0.2).
 
 - **OpenID Connect sign-in** (done, 0.8) for the dashboard (authorization code with PKCE, a
@@ -15,7 +15,7 @@ on: users, roles and scopes; HS256 tokens; signed links (0.2).
   links bound to the viewer and minutes long.
 - **Workload identity**: jobs ([agent-protocol.md](agent-protocol.md)) get a short OIDC token
   from testor (issuer, audience, `sub` = project, kind and commit) to exchange for cloud
-  credentials, as GitHub Actions does (proposed); a secrets broker (done, 0.8: the agent reads
+  credentials, as GitHub Actions does (done, 0.8: `jobTokens`); a secrets broker (done, 0.8: the agent reads
   Vault, AWS, GCP, Azure secret managers, SOPS files with the machine's own identity) hands
   secrets to a job by name, and their values are masked in its logs by the agent before
   anything leaves the runner.

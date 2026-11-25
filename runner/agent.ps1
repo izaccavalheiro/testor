@@ -39,7 +39,8 @@
 #   env:NAME              a variable of the agent's own environment (a Kubernetes secret, CI)
 #   file:PATH             a file's contents (/run/secrets, a mounted secret, systemd credentials)
 #   vault:PATH#FIELD      HashiCorp Vault or OpenBao (KV v1 or v2), with VAULT_TOKEN, "vault"'s
-#                         tokenFile, or its kubernetesRole (the pod's service account token)
+#                         tokenFile, its kubernetesRole (the pod's service account token), or
+#                         its jwtRole (the job's identity token from testor, below)
 #   aws:ID[#FIELD]        AWS Secrets Manager, through the aws CLI and its credentials
 #   gcp:SECRET            Google Secret Manager (a name, or projects/P/secrets/S[/versions/V])
 #   azure:VAULT/NAME      Azure Key Vault, through the az CLI
@@ -48,6 +49,13 @@
 # The CLIs pick up the machine's workload identity (IAM roles for service accounts, GKE or Azure
 # workload identity, an instance profile); "secretTools" gives their paths when not on PATH. A
 # secret that cannot be read fails the job before it runs, naming the secret, never its value.
+#
+# Identity: with a project's "identity": {"audience": "sts.amazonaws.com", "file":
+# "AWS_WEB_IDENTITY_TOKEN_FILE", "env": {"AWS_ROLE_ARN": "arn:aws:iam::1:role/ci"}}, the agent
+# asks testor for the job's identity token (jobTokens in testor's auth.json), writes it to a file
+# the run finds in that variable (TESTOR_ID_TOKEN_FILE by default; the token is also in
+# TESTOR_ID_TOKEN, masked), keeps it fresh while the run lasts, and sets "env". Cloud SDKs trade it
+# for short-lived credentials; its sub is project:<project>:kind:<kind>.
 #
 # While a job runs the agent renews its lease every 10 s; testor asks it to cancel through the
 # heartbeat's answer. It runs as the account that starts it: give it the test account
@@ -246,19 +254,33 @@ function Select-Field([string]$document, [string]$field, [string]$name) {
   "$($object[$field])"
 }
 
+# The job's identity token from testor for `audience`: @{ token; expires_in }.
+function Request-IdToken($job, [string]$audience) { Call "/agent/jobs/$($job.id)/token" @{ audience = $audience } }
+
 $script:vaultToken = $null
+$script:currentJob = $null
 function Get-VaultToken($vault, [string]$address) {
   if ($script:vaultToken) { return $script:vaultToken }
   $script:vaultToken =
     if ($env:VAULT_TOKEN) { $env:VAULT_TOKEN }
     elseif ($vault.tokenFile) { (Get-Content -Raw -LiteralPath (Expand $vault.tokenFile)).Trim() }
+    elseif ($vault.jwtRole) {
+      # Vault's JWT auth, trusting testor as an issuer: the role's bound claims (project, kind)
+      # decide what this job may read.
+      $audience = if ($vault.jwtAudience) { $vault.jwtAudience } else { "vault" }
+      $mount = if ($vault.authPath) { $vault.authPath } else { "jwt" }
+      $jwt = (Request-IdToken $script:currentJob $audience).token
+      $login = Invoke-RestMethod -Method Post -Uri "$address/v1/auth/$mount/login" -Headers (Get-VaultHeaders $vault $null) `
+        -ContentType "application/json" -Body (@{ role = $vault.jwtRole; jwt = $jwt } | ConvertTo-Json)
+      $login.auth.client_token
+    }
     elseif ($vault.kubernetesRole) {
       $jwtFile = if ($vault.jwtFile) { Expand $vault.jwtFile } else { "/var/run/secrets/kubernetes.io/serviceaccount/token" }
       $mount = if ($vault.authPath) { $vault.authPath } else { "kubernetes" }
       $login = Invoke-RestMethod -Method Post -Uri "$address/v1/auth/$mount/login" -Headers (Get-VaultHeaders $vault $null) `
         -ContentType "application/json" -Body (@{ role = $vault.kubernetesRole; jwt = (Get-Content -Raw -LiteralPath $jwtFile).Trim() } | ConvertTo-Json)
       $login.auth.client_token
-    } else { throw "vault: no token (VAULT_TOKEN, vault.tokenFile or vault.kubernetesRole)" }
+    } else { throw "vault: no token (VAULT_TOKEN, vault.tokenFile, vault.kubernetesRole or vault.jwtRole)" }
   $script:vaultToken
 }
 
@@ -321,6 +343,7 @@ function Resolve-Secrets($job) {
   $values = @{}
   if (-not $declared) { return @{ vars = $values } }
   $script:vaultToken = $null
+  $script:currentJob = $job
   foreach ($name in @($declared.Keys | Sort-Object)) {
     if ($name -notmatch "^[A-Za-z_][A-Za-z0-9_]*$" -or $name -like "TESTOR_*") {
       return @{ error = "secret $name`: not a name a job's environment can hold (and not TESTOR_*)" }
@@ -337,6 +360,14 @@ function Invoke-Job($job) {
   if (-not $plan.error) {
     $secrets = Resolve-Secrets $job
     if ($secrets.error) { $plan = @{ error = $secrets.error } }
+  }
+  $identity = $projects[$job.project].identity
+  $idToken = $null
+  if (-not $plan.error -and $identity) {
+    try {
+      $idToken = Request-IdToken $job $identity.audience
+      $idTokenAt = Get-Date
+    } catch { $plan = @{ error = "no identity token for $($identity.audience): $($_.Exception.Message)" } }
   }
   if ($plan.error) {
     Log "$($job.id) refused: $($plan.error)"
@@ -370,6 +401,19 @@ function Invoke-Job($job) {
   $env:TESTOR_ACTOR = "agent:$([Environment]::MachineName.ToLower()) for $($job.requestedBy)"
   # The run gets the secrets in its environment, and run.ps1 writes their values as ***.
   $maskBefore = $env:TESTOR_MASK
+  if ($idToken) {
+    $tokenFile = "$out.jwt"
+    [IO.File]::WriteAllText($tokenFile, $idToken.token)
+    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($tokenFile, [IO.UnixFileMode]"UserRead, UserWrite") }
+    $secrets.vars["TESTOR_ID_TOKEN"] = $idToken.token
+  }
+  # Not secret: where the token is, and the identity's settings (a role to assume...).
+  $plain = @{}
+  if ($idToken) {
+    $plain[$(if ($identity.file) { $identity.file } else { "TESTOR_ID_TOKEN_FILE" })] = $tokenFile
+    if ($identity.env) { foreach ($name in $identity.env.Keys) { $plain[$name] = "$($identity.env[$name])" } }
+  }
+  foreach ($name in $plain.Keys) { [Environment]::SetEnvironmentVariable($name, $plain[$name]) }
   foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $secrets.vars[$name]) }
   if ($secrets.vars.Count) { $env:TESTOR_MASK = (@($maskBefore) + @($secrets.vars.Keys) | Where-Object { $_ }) -join "," }
   try {
@@ -379,7 +423,7 @@ function Invoke-Job($job) {
     $null = $process.Handle
   } finally {
     Remove-Item Env:TESTOR_JOB_ID, Env:TESTOR_ACTOR -ErrorAction SilentlyContinue
-    foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $null) }
+    foreach ($name in @($secrets.vars.Keys) + @($plain.Keys)) { [Environment]::SetEnvironmentVariable($name, $null) }
     $env:TESTOR_MASK = $maskBefore
   }
   Log "$($job.id) running $($job.project) $($job.kind) (pid $($process.Id))"
@@ -395,6 +439,14 @@ function Invoke-Job($job) {
     }
     if (-not $upload -or ((Get-Date) - $beatAt).TotalSeconds -ge 10) {
       $beatAt = Get-Date
+      # The identity token is renewed at half its life, in the file the run reads.
+      if ($idToken -and ((Get-Date) - $idTokenAt).TotalSeconds -ge $idToken.expires_in / 2) {
+        try {
+          $fresh = Request-IdToken $job $identity.audience
+          [IO.File]::WriteAllText($tokenFile, $fresh.token)
+          $idToken = $fresh; $idTokenAt = Get-Date
+        } catch { Log "$($job.id) could not renew its identity token: $($_.Exception.Message)" }
+      }
       try {
         $beat = Call "/agent/jobs/$($job.id)/heartbeat" @{}
         if ($beat.cancel -and -not $cancelledAt) {
@@ -419,7 +471,7 @@ function Invoke-Job($job) {
     }
   }
   $process.WaitForExit()
-  Remove-Item "$out.out", "$out.err" -ErrorAction SilentlyContinue
+  Remove-Item "$out.out", "$out.err", "$out.jwt" -ErrorAction SilentlyContinue
   if ($upload -and -not $lost) {
     try { Complete-Run $job $state ($null -ne $cancelledAt) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
   }

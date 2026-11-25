@@ -174,8 +174,64 @@ may read those secrets only.
   `agents.serviceAccount` whose annotations give a cloud workload identity; see the
   [chart](../deploy/helm/testor/README.md).
 
+`vault.jwtRole` logs in to Vault with the job's **identity token** (below) instead of a token
+or a service account: a Vault role bound to `project` (and `kind`) gives each project its own
+secrets, enforced by Vault rather than by `agent.json`.
+
 Masking is a safety net, not a boundary: a test that encodes a secret (base64, reversed) and
 prints it gets it past. Give jobs secrets meant for tests, scoped to what the tests need.
+
+## Identity tokens
+
+A job can prove what it is to a cloud or to Vault, and get short-lived credentials there, with
+no key stored on the runner: testor issues it an **OpenID Connect ID token**, as GitHub Actions
+does for its workflows, and those services trust testor as an identity provider.
+
+1. In testor's `auth.json`:
+
+   ```json
+   "jobTokens": { "issuer": "https://testor.example.com",
+                  "audiences": ["sts.amazonaws.com", "vault"], "ttlMinutes": 15 }
+   ```
+
+   `issuer` is testor's root URL as those services reach it: they fetch
+   `<issuer>/.well-known/openid-configuration` and the keys at `/.well-known/jwks.json`, so it
+   must be reachable from them (a cloud's token service needs a public address).
+2. Register it with the service: an IAM OIDC identity provider and a role whose trust policy
+   checks `aud` and `sub` (AWS); a workload identity pool provider mapping `sub` and
+   `attribute.project` (Google); a federated credential on an app registration (Azure); a JWT
+   auth role with `bound_claims` (Vault).
+3. In `agent.json`, the project that needs it:
+
+   ```json
+   "deploy-app": { "workspace": "~/src/app", "commands": { "deploy": "./deploy.sh" },
+                   "identity": { "audience": "sts.amazonaws.com",
+                                 "file": "AWS_WEB_IDENTITY_TOKEN_FILE",
+                                 "env": { "AWS_ROLE_ARN": "arn:aws:iam::123456789012:role/deploy-app" } } }
+   ```
+
+   The agent asks testor for the job's token (`POST /api/v1/agent/jobs/:id/token`), writes it to
+   a file readable by its account only, puts the file's path in `file`'s variable
+   (`TESTOR_ID_TOKEN_FILE` by default) and the token in `TESTOR_ID_TOKEN` (masked), sets `env`,
+   and renews the file at half the token's life while the run lasts. AWS SDKs and the CLI read
+   `AWS_WEB_IDENTITY_TOKEN_FILE` and `AWS_ROLE_ARN` on their own; for Google, point an external
+   account credential file at the token file.
+
+| Claim | Value |
+| ----- | ----- |
+| `iss` | `jobTokens.issuer` |
+| `aud` | the audience the agent asked for, one of `jobTokens.audiences` |
+| `sub` | `project:<project>:kind:<kind>` |
+| `project`, `kind`, `ref` | the job's (`ref` only when it has one) |
+| `job_id`, `agent`, `requested_by` | the job, the agent user holding it, who queued it |
+| `iat`, `nbf`, `exp`, `jti` | `ttlMinutes` (15 by default, 60 at most) |
+
+Only the agent holding a job's lease gets a token for it, and only for a listed audience. The
+tokens are RS256, which every cloud's token service accepts, signed with a key of
+`job-token-keys.json` in the secrets folder (made when `jobTokens` is first set);
+`Testor.Auth.CLI.roll_job_token_key` adds a new one, the previous ones staying published an
+hour. Bind trust policies to `sub` or `project` so one project's job cannot assume another's
+role, and keep the `execute` scope (which queues jobs) to people who may use those roles.
 
 ## A job
 

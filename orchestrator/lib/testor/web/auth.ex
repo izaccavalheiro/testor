@@ -200,6 +200,7 @@ defmodule Testor.Web.Auth do
       ["api", "v1", "health"] -> true
       ["api", "v1", "openapi.json"] -> true
       [".well-known", "jwks.json"] -> true
+      [".well-known", "openid-configuration"] -> true
       ["auth", page] when page in ["login", "callback", "signed-out"] -> true
       ["s", _cap, area | _] when area in ["shots", "artifacts"] -> true
       _ -> false
