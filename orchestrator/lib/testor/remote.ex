@@ -39,7 +39,9 @@ defmodule Testor.Remote do
           "kind" => job["kind"],
           "job" => id,
           "remote" => agent,
-          "pid" => nil
+          "pid" => nil,
+          # The job's trace, not one the agent says (Testor.Tracing).
+          "traceparent" => job["traceparent"]
         })
 
       File.mkdir_p!(Config.runs_dir())

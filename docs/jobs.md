@@ -293,5 +293,6 @@ role, and keep the `execute` scope (which queues jobs) to people who may use tho
 | `attempts`, `leaseUntil` | tries so far, when the current lease ends (Unix seconds) |
 | `runId`, `exitCode`, `error` | the run it produced, how it ended, why it failed |
 | `createdAt`, `leasedAt`, `startedAt`, `endedAt` | when |
+| `traceparent`, `parentSpanId` | its W3C trace context: the trace of `POST`'s `traceparent` when given ([traces](api.md#opentelemetry-traces)) |
 
 The run records `job` (its job's id) and an `actor` naming the agent and who asked.
