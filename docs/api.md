@@ -79,6 +79,27 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 
 See [jobs.md](jobs.md).
 
+## OpenTelemetry traces
+
+With a collector named by the standard variables, testor sends a span for each job and each run
+as OTLP/HTTP JSON (no SDK, nothing to install): `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (the full
+URL) or `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces` is added), `OTEL_EXPORTER_OTLP_HEADERS`
+(`key=value,...`, URL-encoded: an API key), `OTEL_SERVICE_NAME` (`testor`) and
+`OTEL_RESOURCE_ATTRIBUTES`. Off without an endpoint.
+
+- **A job** is a span from when it was queued to its end (`testor.job.*`, `testor.project`,
+  `testor.kind`, `vcs.ref.head.name`), `ERROR` when it failed or expired.
+- **Its run** is a child span from start to end (`testor.run.*`, `process.exit.code`,
+  `testor.specs.passed`/`failed`, `vcs.ref.head.revision`); a run started by hand is a trace of
+  its own.
+- **CI's trace**: `POST /api/v1/jobs` takes a W3C `traceparent`, and the job's span is a child
+  of it, so the pipeline, its test job and the run are one trace (Tempo, Jaeger, Honeycomb...).
+  A job has its own `traceparent`; the agent gives it to the run as `TRACEPARENT`, which
+  `run.ps1` records and tools that propagate W3C trace context (OpenTelemetry SDKs, Playwright's
+  and k6's integrations) can join.
+
+Spans are sent once, in the background; a collector that cannot be reached is logged.
+
 ## Prometheus metrics
 
 `GET /metrics` (scope `read`) is the Prometheus text format: `testor_build_info`,

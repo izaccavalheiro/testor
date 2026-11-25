@@ -68,6 +68,8 @@ $record = [ordered]@{
   } else { $null }
   # The job this run is for, when an agent started it (runner/agent.ps1).
   job        = if ($env:TESTOR_JOB_ID) { $env:TESTOR_JOB_ID } else { $null }
+  # The W3C trace this run belongs to (the agent gives a job's), for testor's spans.
+  traceparent = if ("$env:TRACEPARENT" -match "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$") { $env:TRACEPARENT } else { $null }
 }
 
 function Save-Record {

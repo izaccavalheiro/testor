@@ -457,8 +457,10 @@ function Invoke-Job($job) {
     if (-not $IsWindows) { [IO.File]::SetUnixFileMode($tokenFile, [IO.UnixFileMode]"UserRead, UserWrite") }
     $secrets.vars["TESTOR_ID_TOKEN"] = $idToken.token
   }
-  # Not secret: where the token is, and the identity's settings (a role to assume...).
+  # Not secret: where the token is, and the identity's settings (a role to assume...); the job's
+  # trace, which the run's spans join (and test tools that propagate W3C trace context).
   $plain = @{}
+  if ($job.traceparent) { $plain["TRACEPARENT"] = $job.traceparent }
   if ($idToken) {
     $plain[$(if ($identity.file) { $identity.file } else { "TESTOR_ID_TOKEN_FILE" })] = $tokenFile
     if ($identity.env) { foreach ($name in $identity.env.Keys) { $plain[$name] = "$($identity.env[$name])" } }
