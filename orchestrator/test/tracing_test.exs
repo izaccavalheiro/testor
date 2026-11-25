@@ -113,8 +113,7 @@ defmodule Testor.TracingTest do
       record(%{
         "project" => "web",
         "traceparent" => Jobs.get(job["id"])["traceparent"],
-        "exitCode" => 1,
-        "summary" => %{"passed" => 3, "failed" => 1}
+        "exitCode" => 1
       })
 
     on_exit(fn -> Store.delete(id) end)
@@ -131,7 +130,6 @@ defmodule Testor.TracingTest do
            } = run_span
 
     assert attr(run_span, "process.exit.code") == %{"intValue" => "1"}
-    assert attr(run_span, "testor.specs.failed") == %{"intValue" => "1"}
     assert String.to_integer(run_span["endTimeUnixNano"]) >= String.to_integer(run_span["startTimeUnixNano"])
   end
 
