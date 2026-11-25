@@ -150,7 +150,11 @@ try {
   $watcher = [powershell]::Create()
   $null = $watcher.AddScript({
     param($file, $owner)
-    trap { [Console]::Error.WriteLine("testor: cancel watcher: $_"); break }
+    # Ending the watcher when the run ends stops this pipeline: that is not an error to report.
+    trap {
+      if ($_.Exception -isnot [Management.Automation.PipelineStoppedException]) { [Console]::Error.WriteLine("testor: cancel watcher: $_") }
+      break
+    }
     while (-not (Test-Path -LiteralPath $file)) { Start-Sleep -Milliseconds 300 }
     if ($IsWindows) { taskkill /PID $owner /T /F | Out-Null; return }
     $children = @{}
