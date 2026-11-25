@@ -326,12 +326,12 @@ defmodule Testor.Auth do
 
   defp principal(name, user, via),
     do: %{
-          sub: name,
-          scopes: user.scopes,
-          via: via,
-          projects: Map.get(user, :projects),
-          project_roles: Map.get(user, :project_roles)
-        }
+      sub: name,
+      scopes: user.scopes,
+      via: via,
+      projects: Map.get(user, :projects),
+      project_roles: Map.get(user, :project_roles)
+    }
 
   # The projects a user may see (Testor.Access): nil for all; a list that cannot be read
   # fails closed, to no project at all.
@@ -343,7 +343,10 @@ defmodule Testor.Auth do
       end)
 
     if invalid != [],
-      do: Logger.warning("auth: #{name} has project roles that are not valid, left out: #{inspect(Map.new(invalid))}")
+      do:
+        Logger.warning(
+          "auth: #{name} has project roles that are not valid, left out: #{inspect(Map.new(invalid))}"
+        )
 
     valid
     |> Enum.sort()

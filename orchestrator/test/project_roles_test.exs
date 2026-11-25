@@ -16,7 +16,12 @@ defmodule Testor.ProjectRolesTest do
   setup do
     Guard.reset()
     :sys.replace_state(Jobs, fn _ -> %{} end)
-    File.write!(Path.join(Config.data_dir(), "config.json"), JSON.encode!(%{"execution" => %{"enabled" => true}}))
+
+    File.write!(
+      Path.join(Config.data_dir(), "config.json"),
+      JSON.encode!(%{"execution" => %{"enabled" => true}})
+    )
+
     hash = Password.hash(@password, 1000)
 
     users = %{
@@ -67,13 +72,21 @@ defmodule Testor.ProjectRolesTest do
     log =
       capture_log(fn ->
         user = Auth.settings().users["mixed"]
-        assert Enum.map(user.project_roles, &{&1.pattern, &1.role}) == [{"docs", "viewer"}, {"lib", "agent"}, {"web*", "operator"}]
+
+        assert Enum.map(user.project_roles, &{&1.pattern, &1.role}) == [
+                 {"docs", "viewer"},
+                 {"lib", "agent"},
+                 {"web*", "operator"}
+               ]
+
         assert Enum.sort(user.scopes) == ["agent", "operate", "read"]
         assert user.projects == ["docs", "lib", "web*"]
       end)
 
     assert log =~ "project roles that are not valid"
-    assert %{"projectRoles" => %{"web*" => "operator", "docs" => "viewer"}} = request(:get, "/api/v1/auth/me", "mixed") |> body()
+
+    assert %{"projectRoles" => %{"web*" => "operator", "docs" => "viewer"}} =
+             request(:get, "/api/v1/auth/me", "mixed") |> body()
   end
 
   test "lists show what a role may read", %{runs: runs} do
@@ -117,7 +130,9 @@ defmodule Testor.ProjectRolesTest do
     call = fn name, args -> Testor.MCP.Tools.call(name, args, principal, "http://x") |> elem(1) end
     assert %{"isError" => false} = call.("get_run", %{"id" => runs["docs"]})
 
-    assert %{"isError" => true, "content" => [%{"text" => text}]} = call.("cancel_run", %{"id" => runs["docs"]})
+    assert %{"isError" => true, "content" => [%{"text" => text}]} =
+             call.("cancel_run", %{"id" => runs["docs"]})
+
     assert text =~ "lacks the operate scope on docs"
   end
 
@@ -125,7 +140,12 @@ defmodule Testor.ProjectRolesTest do
     assert Access.permits?(%{scopes: ["read"]}, "any", "read")
     refute Access.permits?(%{scopes: ["read"]}, "any", "operate")
     refute Access.permits?(%{scopes: ["read"], projects: ["web"]}, "docs", "read")
-    refute Access.permits?(%{scopes: ["read"], project_roles: [%{pattern: "web", scopes: ["read"]}]}, nil, "read")
+
+    refute Access.permits?(
+             %{scopes: ["read"], project_roles: [%{pattern: "web", scopes: ["read"]}]},
+             nil,
+             "read"
+           )
   end
 
   test "the CLI sets a role per project" do
@@ -144,7 +164,13 @@ defmodule Testor.ProjectRolesTest do
              "cleo is viewer on docs, operator on web*"
 
     assert Auth.read_raw()["users"]["cleo"]["projects"] == %{"web*" => "operator", "docs" => "viewer"}
-    assert_raise Testor.Auth.CLI.Error, ~r/pattern=role/, fn -> Testor.Auth.CLI.projects("cleo", "web=owner") end
-    assert_raise Testor.Auth.CLI.Error, ~r/pattern=role/, fn -> Testor.Auth.CLI.projects("cleo", "a b=viewer") end
+
+    assert_raise Testor.Auth.CLI.Error, ~r/pattern=role/, fn ->
+      Testor.Auth.CLI.projects("cleo", "web=owner")
+    end
+
+    assert_raise Testor.Auth.CLI.Error, ~r/pattern=role/, fn ->
+      Testor.Auth.CLI.projects("cleo", "a b=viewer")
+    end
   end
 end

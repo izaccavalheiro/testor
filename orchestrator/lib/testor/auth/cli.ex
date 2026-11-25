@@ -77,7 +77,8 @@ defmodule Testor.Auth.CLI do
       roles == :invalid ->
         fail("a role per project is pattern=role, the role one of #{Enum.join(Auth.roles(), ", ")}")
 
-      roles == nil and list != ["all"] and (list == [] or not Enum.all?(list, &Testor.Access.valid_pattern?/1)) ->
+      roles == nil and list != ["all"] and
+          (list == [] or not Enum.all?(list, &Testor.Access.valid_pattern?/1)) ->
         fail("projects are names or patterns (letters, digits, _ . - and *), pattern=role pairs, or all")
 
       true ->
@@ -86,7 +87,9 @@ defmodule Testor.Auth.CLI do
         update(fn raw ->
           case raw do
             %{"users" => %{^name => user} = users} ->
-              user = if list == ["all"], do: Map.delete(user, "projects"), else: Map.put(user, "projects", value)
+              user =
+                if list == ["all"], do: Map.delete(user, "projects"), else: Map.put(user, "projects", value)
+
               Map.put(raw, "users", Map.put(users, name, user))
 
             _ ->
@@ -111,9 +114,11 @@ defmodule Testor.Auth.CLI do
         {pattern, role}
       end
 
-    if Enum.all?(roles, fn {pattern, role} -> Testor.Access.valid_pattern?(pattern) and Auth.role_scopes(role) != nil end),
-      do: roles,
-      else: :invalid
+    if Enum.all?(roles, fn {pattern, role} ->
+         Testor.Access.valid_pattern?(pattern) and Auth.role_scopes(role) != nil
+       end),
+       do: roles,
+       else: :invalid
   end
 
   @doc "Forgets the signing key pinned to agent `name`: its next lease pins the key it presents."

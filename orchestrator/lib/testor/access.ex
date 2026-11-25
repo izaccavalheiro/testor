@@ -121,7 +121,13 @@ defmodule Testor.Access do
 
       not permitted_or_none?(conn, principal) ->
         scope = Testor.Web.Auth.required_scope(conn)
-        refuse(conn, 403, "forbidden", "#{Testor.Auth.who(principal)} lacks the #{scope} scope on that project")
+
+        refuse(
+          conn,
+          403,
+          "forbidden",
+          "#{Testor.Auth.who(principal)} lacks the #{scope} scope on that project"
+        )
 
       true ->
         conn
