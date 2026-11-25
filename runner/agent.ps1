@@ -17,7 +17,9 @@
 #       "my-app": { "workspace": "~/test-run/my-app", "git": false,
 #                   "commands": { "test": "npm test", "lint": "npm run lint" } },
 #       "my-lib": { "repository": "https://github.com/me/my-lib.git",   # cloned when missing
-#                   "commands": { "test": "cargo test" } } } }
+#                   "commands": { "test": "cargo test" },
+#                   "secrets": { "NPM_TOKEN": "vault:secret/data/ci/my-lib#npm" } } },
+#     "vault": { "address": "https://vault.example.com:8200", "kubernetesRole": "testor-agent" } }
 #
 # A job names only a project and a task (kind): the command is the one this file gives, and a
 # job for anything else is refused. That is the boundary: testor, or anyone with the execute
@@ -29,6 +31,23 @@
 # folder with run.ps1 in it): run.ps1 records the run there, and the agent sends it to testor
 # as it happens (the record, the log in chunks, then screenshots, artifacts and the final
 # record), then deletes its copy. testor treats it like a run of its own.
+#
+# Secrets: a project's "secrets" maps environment variables its commands get to where their
+# values are, resolved on this machine for each job (testor never sees them) and written as
+# *** in the run's log (run.ps1, TESTOR_MASK):
+#
+#   env:NAME              a variable of the agent's own environment (a Kubernetes secret, CI)
+#   file:PATH             a file's contents (/run/secrets, a mounted secret, systemd credentials)
+#   vault:PATH#FIELD      HashiCorp Vault or OpenBao (KV v1 or v2), with VAULT_TOKEN, "vault"'s
+#                         tokenFile, or its kubernetesRole (the pod's service account token)
+#   aws:ID[#FIELD]        AWS Secrets Manager, through the aws CLI and its credentials
+#   gcp:SECRET            Google Secret Manager (a name, or projects/P/secrets/S[/versions/V])
+#   azure:VAULT/NAME      Azure Key Vault, through the az CLI
+#   sops:FILE[#KEY]       a SOPS-encrypted file (age, PGP or a cloud KMS)
+#
+# The CLIs pick up the machine's workload identity (IAM roles for service accounts, GKE or Azure
+# workload identity, an instance profile); "secretTools" gives their paths when not on PATH. A
+# secret that cannot be read fails the job before it runs, naming the secret, never its value.
 #
 # While a job runs the agent renews its lease every 10 s; testor asks it to cancel through the
 # heartbeat's answer. It runs as the account that starts it: give it the test account
@@ -54,6 +73,7 @@ if (-not (Test-Path -LiteralPath $runPs1)) { throw "no run.ps1 in $home_ (set ho
 $labels = @($settings.labels | Where-Object { $_ })
 $projects = if ($settings.projects) { $settings.projects } else { @{} }
 $skipCert = $settings.skipCertificateCheck -eq $true
+$tools = if ($settings.secretTools) { $settings.secretTools } else { @{} }
 $upload = $settings.upload -eq $true
 
 # The agent's own key (ECDSA P-256), made on its first start: testor pins its public half to
@@ -208,8 +228,116 @@ function Resolve-Job($job) {
   @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null } }
 }
 
+function Tool([string]$name) { if ($tools[$name]) { Expand $tools[$name] } else { $name } }
+
+# A CLI's output, or an error naming it: its stderr stays out of the way, as it may echo input.
+function Invoke-Tool([string]$name, [string[]]$arguments) {
+  $global:LASTEXITCODE = 0
+  $output = & (Tool $name) @arguments 2>$null
+  if ($LASTEXITCODE) { throw "$name exited with $LASTEXITCODE" }
+  ($output -join "`n")
+}
+
+# The field of a JSON document (a secret holding several values), or the document itself.
+function Select-Field([string]$document, [string]$field, [string]$name) {
+  if (-not $field) { return $document }
+  try { $object = $document | ConvertFrom-Json -AsHashtable } catch { throw "$name is not JSON, so it has no field $field" }
+  if ($object -isnot [Collections.IDictionary] -or -not $object.ContainsKey($field)) { throw "$name has no field $field" }
+  "$($object[$field])"
+}
+
+$script:vaultToken = $null
+function Get-VaultToken($vault, [string]$address) {
+  if ($script:vaultToken) { return $script:vaultToken }
+  $script:vaultToken =
+    if ($env:VAULT_TOKEN) { $env:VAULT_TOKEN }
+    elseif ($vault.tokenFile) { (Get-Content -Raw -LiteralPath (Expand $vault.tokenFile)).Trim() }
+    elseif ($vault.kubernetesRole) {
+      $jwtFile = if ($vault.jwtFile) { Expand $vault.jwtFile } else { "/var/run/secrets/kubernetes.io/serviceaccount/token" }
+      $mount = if ($vault.authPath) { $vault.authPath } else { "kubernetes" }
+      $login = Invoke-RestMethod -Method Post -Uri "$address/v1/auth/$mount/login" -Headers (Get-VaultHeaders $vault $null) `
+        -ContentType "application/json" -Body (@{ role = $vault.kubernetesRole; jwt = (Get-Content -Raw -LiteralPath $jwtFile).Trim() } | ConvertTo-Json)
+      $login.auth.client_token
+    } else { throw "vault: no token (VAULT_TOKEN, vault.tokenFile or vault.kubernetesRole)" }
+  $script:vaultToken
+}
+
+function Get-VaultHeaders($vault, $token) {
+  $headers = @{}
+  if ($token) { $headers["X-Vault-Token"] = $token }
+  $namespace = if ($vault.namespace) { $vault.namespace } else { $env:VAULT_NAMESPACE }
+  if ($namespace) { $headers["X-Vault-Namespace"] = $namespace }
+  $headers
+}
+
+function Get-VaultSecret([string]$reference) {
+  $path, $field = $reference -split "#", 2
+  if (-not $field) { throw "a vault reference names a field: vault:<path>#<field>" }
+  $vault = if ($settings.vault) { $settings.vault } else { @{} }
+  $address = "$(if ($vault.address) { $vault.address } else { $env:VAULT_ADDR })".TrimEnd("/")
+  if (-not $address) { throw "vault: no address (vault.address or VAULT_ADDR)" }
+  $answer = Invoke-RestMethod -Uri "$address/v1/$($path.TrimStart('/'))" -Headers (Get-VaultHeaders $vault (Get-VaultToken $vault $address))
+  # KV version 2 nests the values under data.data (with data.metadata); version 1 does not.
+  $data = if ($null -ne $answer.data.data -and $null -ne $answer.data.metadata) { $answer.data.data } else { $answer.data }
+  if ($null -eq $data -or $data.PSObject.Properties.Name -notcontains $field) { throw "vault: $path has no field $field" }
+  "$($data.$field)"
+}
+
+# The value of one secret of agent.json, from where its reference says.
+function Get-Secret([string]$reference) {
+  $source, $rest = "$reference" -split ":", 2
+  if (-not $rest) { throw "'$reference' is not <source>:<reference>" }
+  switch ($source) {
+    "env" { [Environment]::GetEnvironmentVariable($rest) }
+    "file" { (Get-Content -Raw -LiteralPath (Expand $rest)) -replace "\r?\n\z", "" }
+    "vault" { Get-VaultSecret $rest }
+    "aws" {
+      $id, $field = $rest -split "#", 2
+      Select-Field (Invoke-Tool "aws" @("secretsmanager", "get-secret-value", "--secret-id", $id, "--query", "SecretString", "--output", "text")) $field "aws:$id"
+    }
+    "gcp" {
+      if ($rest -match "^projects/([^/]+)/secrets/([^/]+)(?:/versions/([^/]+))?$") {
+        $version = if ($Matches[3]) { $Matches[3] } else { "latest" }
+        Invoke-Tool "gcloud" @("secrets", "versions", "access", $version, "--secret=$($Matches[2])", "--project=$($Matches[1])")
+      } else { Invoke-Tool "gcloud" @("secrets", "versions", "access", "latest", "--secret=$rest") }
+    }
+    "azure" {
+      $vaultName, $name = $rest -split "/", 2
+      if (-not $name) { throw "an azure reference is azure:<vault>/<name>" }
+      Invoke-Tool "az" @("keyvault", "secret", "show", "--vault-name", $vaultName, "--name", $name, "--query", "value", "--output", "tsv")
+    }
+    "sops" {
+      $file, $key = $rest -split "#", 2
+      $arguments = @("--decrypt") + $(if ($key) { @("--extract", "[`"$key`"]") } else { @() }) + @((Expand $file))
+      Invoke-Tool "sops" $arguments
+    }
+    default { throw "unknown source $source (env, file, vault, aws, gcp, azure, sops)" }
+  }
+}
+
+# Every secret of a job's project, or why one cannot be had: @{ vars = @{NAME = value} } or @{ error }.
+function Resolve-Secrets($job) {
+  $declared = $projects[$job.project].secrets
+  $values = @{}
+  if (-not $declared) { return @{ vars = $values } }
+  $script:vaultToken = $null
+  foreach ($name in @($declared.Keys | Sort-Object)) {
+    if ($name -notmatch "^[A-Za-z_][A-Za-z0-9_]*$" -or $name -like "TESTOR_*") {
+      return @{ error = "secret $name`: not a name a job's environment can hold (and not TESTOR_*)" }
+    }
+    try { $value = Get-Secret $declared[$name] } catch { return @{ error = "secret $name could not be read: $($_.Exception.Message)" } }
+    if ([string]::IsNullOrEmpty($value)) { return @{ error = "secret $name is empty or missing ($(("$($declared[$name])" -split ':', 2)[0]))" } }
+    $values[$name] = $value
+  }
+  @{ vars = $values }
+}
+
 function Invoke-Job($job) {
   $plan = Resolve-Job $job
+  if (-not $plan.error) {
+    $secrets = Resolve-Secrets $job
+    if ($secrets.error) { $plan = @{ error = $secrets.error } }
+  }
   if ($plan.error) {
     Log "$($job.id) refused: $($plan.error)"
     $null = Call "/agent/jobs/$($job.id)/finish" @{ error = $plan.error }
@@ -238,6 +366,10 @@ function Invoke-Job($job) {
   $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
   $env:TESTOR_JOB_ID = $job.id
   $env:TESTOR_ACTOR = "agent:$([Environment]::MachineName.ToLower()) for $($job.requestedBy)"
+  # The run gets the secrets in its environment, and run.ps1 writes their values as ***.
+  $maskBefore = $env:TESTOR_MASK
+  foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $secrets.vars[$name]) }
+  if ($secrets.vars.Count) { $env:TESTOR_MASK = (@($maskBefore) + @($secrets.vars.Keys) | Where-Object { $_ }) -join "," }
   try {
     $process = Start-Process pwsh -PassThru -NoNewWindow -RedirectStandardOutput "$out.out" -RedirectStandardError "$out.err" `
       -ArgumentList "-NoProfile", "-NonInteractive", "-Command", $script
@@ -245,6 +377,8 @@ function Invoke-Job($job) {
     $null = $process.Handle
   } finally {
     Remove-Item Env:TESTOR_JOB_ID, Env:TESTOR_ACTOR -ErrorAction SilentlyContinue
+    foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $null) }
+    $env:TESTOR_MASK = $maskBefore
   }
   Log "$($job.id) running $($job.project) $($job.kind) (pid $($process.Id))"
 

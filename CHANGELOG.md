@@ -21,6 +21,13 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   gateway, a hub or another service verifies a testor token without a secret.
   `Testor.Auth.CLI.roll_token_key` adds a new key while the previous one verifies its tokens
   until they expire; `TESTOR_TOKEN_KEY` shares one key across replicas.
+- **Secrets for jobs**: a project in `agent.json` maps environment variables to where their
+  values are (`env:`, `file:`, `vault:`, `aws:`, `gcp:`, `azure:`, `sops:`); the agent reads
+  them on its machine for each job, so testor never sees them, and `run.ps1` masks them in the
+  log. A secret that cannot be read fails the job naming the secret. The Helm chart's agents
+  take `agents.env`, `agents.secretMounts`, `agents.vault` and `agents.serviceAccount` (cloud
+  workload identity, Vault's Kubernetes login).
+- `run.ps1` also masks each line of a secret that spans lines.
 
 - **Single sign-on**: the dashboard signs people in with an OpenID Connect provider (`oidc` in
   `auth.json`): the code flow with PKCE, ID tokens checked against the provider's JWKS

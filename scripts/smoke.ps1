@@ -307,6 +307,71 @@ try {
   $refused = Get-Job $refused.id
   Check "jobs: a task the agent does not list is refused" ($refused.status -eq "failed" -and $refused.error -match "not in this agent") "($($refused | ConvertTo-Json -Compress))"
 
+  # Secrets: resolved by the agent from where agent.json says (env, file, Vault, the clouds'
+  # CLIs, SOPS), given to the run's environment, and written as *** in its log.
+  $tools = New-Item -ItemType Directory -Force (Join-Path $work "secret-tools")
+  @{ aws = "'{""user"":""aws-user"",""password"":""aws-secret-value-1""}'"
+     gcloud = "if (`$args -contains '--project=smoke-project' -and `$args -contains '--secret=db') { 'gcp-secret-value-2' } else { 'wrong' }"
+     az = "if (`$args -contains 'smoke-vault') { 'azure-secret-value-3' } else { 'wrong' }"
+     sops = "'-----BEGIN KEY-----'; 'sops-line-one-secret'; 'sops-line-two-secret'; '-----END KEY-----'" }.GetEnumerator() |
+    ForEach-Object { Set-Content -LiteralPath (Join-Path $tools "$($_.Key).ps1") -Value "$($_.Value)`nexit 0" }
+  $probe = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $probe.Start(); $vaultPort = $probe.LocalEndpoint.Port; $probe.Stop()
+  $vaultListener = [Net.HttpListener]::new()
+  $vaultListener.Prefixes.Add("http://localhost:$vaultPort/")
+  $vaultListener.Start()
+  $vault = [powershell]::Create().AddScript({
+      param($listener)
+      while ($listener.IsListening) {
+        try { $context = $listener.GetContext() } catch { break }
+        $request = $context.Request
+        $body = (New-Object IO.StreamReader($request.InputStream)).ReadToEnd()
+        $answer, $status =
+          if ($request.Url.AbsolutePath -eq "/v1/auth/kubernetes/login" -and $body -match "sa-jwt-of-the-pod") { '{"auth":{"client_token":"vault-token-of-the-agent"}}', 200 }
+          elseif ($request.Url.AbsolutePath -eq "/v1/secret/data/smoke" -and $request.Headers["X-Vault-Token"] -eq "vault-token-of-the-agent") { '{"data":{"data":{"api_key":"vault-secret-value-4"},"metadata":{"version":1}}}', 200 }
+          else { '{"errors":["permission denied"]}', 403 }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($answer)
+        $context.Response.StatusCode = $status
+        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        $context.Response.Close()
+      }
+    }).AddArgument($vaultListener)
+  $null = $vault.BeginInvoke()
+  $saToken = Join-Path $work "sa-token"; Set-Content -LiteralPath $saToken -Value "sa-jwt-of-the-pod"
+  $secretFile = Join-Path $work "db-password"; Set-Content -LiteralPath $secretFile -Value "file-secret-value-5"
+  $env:SMOKE_SOURCE_SECRET = "env-secret-value-6"
+  $secretValues = "aws-secret-value-1", "gcp-secret-value-2", "azure-secret-value-3", "sops-line-one-secret", "sops-line-two-secret", "vault-secret-value-4", "file-secret-value-5", "env-secret-value-6"
+  $secretsConfig = Join-Path $work "agent-secrets.json"
+  $show = '"aws=$env:S_AWS gcp=$env:S_GCP az=$env:S_AZ vault=$env:S_VAULT file=$env:S_FILE env=$env:S_ENV"; $env:S_SOPS; "secrets-shown"'
+  @{ server = $base; home = $testorHome; labels = @("smoke")
+     vault = @{ address = "http://localhost:$vaultPort"; kubernetesRole = "smoke"; jwtFile = $saToken }
+     secretTools = @{ aws = "$tools/aws.ps1"; gcloud = "$tools/gcloud.ps1"; az = "$tools/az.ps1"; sops = "$tools/sops.ps1" }
+     projects = @{
+       "secret-demo" = @{ workspace = "$jobsDir"; commands = @{ show = $show }
+         secrets = @{ S_AWS = "aws:smoke/app#password"; S_GCP = "gcp:projects/smoke-project/secrets/db"; S_AZ = "azure:smoke-vault/api"
+                      S_VAULT = "vault:secret/data/smoke#api_key"; S_FILE = "file:$secretFile"; S_ENV = "env:SMOKE_SOURCE_SECRET"
+                      S_SOPS = "sops:$work/secrets.enc.yaml#key" } }
+       "secret-broken" = @{ workspace = "$jobsDir"; commands = @{ show = "'never'" }; secrets = @{ S_MISSING = "env:SMOKE_NOT_SET" } } } } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $secretsConfig
+  $secretJob = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs" `
+    -Body (@{ project = "secret-demo"; kind = "show"; labels = @("smoke") } | ConvertTo-Json)
+  pwsh -NoProfile -File $agentScript -Config $secretsConfig -Once -Wait 5 | Out-Null
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    $secretDone = Get-Job $secretJob.id
+    $secretLog = if ($secretDone.runId) { try { "$(Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($secretDone.runId)/log")" } catch { "" } }
+    if ($secretLog -notmatch "secrets-shown") { Start-Sleep -Milliseconds 300 }
+  } until ($secretLog -match "secrets-shown" -or (Get-Date) -gt $deadline)
+  $leaked = @($secretValues | Where-Object { $secretLog.Contains($_) })
+  Check "secrets: the agent resolves a job's secrets from env, file, Vault, AWS, GCP, Azure and SOPS" ($secretDone.status -eq "passed" -and $secretLog -match "aws=\*\*\* gcp=\*\*\* az=\*\*\* vault=\*\*\* file=\*\*\* env=\*\*\*") "($($secretDone | ConvertTo-Json -Compress))"
+  Check "secrets: their values never reach the log, each line of a multi-line one included" ($secretLog -match "secrets-shown" -and $leaked.Count -eq 0) "(leaked: $($leaked.Count))"
+  $brokenJob = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs" `
+    -Body (@{ project = "secret-broken"; kind = "show"; labels = @("smoke") } | ConvertTo-Json)
+  pwsh -NoProfile -File $agentScript -Config $secretsConfig -Once -Wait 5 | Out-Null
+  $broken = Get-Job $brokenJob.id
+  Check "secrets: a secret that cannot be read fails the job, naming it" ($broken.status -eq "failed" -and $broken.error -match "S_MISSING" -and -not $broken.runId) "($($broken | ConvertTo-Json -Compress))"
+  $vaultListener.Stop(); $vault.Dispose()
+  Remove-Item Env:SMOKE_SOURCE_SECRET
+
   $slowJob = New-Job "slow"
   $slowAgent = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-File", $agentScript, "-Config", $agentConfig, "-Once", "-Wait", "5"
   $deadline = (Get-Date).AddSeconds(30)

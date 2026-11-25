@@ -41,3 +41,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "testor.agentServer" -}}
 {{- if .Values.agents.server -}}{{ .Values.agents.server }}{{- else -}}{{ include "testor.scheme" . | lower }}://{{ include "testor.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}{{- end -}}
 {{- end -}}
+
+{{- define "testor.agentServiceAccount" -}}
+{{- if .Values.agents.serviceAccount.create }}{{ include "testor.fullname" . }}-agent{{ else }}{{ .Values.agents.serviceAccount.name }}{{ end -}}
+{{- end -}}

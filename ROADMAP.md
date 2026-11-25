@@ -39,8 +39,9 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
   `/.well-known/jwks.json`, so other services verify them without a secret.
 - **Single sign-on** (done, in the next release): OpenID Connect sign-in for the dashboard,
   groups mapped to roles and projects ([identity](docs/design/identity.md)).
-- Secrets for jobs: a broker (Vault, cloud secret managers, SOPS files) handing secrets to a
-  job by name, masked in its logs.
+- **Secrets for jobs** (done, in the next release): agents resolve a job's secrets on their
+  machine (Vault, AWS, GCP, Azure secret managers, SOPS, environment, files) with the
+  machine's workload identity, masked in its logs.
 
 ### 0.9: many testors, other backends
 

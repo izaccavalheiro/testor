@@ -336,6 +336,14 @@ first key an agent user presents and refuses any other (a stolen agent token alo
 for that agent's runs), and keeps the agent's attestation only when it matches, byte for byte,
 the files it received ([attestation.md](attestation.md#signed-by-the-agent)).
 
+A job's secrets are resolved by its agent, on its machine, from the sources its own
+`agent.json` names (Vault, AWS, GCP, Azure secret managers, SOPS files, environment, files):
+they never pass through testor, and a job cannot ask for one its project does not list. Their
+values are masked in the run's log and error before anything is stored or sent; a secret that
+cannot be read fails the job naming the secret only ([jobs.md](jobs.md#secrets)). Prefer
+workload identities (IAM roles for service accounts, GKE and Azure workload identity, Vault's
+Kubernetes login) to long-lived keys on the runner.
+
 ## Run attestations
 
 Every finished run is signed (Ed25519, an in-toto statement in a DSSE envelope) with

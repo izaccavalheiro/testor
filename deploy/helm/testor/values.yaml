@@ -85,8 +85,22 @@ agents:
   # certificate must then name the Service, or set server to a name it holds).
   server: ""
   labels: [linux]
-  # agent.json's projects: { "my-app": { "repository": "https://...", "commands": { "test": "..." } } }
+  # agent.json's projects: { "my-app": { "repository": "https://...", "commands": { "test": "..." },
+  #   "secrets": { "NPM_TOKEN": "env:NPM_TOKEN", "DB": "file:/var/run/secrets/ci/db",
+  #                "API": "vault:secret/data/ci#api" } } }  (docs/jobs.md, "Secrets")
   projects: {}
+  # Where secrets come from: env (valueFrom secretKeyRef, for env: references), Secrets mounted
+  # read-only (for file:), agent.json's vault (address, kubernetesRole...), and the agents'
+  # ServiceAccount: its annotations give a cloud workload identity (aws:, gcp:, azure: through
+  # their CLIs), and automountToken mounts its token (Vault's Kubernetes login).
+  env: []
+  secretMounts: []   # - { secret: ci-secrets, mountPath: /var/run/secrets/ci }
+  vault: {}          # { address: https://vault.vault.svc:8200, kubernetesRole: testor-agent }
+  serviceAccount:
+    create: false
+    name: ""
+    annotations: {}
+    automountToken: false
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { memory: 2Gi }

@@ -11,7 +11,7 @@ and scopes; HS256 tokens; signed links (0.2).
   version.
 - **Projects and teams** (users limited to projects: done, 0.8): a role per project (`viewer`, `operator`, `admin`), filtering every
   list, event stream and MCP tool; signed links bound to the viewer and minutes long.
-- **Workload identity**: jobs ([agent-protocol.md](agent-protocol.md)) get a short OIDC token
+- **Workload identity** (the secrets broker: done, 0.8; testor-issued job tokens: proposed): jobs ([agent-protocol.md](agent-protocol.md)) get a short OIDC token
   from testor (issuer, audience, `sub` = project, kind and commit) to exchange for cloud
   credentials, as GitHub Actions does; a secrets broker adapter (Vault, AWS, GCP, Azure secret
   managers, SOPS files) hands secrets to a job by name, and their values are masked in its logs
