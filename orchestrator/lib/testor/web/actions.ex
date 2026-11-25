@@ -2,12 +2,36 @@ defmodule Testor.Web.Actions do
   @moduledoc "State-changing actions the dashboard's routes, the versioned API and MCP share."
   alias Testor.{Maintenance, Store}
 
-  @doc "Cancels a running run: `{:ok, run}` or `{:error, status, code, message}`."
+  @doc """
+  Cancels a running run: `{:ok, run}` or `{:error, status, code, message}`. The run is asked
+  to end itself first (`Store.request_cancel/1`); after `cancel_grace_ms` (5 s) without its
+  process ending (a run.ps1 older than 0.3, or one that hangs), it is killed.
+  """
   def cancel(id) do
+    with %{"status" => "running", "pid" => pid} <- Store.get(id) do
+      Store.request_cancel(id)
+      grace = Application.get_env(:testor, :cancel_grace_ms, 5_000)
+      await_exit(pid, System.monotonic_time(:millisecond) + grace)
+    end
+
     case Store.cancel(id) do
       {:ok, run} -> {:ok, run}
       {:error, :not_found} -> {:error, 404, "not_found", "no such run"}
       {:error, :not_running} -> {:error, 409, "not_running", "the run is not running"}
+    end
+  end
+
+  defp await_exit(pid, deadline) do
+    cond do
+      not Testor.OS.alive?(pid) ->
+        :gone
+
+      System.monotonic_time(:millisecond) >= deadline ->
+        :timeout
+
+      true ->
+        Process.sleep(100)
+        await_exit(pid, deadline)
     end
   end
 

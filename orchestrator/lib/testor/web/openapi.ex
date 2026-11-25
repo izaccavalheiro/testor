@@ -100,6 +100,26 @@ defmodule Testor.Web.OpenAPI do
         "get" => op("runs", "A run, its spec files, screenshots and artifacts", ref("RunDetail")),
         "delete" => op("runs", "Delete a finished run (scope operate)", %{"type" => "object"})
       },
+      "/runs/{id}/attestation" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "get" =>
+          op(
+            "runs",
+            "The run's signed attestation: an in-toto statement in a DSSE envelope (Ed25519)",
+            %{"type" => "object"}
+          )
+      },
+      "/attestation/key" => %{
+        "get" =>
+          op("runs", "The public key attestations are signed with (PEM) and its id", %{
+            "type" => "object",
+            "properties" => %{
+              "algorithm" => %{"const" => "ed25519"},
+              "keyid" => %{"type" => "string"},
+              "publicKey" => %{"type" => "string"}
+            }
+          })
+      },
       "/runs/{id}/log" => %{
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "get" =>
@@ -257,7 +277,17 @@ defmodule Testor.Web.OpenAPI do
           "error" => %{"type" => "string"},
           "screenshots" => %{"type" => "integer"},
           "artifacts" => %{"type" => "integer"},
-          "currentSpec" => %{"type" => ["string", "null"]}
+          "currentSpec" => %{"type" => ["string", "null"]},
+          "actor" => %{
+            "type" => "object",
+            "description" =>
+              "who started the run: the runner's account and SSH client address, and who the workstation said it was (informative)",
+            "properties" => %{
+              "user" => %{"type" => "string"},
+              "client" => %{"type" => ["string", "null"]},
+              "declared" => %{"type" => ["string", "null"]}
+            }
+          }
         }
       },
       "Spec" => %{

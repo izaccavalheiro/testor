@@ -53,6 +53,17 @@ defmodule Testor.Store do
   @doc "Kills a running run's PowerShell and everything it started."
   def cancel(id), do: GenServer.call(__MODULE__, {:cancel, id}, 30_000)
 
+  @doc """
+  Asks a run to end itself: writes `cancel/<id>`, which run.ps1 watches for. The run's own
+  session then ends its process tree, so testor never has to kill processes of another account
+  (the one tests run as). `cancel/1` settles the run afterwards, and kills it only when it is
+  still there.
+  """
+  def request_cancel(id) do
+    File.mkdir_p!(Config.cancel_dir())
+    File.write!(Path.join(Config.cancel_dir(), id), "")
+  end
+
   @doc "Deletes a finished run: its record, log, screenshots and artifacts."
   def delete(id), do: GenServer.call(__MODULE__, {:delete, id}, 30_000)
 
@@ -118,6 +129,9 @@ defmodule Testor.Store do
             result = OS.kill_tree(pid)
             Logger.info("store: cancelled #{id} (pid #{pid}): #{inspect(result)}")
 
+          :gone ->
+            Logger.info("store: cancelled #{id}: its process has ended")
+
           {:skip, why} ->
             Logger.warning("store: cancelled #{id} without killing pid #{inspect(pid)}: #{why}")
             :ets.insert(@table, {id, Map.put(run, "warning", "cancelled without killing a process: #{why}")})
@@ -142,6 +156,8 @@ defmodule Testor.Store do
       _ ->
         File.rm(Config.run_file(id))
         File.rm(Config.log_file(id))
+        File.rm(Path.join(Config.cancel_dir(), id))
+        File.rm(Path.join(Config.attestations_dir(), id <> ".dsse.json"))
         File.rm_rf(Path.join(Config.shots_dir(), id))
         File.rm_rf(Path.join(Config.artifacts_dir(), id))
         {:reply, :ok, forget(state, id)}
@@ -149,7 +165,8 @@ defmodule Testor.Store do
   end
 
   @doc """
-  Whether cancelling `run` may kill its process: `:kill`, or `{:skip, why}`. The pid comes from
+  Whether cancelling `run` may kill its process: `:kill`, `:gone` (it has ended, as run.ps1
+  does when asked to cancel), or `{:skip, why}`. The pid comes from
   the run's own record, which the run could rewrite, so it is checked first: it must be a
   process id, not testor nor one of the processes above it (`protected`: killing a tree that
   holds testor would stop the service), and a process that did not start after the run did
@@ -161,7 +178,7 @@ defmodule Testor.Store do
     cond do
       not is_integer(pid) or pid <= 0 -> {:skip, "the record has no valid process id"}
       pid in protected -> {:skip, "process #{pid} is testor or runs it"}
-      started == nil -> {:skip, "process #{pid} has already ended"}
+      started == nil -> :gone
       reused?(run["startedAt"], started) -> {:skip, "process #{pid} started after the run: its id was reused"}
       true -> :kill
     end
@@ -229,6 +246,9 @@ defmodule Testor.Store do
     finalizing = run["status"] != "running" and not Map.has_key?(run, "summary")
     {state, run} = if finalizing, do: finalize(state, run), else: {state, run}
     :ets.insert(@table, {id, run})
+    # Every run is finalized once, however it was seen: also one that started and ended between
+    # two scans, which is never seen running. Signed once it is in the table.
+    if finalizing, do: finished(id)
 
     cond do
       prev == nil and run["status"] == "running" ->
@@ -246,6 +266,9 @@ defmodule Testor.Store do
 
     state
   end
+
+  # Once per run, when it has ended and is in the table: sign it.
+  defp finished(id), do: Testor.Attestation.attest_later(id)
 
   defp keep_annotations(run, nil), do: run
 
@@ -343,7 +366,9 @@ defmodule Testor.Store do
 
         {state, run} = finalize(state, run)
         :ets.insert(@table, {id, run})
+        finished(id)
         on_finish(run)
+        File.rm(Path.join(Config.cancel_dir(), id))
         {state, run}
 
       run ->

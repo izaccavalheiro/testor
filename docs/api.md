@@ -35,6 +35,8 @@ where they page), errors `{"error": {"code", "message"}}`.
 | `GET /api/v1/auth/me` | `{authEnabled, user, via, scopes, expiresAt}` |
 | `GET /api/v1/runs?status=&project=&kind=&q=&limit=&before=` | runs, newest first: `{data, next}`; `next` is the `before` of the next page |
 | `GET /api/v1/runs/:id` | `{run, specs, screenshots, artifacts, logBytes}` |
+| `GET /api/v1/runs/:id/attestation` | the run's signed attestation (DSSE envelope of an in-toto statement; [attestation.md](attestation.md)); `404` until it is signed |
+| `GET /api/v1/attestation/key` | the public key attestations are signed with: `algorithm`, `keyid`, `publicKey` (PEM) |
 | `GET /api/v1/runs/:id/log?tail=&grep=&context=` | the end of the output as text; with `grep`, the matching lines (numbered) and `X-Log-Matches` |
 | `GET /api/v1/runs/:id/events` | the run's event stream (as `/events/runs/:id`) |
 | `POST /api/v1/runs/:id/cancel` | the cancelled run; `409` when it is not running |

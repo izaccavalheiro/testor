@@ -32,6 +32,10 @@ defmodule Testor.Config do
   def logs_dir, do: Path.join(data_dir(), "logs")
   def shots_dir, do: Path.join(data_dir(), "screenshots")
   def artifacts_dir, do: Path.join(data_dir(), "artifacts")
+  @doc "Cancel requests: `cancel/<id>`, which run.ps1 watches for to end its own run."
+  def cancel_dir, do: Path.join(data_dir(), "cancel")
+  @doc "Signed attestations of finished runs: `attestations/<id>.dsse.json`."
+  def attestations_dir, do: Path.join(data_dir(), "attestations")
   def run_file(id), do: Path.join(runs_dir(), id <> ".json")
   def log_file(id), do: Path.join(logs_dir(), id <> ".log")
 

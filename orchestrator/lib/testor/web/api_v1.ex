@@ -103,6 +103,27 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  get "/runs/:id/attestation" do
+    with_id(conn, id, fn conn ->
+      case Testor.Files.read_json(Testor.Attestation.file(id)) do
+        {:ok, envelope} ->
+          json(conn, 200, envelope)
+
+        :error ->
+          error(
+            conn,
+            404,
+            "not_found",
+            "no attestation: the run is unknown, still running, or not signed yet"
+          )
+      end
+    end)
+  end
+
+  get "/attestation/key" do
+    json(conn, 200, Testor.Attestation.public_key())
+  end
+
   get "/runs/:id/log" do
     with_id(conn, id, fn conn ->
       conn = fetch_query_params(conn)

@@ -179,15 +179,32 @@ try {
 
   # Cancelling kills the run's whole process tree, on every OS.
   $hidden = if ($IsWindows) { @{ WindowStyle = "Hidden" } } else { @{} }
+  $slowErr = Join-Path $work "slow.err"
+  if (-not $IsWindows) { $hidden = @{ RedirectStandardError = $slowErr; RedirectStandardOutput = (Join-Path $work "slow.out") } }
   $slow = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-Command", "& '$testorHome/run.ps1' -Project slow -Kind slow -Body { pwsh -NoProfile -Command 'Start-Sleep 120' }"
   $deadline = (Get-Date).AddSeconds(30)
   do { Start-Sleep -Milliseconds 500; $running = @((Invoke-RestMethod "$base/api/v1/runs?status=running").data) } until ($running.Count -or (Get-Date) -gt $deadline)
   Check "a long run is seen running" ($running.Count -eq 1)
+  Check "the run records who started it" ($running[0].actor.user -eq [Environment]::UserName) "($($running[0].actor | ConvertTo-Json -Compress))"
+  # run.ps1 ends its own tree when asked: the request testor writes (cancel/<id>) is enough.
+  $runPid = (Invoke-RestMethod "$base/api/runs/$($running[0].id)").run.pid
+  $null = New-Item -ItemType Directory -Force (Join-Path $testorHome "cancel")
+  Set-Content -LiteralPath (Join-Path (Join-Path $testorHome "cancel") $running[0].id) -Value ""
+  $ended = $slow.WaitForExit(4000)
+  $state = if ($IsWindows -or $ended) { "" } else { "; ps: " + ((ps -o pid=,stat=,comm= -p $runPid 2>$null) -join " ") + "; children: " + ((ps -A -o pid=,ppid=,stat=,comm= | Where-Object { (-split $_)[1] -eq "$runPid" }) -join " | ") + "; stderr: " + ((Get-Content $slowErr -ErrorAction SilentlyContinue) -join " / ") }
+  Check "the run ended itself when asked" $ended "(pid $runPid still there after 4 s$state)"
   $cancel = Invoke-RestMethod -Method Post -ContentType "application/json" "$base/api/v1/runs/$($running[0].id)/cancel" -Body "{}"
-  Check "cancel settles the run" ($cancel.status -eq "cancelled")
+  Check "cancel settles the run" ($cancel.status -eq "cancelled" -and -not $cancel.warning) "($($cancel.warning))"
   $gone = $slow.WaitForExit(15000)
   Check "cancel killed the process tree" $gone
 
+  # Finished runs are signed: an in-toto statement in a DSSE envelope.
+  $deadline = (Get-Date).AddSeconds(15)
+  do { Start-Sleep -Milliseconds 500; $att = Invoke-WebRequest "$base/api/v1/runs/$($test.id)/attestation" -SkipHttpErrorCheck } until ($att.StatusCode -eq 200 -or (Get-Date) -gt $deadline)
+  $statement = if ($att.StatusCode -eq 200) { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($att.Content | ConvertFrom-Json).payload)) | ConvertFrom-Json }
+  Check "a finished run is attested" ($statement.predicate.run.id -eq $test.id -and @($statement.subject).name -contains "log") "($($att.StatusCode))"
+  $key = Invoke-RestMethod "$base/api/v1/attestation/key"
+  Check "the attestation key is published" ($key.algorithm -eq "ed25519" -and $key.publicKey -match "BEGIN PUBLIC KEY")
 
   $deadline = (Get-Date).AddSeconds(30)
   do { Start-Sleep -Seconds 1; $device = Invoke-RestMethod "$base/api/device" } until (($device.static -and $null -ne $device.sample.cpu) -or (Get-Date) -gt $deadline)

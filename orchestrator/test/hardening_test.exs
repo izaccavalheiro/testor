@@ -225,12 +225,29 @@ defmodule Testor.HardeningTest do
       assert {:skip, "the record has no valid process id"} = Store.kill_check(%{run | "pid" => "1"}, [], @now)
       assert {:skip, _} = Store.kill_check(%{run | "pid" => 0}, [], @now)
       assert {:skip, "process 4242 is testor or runs it"} = Store.kill_check(run, [4242], @now)
-      assert {:skip, "process 4242 has already ended"} = Store.kill_check(run, [], nil)
+      assert Store.kill_check(run, [], nil) == :gone
 
       assert {:skip, "process 4242 started after the run" <> _} =
                Store.kill_check(run, [], ~U[2026-11-24 10:05:00Z])
 
       assert Store.kill_check(%{run | "startedAt" => "?"}, [], @now) == :kill
+    end
+
+    test "a run asked to cancel ends itself, as run.ps1 does: nothing is killed, no warning" do
+      put_env(:cancel_grace_ms, 10_000)
+      {_port, pid} = sleeper()
+      id = record(%{"pid" => pid, "project" => "cooperative"})
+      request = Path.join(Config.cancel_dir(), id)
+
+      # run.ps1's watcher: when the request appears, the run ends its own process tree.
+      Task.start(fn ->
+        wait_until(fn -> File.exists?(request) end)
+        Testor.OS.kill_tree(pid)
+      end)
+
+      capture_log(fn -> assert {:ok, %{"status" => "cancelled"}} = Testor.Web.Actions.cancel(id) end)
+      refute Map.has_key?(Store.get(id), "warning")
+      refute File.exists?(request)
     end
 
     test "a record naming testor's own process is cancelled without killing it" do

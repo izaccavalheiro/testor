@@ -31,6 +31,7 @@ const FILES = {
   "docs/api.md": ["reference/api.md", "HTTP and SSE API", 4],
   "docs/mcp.md": ["reference/mcp.md", "MCP server", 5],
   "docs/security.md": ["reference/security.md", "Security model", 6],
+  "docs/attestation.md": ["reference/attestation.md", "Run attestations", 7],
   "VERSIONING.md": ["project/versioning.md", "Versioning and releases", 1],
   "ROADMAP.md": ["project/roadmap.md", "Roadmap", 2],
   "CHANGELOG.md": ["project/changelog.md", "Changelog", 3],

@@ -57,6 +57,22 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   `setup.ps1` from a release instead of the `main` branch.
 - An OpenSSF Scorecard workflow, and Dependabot for the image's base images.
 
+- **Signed run attestations**: when a run is finalized, testor signs its record and the
+  SHA-256 of its log, screenshots and artifacts (in-toto Statement v1 in a DSSE envelope,
+  Ed25519, `signing.key` in the secrets folder). `GET /api/v1/runs/:id/attestation`,
+  `GET /api/v1/attestation/key`; verifiable offline with OpenSSL (docs/attestation.md). Runs
+  have `attested`.
+- **Cooperative cancel**: cancelling writes `cancel/<id>` and `run.ps1` ends its own process
+  tree, so the service never kills processes of another account; testor kills the tree itself
+  only when the process is still there after 5 s (`run.ps1` from before 0.3).
+- **Tests in a separate account**: documented (docs/security.md) and checked in CI in a
+  container (`scripts/two-accounts`): the test account cannot read the secrets, change
+  `run.ps1` or replace the testor home, and its runs are followed, signed, cancelled and
+  deleted. `remote.yml` accepts absolute `WORKSPACES` and `HOME_DIR`.
+- **Who started a run**: `run.ps1` records `actor` (the account and SSH client address the
+  runner sees, and `TESTOR_ACTOR`, which `remote.yml` sets to `<user>@<workstation>` or `ACTOR`);
+  in the API and on the run page.
+
 ### Fixed
 
 - `task testor:test` clears the runner's ExUnit `tmp` folder: a junction a failed test left

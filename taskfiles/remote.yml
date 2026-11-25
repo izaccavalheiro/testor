@@ -32,7 +32,9 @@
 #
 # Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
 # ROOT (default: the git root of the directory `task` was called from), WORKSPACES
-# (test-run), HOME_DIR (<WORKSPACES>/.testor), KEEP (node_modules .lockhash target .venv).
+# (test-run), HOME_DIR (<WORKSPACES>/.testor; both relative to the runner's home folder or
+# absolute), KEEP (node_modules .lockhash target .venv),
+# ACTOR (who the runs are recorded as started by; default <user>@<workstation>).
 #
 # The workstation needs ssh, git and tar (GNU tar, bsdtar or Windows' tar.exe). Scripts reach
 # the runner base64-encoded, so no quoting depends on the runner's shell.
@@ -46,6 +48,9 @@ vars:
   _PROJECT: '{{.PROJECT | default (base ._ROOT)}}'
   _WORKSPACES: '{{.WORKSPACES | default "test-run"}}'
   _HOME_DIR: '{{.HOME_DIR | default (printf "%s/.testor" ._WORKSPACES)}}'
+  # Who starts the runs, as the runner records it (informative: the SSH account is the proof).
+  _ACTOR:
+    sh: '{{if .ACTOR}}echo "{{.ACTOR}}"{{else}}echo "${USER:-$USERNAME}@$(hostname)"{{end}}'
   _KEEP: '{{range $i, $k := splitList " " (.KEEP | default "node_modules .lockhash target .venv")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
@@ -54,8 +59,10 @@ vars:
     $PSNativeCommandUseErrorActionPreference = $true
     try { [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false) } catch { }
     if ($IsWindows) { $env:Path += ";" + [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User") }
-    $workspace = Join-Path (Join-Path $HOME "{{._WORKSPACES}}") "{{._PROJECT}}"
-    $testorRun = Join-Path (Join-Path $HOME "{{._HOME_DIR}}") "run.ps1"
+    # Relative to the home folder, or absolute (a testor home the test account cannot change).
+    $workspace = Join-Path ([IO.Path]::Combine($HOME, "{{._WORKSPACES}}")) "{{._PROJECT}}"
+    $testorRun = Join-Path ([IO.Path]::Combine($HOME, "{{._HOME_DIR}}")) "run.ps1"
+    $env:TESTOR_ACTOR = '{{._ACTOR | replace "'" "''"}}'
 
 tasks:
   sync:
