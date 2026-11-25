@@ -49,6 +49,17 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   `"tokens": {"algorithm": "HS256"}` keeps issuing them. `rotate_key` now replaces the token
   keys too. Back up `token-keys.json` with `jwt.key`.
 
+### Fixed
+
+- The agent passes a job's command to PowerShell encoded: a command holding double quotes
+  (`npm test -- --grep "login"`) reached it broken.
+
+### Security
+
+- `run.ps1` masked one of two secrets of the same length only (its list was made unique by
+  length): the other was written to the stored log, and sent by remote agents, in clear. Every
+  secret is masked now. Runs recorded before may hold such values: delete their logs if so.
+
 ## 0.7.0 - 2026-11-25
 
 ### Added
