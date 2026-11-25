@@ -16,6 +16,10 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   them out; what spans every project (maintenance, audit, metrics, sessions, agents' keys)
   answers `403`; jobs are queued and taken only for one's projects. A list that cannot be read
   fails closed. `/api/v1/auth/me` shows `projects`.
+- **A role per project**: `"projects": {"web*": "operator", "docs": "viewer"}` in
+  `auth.json` (or `task testor:projects PROJECTS="web*=operator docs=viewer"`): acting on a
+  project (runs, jobs, leases, MCP's tools) needs a scope its role grants (`403` otherwise), and
+  lists show what a role may read. `/api/v1/auth/me` shows `projectRoles`.
 - **Tokens anyone can verify**: tokens are signed with Ed25519 (`EdDSA`, `kid` the key's
   JWK thumbprint) and the public keys are published at `GET /.well-known/jwks.json`, so a
   gateway, a hub or another service verifies a testor token without a secret.

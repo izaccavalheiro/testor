@@ -86,7 +86,8 @@ They can be shared with someone who has no account, for that time.
 - Users are local to each runner; there is no single sign-on yet (OpenID Connect is on the
   [roadmap](../project/roadmap.md)).
 - Users can be limited to **projects** (`task testor:projects USER=ci PROJECTS="web lib-*"`):
-  everything else answers as if it did not exist ([details](../reference/security.md#projects)).
+  everything else answers as if it did not exist; or hold **a role per project**
+  (`PROJECTS="web*=operator docs=viewer"`) ([details](../reference/security.md#projects)).
 - Authentication covers testor's HTTP interfaces. Who can **run** commands is decided by SSH
   keys on the runner and, for [jobs](jobs-and-agents.md), by the `execute` scope together with the
   commands each agent's own configuration lists.

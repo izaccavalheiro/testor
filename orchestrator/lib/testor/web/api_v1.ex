@@ -73,6 +73,12 @@ defmodule Testor.Web.ApiV1 do
       "scopes" => principal.scopes,
       # The projects this principal may see; null for every project.
       "projects" => Testor.Access.projects(principal),
+      # A role per project, when the user has one: {"web*": "operator"}.
+      "projectRoles" =>
+        case Testor.Access.project_roles(principal) do
+          nil -> nil
+          roles -> Map.new(roles, &{&1.pattern, &1.role})
+        end,
       "expiresAt" => principal[:exp]
     })
   end
@@ -272,7 +278,7 @@ defmodule Testor.Web.ApiV1 do
   post "/jobs" do
     with {:ok, who} <- signed_in(conn),
          {:ok, params, conn} <- body_params(conn) do
-      case if(Testor.Access.allowed?(conn.assigns.principal, params["project"]),
+      case if(Testor.Access.permits?(conn.assigns.principal, params["project"], "execute"),
              do: Jobs.enqueue(params, who),
              else: {:error, :not_allowed}
            ) do
@@ -466,7 +472,7 @@ defmodule Testor.Web.ApiV1 do
   end
 
   defp wait_for_job(agent, labels, deadline, principal) do
-    case Jobs.lease(agent, labels, &Testor.Access.allowed?(principal, &1)) do
+    case Jobs.lease(agent, labels, &Testor.Access.permits?(principal, &1, "agent")) do
       {:ok, job} ->
         {:ok, job}
 
