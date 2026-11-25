@@ -106,6 +106,9 @@ defmodule Testor.Integration.HousekeepingTest do
   describe "stats" do
     test "measures on demand and publishes changes" do
       Events.subscribe("global")
+      # Refreshes other tests queued are counted first: one landing after the file below could
+      # make its +1 meet a screenshot another test deleted, and no change would be published.
+      _ = Stats.get()
       write(Path.join([Config.shots_dir(), "stats-run", "s.png"]), "PNG")
       Stats.refresh_screenshots()
       Stats.refresh_artifacts()
