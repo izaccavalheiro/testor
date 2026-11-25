@@ -8,4 +8,4 @@ the terminal stays unchanged, and nothing starts a command without an explicit o
 | ------ | ------- | ------ |
 | [Agent protocol](agent-protocol.md): runners that take work from a controller | 0.4 to 0.7 | steps 1 to 4 done ([jobs](../jobs.md)) |
 | [Storage, queue and event ports](ports.md): files, SQLite/PostgreSQL, S3, RabbitMQ/NATS | 0.9 | proposed |
-| [Identity](identity.md): OIDC, projects and teams, asymmetric tokens, workload identity | 0.8 | in progress: per-project access, asymmetric tokens and single sign-on done |
+| [Identity](identity.md): OIDC, projects and teams, asymmetric tokens, workload identity | 0.8 | in progress: per-project access, asymmetric tokens, single sign-on and the secrets broker done |
