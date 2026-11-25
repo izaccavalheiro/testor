@@ -11,11 +11,16 @@ recognizes the per-file summaries the common test runners print by default:
 
 | Runner | What it reads | Example |
 | ------ | ------------- | ------- |
-| **Vitest** | the default reporter's file lines, with or without a project label | ` ✓ tests/a.test.ts (12 tests) 34ms`, ` ❯ src/b.test.ts (3 tests \| 1 failed)` |
+| **Vitest** | the default reporter's file lines, with or without a project label, and the verbose reporter's test lines | ` ✓ tests/a.test.ts (12 tests) 34ms`, ` ❯ src/b.test.ts (3 tests \| 1 failed)`, ` ✓ tests/a.test.ts > adds 3ms` |
 | **Playwright** | the `list` reporter | `  ok 3 [chromium] › e2e/auth.spec.ts:12:3 › signs in (1.2s)` |
 | **pytest** | the default progress lines | `tests/test_api.py ..F.s   [ 40%]` |
 | **go test** | package results | `ok   example.com/pkg 0.12s`, `FAIL example.com/pkg 0.3s` |
 | **cargo test** | test binaries and their result line | `Running tests/x.rs (...)` then `test result: ok. 12 passed; ...` |
+
+**Vitest 5** prints only failed files with its default reporter when its output is not a
+terminal, as under testor: passed files would not show. Run it with
+`--reporter=verbose` (`"test": "vitest run --reporter=verbose"`), whose test lines testor reads
+per file; Vitest 3 and 4 work either way.
 
 For each spec file it keeps the runner, tests, failures, skips, duration and status; the run
 gets a summary (files and tests passed, failed and skipped) stored in its record.

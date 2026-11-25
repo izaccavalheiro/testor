@@ -7,6 +7,18 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Vitest 5**: spec results from Vitest's verbose reporter (` ✓ tests/a.test.ts > adds 3ms`),
+  counted per file. Vitest 5's default reporter prints only failed files when it is not on a
+  terminal, as under testor: run it with `--reporter=verbose` to see every file. A file's own
+  line keeps its totals, so its tests are never counted twice.
+
+### Changed
+
+- The example project uses Vitest 5 with `--reporter=verbose`; its audit is clean (the
+  advisories in tinypool and Vitest 3 are gone).
+
 ## 0.5.0 - 2026-11-25
 
 ### Added

@@ -20,6 +20,53 @@ defmodule Testor.SpecParserTest do
       assert map_size(specs) == 3
     end
 
+    test "reads Vitest's verbose reporter per file (Vitest 5 prints passed files no other way)" do
+      output = """
+       ✓ tests/screenshot.test.js > saves a screenshot for the dashboard 3ms
+       ✓ tests/math.test.js > arithmetic > adds 3ms
+       ✓ tests/math.test.js > arithmetic > multiplies 0ms
+       ↓ tests/math.test.js > arithmetic > divides
+       × tests/broken.test.js > breaks 11ms
+       ✓ |web| src/ui.test.ts > renders 1.5s
+       FAIL  tests/broken.test.js > breaks
+       ❯ tests/broken.test.js:2:34
+       Test Files  1 failed | 3 passed (4)
+      """
+
+      assert [
+               %{"file" => "tests/screenshot.test.js", "tests" => 1, "status" => "passed", "durationMs" => 3},
+               %{
+                 "file" => "tests/math.test.js",
+                 "tests" => 3,
+                 "skipped" => 1,
+                 "status" => "passed",
+                 "durationMs" => 3
+               },
+               %{
+                 "file" => "tests/broken.test.js",
+                 "tests" => 1,
+                 "failed" => 1,
+                 "status" => "failed",
+                 "runner" => "vitest"
+               },
+               %{"file" => "src/ui.test.ts", "tests" => 1, "durationMs" => 1500}
+             ] = SpecParser.parse(output)
+    end
+
+    test "a Vitest file's own line has its totals: its tests' lines are not added to them" do
+      # Vitest 5's default reporter: the failed file's line, then its tests without the file.
+      file_first =
+        " ❯ tests/b.test.ts (3 tests | 1 failed) 8ms\n × tests/b.test.ts > breaks 2ms\n   × breaks 2ms"
+
+      assert [%{"file" => "tests/b.test.ts", "tests" => 3, "failed" => 1}] = SpecParser.parse(file_first)
+
+      # The tests first, then the file's line: the totals win.
+      tests_first =
+        " ✓ tests/c.test.ts > one 1ms\n ✓ tests/c.test.ts > two 1ms\n ✓ tests/c.test.ts (5 tests) 9ms"
+
+      assert [%{"file" => "tests/c.test.ts", "tests" => 5, "durationMs" => 9}] = SpecParser.parse(tests_first)
+    end
+
     test "reads Vitest project labels, coloured or not" do
       # As Vitest prints them in a workspace with projects (Windows line endings included).
       text =

@@ -115,7 +115,7 @@ removed:
 
 | Runner     | Lines it reads                                                                 |
 | ---------- | ------------------------------------------------------------------------------ |
-| Vitest     | ` ✓ tests/a.test.ts (12 tests) 34ms`, ` ❯ src/b.test.ts (3 tests \| 1 failed)`  |
+| Vitest     | ` ✓ tests/a.test.ts (12 tests) 34ms`, ` ❯ src/b.test.ts (3 tests \| 1 failed)`; verbose: ` ✓ tests/a.test.ts > adds 3ms` (counted per file, unless the file has its own line) |
 | Playwright | `  ok 3 [chromium] › e2e/auth.spec.ts:12:3 › signs in (1.2s)` (`ok`/`x` on Windows) |
 | pytest     | `tests/test_api.py ..F.s   [ 40%]`                                              |
 | go test    | `ok   example.com/pkg 0.12s`, `FAIL example.com/pkg 0.3s`                        |
