@@ -75,7 +75,9 @@ defmodule Testor.RunTracker do
       run == nil or run["status"] != "running" ->
         stop(st)
 
-      st.ticks > 0 and rem(st.ticks, @alive_every) == 0 and not OS.alive?(run["pid"]) ->
+      # A remote run's process is on its agent's machine: its job's lease watches it instead.
+      st.ticks > 0 and rem(st.ticks, @alive_every) == 0 and not is_binary(run["remote"]) and
+          not OS.alive?(run["pid"]) ->
         # run.ps1 writes its final record before its PowerShell exits: re-read it first. Settling
         # leaves a run that has ended alone.
         Store.refresh(st.id)

@@ -1,6 +1,7 @@
 # Agent protocol
 
-Status: step 1 done (0.4: [jobs and a local agent](../jobs.md)); steps 2 to 4 proposed. Builds on: signed attestations, cooperative cancel, the actor record,
+Status: steps 1 and 2 done ([jobs](../jobs.md): a local agent in 0.4, agents on other machines
+in 0.5); steps 3 and 4 proposed. Builds on: signed attestations, cooperative cancel, the actor record,
 separate accounts (0.3).
 
 ## Problem
@@ -55,5 +56,10 @@ that need no file system.
 
 1. **Done.** Queue and leases in the controller (in-process queue, the files store), the agent
    as a `process` executor on the controller's machine, SSH unchanged. The agent's own
-   configuration holds the commands; jobs only name a project and a task. 2. Signed agent results. 3. Container and Kubernetes
-   executors, the Helm chart's agent. 4. Hub view across controllers.
+   configuration holds the commands; jobs only name a project and a task.
+2. **Done.** Agents on other machines: run.ps1 records into the agent's own home and the agent
+   sends the run (record, log chunks at offsets, files) over HTTPS; the job's lease watches
+   it. Result signing stays testor's (it signs what it received), not yet the agent's.
+3. Signed agent results: the agent's key, registered with testor, signs what it sends.
+4. Container and Kubernetes executors, the Helm chart's agent.
+5. Hub view across controllers.

@@ -315,6 +315,47 @@ try {
   $agentEnded = $slowAgent.WaitForExit(40000)
   $cancelled = Get-Job $slowJob.id
   Check "jobs: cancelling a running job ends its run and the job" ($slowRun.Count -eq 1 -and $agentEnded -and $cancelled.status -eq "cancelled") "($($cancelled | ConvertTo-Json -Compress))"
+
+  # An agent on "another machine": a home of its own, its runs sent to testor over HTTP.
+  $farHome = New-Item -ItemType Directory -Force (Join-Path $work "far-home")
+  Copy-Item (Join-Path (Join-Path $repo "runner") "run.ps1") $farHome
+  $farDir = New-Item -ItemType Directory -Force (Join-Path $work "far-app")
+  $farConfig = Join-Path $work "far-agent.json"
+  $png = "[IO.File]::WriteAllBytes((Join-Path `$env:SCREENSHOT_DIR 'far.png'), [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='))"
+  @{ server = $base; home = "$farHome"; upload = $true; labels = @("smoke")
+     projects = @{ "far-app" = @{ workspace = "$farDir"; commands = @{ hello = "' $([char]0x2713) tests/far.test.ts (1 test) 2ms'; 'hello from afar'; $png"; slow = "Start-Sleep 60" } } } } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $farConfig
+  function New-FarJob($kind) {
+    Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs" `
+      -Body (@{ project = "far-app"; kind = $kind; labels = @("smoke") } | ConvertTo-Json)
+  }
+  $far = New-FarJob "hello"
+  pwsh -NoProfile -File $agentScript -Config $farConfig -Once -Wait 5 | Out-Null
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    $farJob = Get-Job $far.id
+    # The job names its run as soon as the agent opens it; the store has it within a moment.
+    $farRun = if ($farJob.runId) { try { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)" } catch { $null } }
+    if (-not ($farRun.run.attested -and $farRun.run.status -ne "running")) { Start-Sleep -Milliseconds 500 }
+  } until (($farRun.run.attested -and $farRun.run.status -ne "running") -or (Get-Date) -gt $deadline)
+  $farLog = if ($farJob.runId) { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)/log" }
+  Check "remote: a job run on another machine is sent to testor" ($farJob.status -eq "passed" -and $farRun.run.remote -eq "smoke-agent" -and $farRun.run.status -eq "passed") "($($farRun.run | ConvertTo-Json -Compress))"
+  Check "remote: its log, specs and screenshot arrive, and it is signed" ("$farLog" -match "hello from afar" -and $farRun.run.summary.specs -eq 1 -and @($farRun.screenshots).Count -eq 1 -and $farRun.run.attested) "($($farRun | ConvertTo-Json -Depth 4 -Compress))"
+  Check "remote: the agent keeps no copy once sent" (@(Get-ChildItem -LiteralPath (Join-Path $farHome "runs") -Filter "*.json" -ErrorAction SilentlyContinue).Count -eq 0)
+
+  $farSlow = New-FarJob "slow"
+  $farAgent = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-File", $agentScript, "-Config", $farConfig, "-Once", "-Wait", "5"
+  $deadline = (Get-Date).AddSeconds(30)
+  do { Start-Sleep -Milliseconds 500; $farRunning = @((Invoke-RestMethod -Headers $basic "$base/api/v1/runs?status=running").data | Where-Object job -eq $farSlow.id) } until ($farRunning.Count -or (Get-Date) -gt $deadline)
+  $null = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs/$($farSlow.id)/cancel" -Body "{}"
+  $farEnded = $farAgent.WaitForExit(60000)
+  $farCancelled = Get-Job $farSlow.id
+  $deadline = (Get-Date).AddSeconds(10)
+  do {
+    $farCancelledRun = if ($farCancelled.runId) { try { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farCancelled.runId)").run } catch { $null } }
+    if ($farCancelledRun.status -ne "cancelled") { Start-Sleep -Milliseconds 300 }
+  } until ($farCancelledRun.status -eq "cancelled" -or (Get-Date) -gt $deadline)
+  Check "remote: cancelling reaches the other machine" ($farRunning.Count -eq 1 -and $farEnded -and $farCancelled.status -eq "cancelled" -and $farCancelledRun.status -eq "cancelled") "($($farCancelled | ConvertTo-Json -Compress); run $($farCancelledRun.status))"
   Remove-Item Env:TESTOR_AGENT_TOKEN
 } finally {
   Set-Location $repo

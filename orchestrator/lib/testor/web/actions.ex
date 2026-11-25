@@ -8,6 +8,20 @@ defmodule Testor.Web.Actions do
   process ending (a run.ps1 older than 0.3, or one that hangs), it is killed.
   """
   def cancel(id) do
+    case Store.get(id) do
+      # A remote run is cancelled by its agent: its job tells it at the next heartbeat.
+      %{"status" => "running", "remote" => agent, "job" => job} = run when is_binary(agent) ->
+        case Testor.Jobs.request_cancel(job) do
+          {:ok, _} -> {:ok, run}
+          _ -> cancel_here(id)
+        end
+
+      _ ->
+        cancel_here(id)
+    end
+  end
+
+  defp cancel_here(id) do
     with %{"status" => "running", "pid" => pid} <- Store.get(id) do
       Store.request_cancel(id)
       grace = Application.get_env(:testor, :cancel_grace_ms, 5_000)

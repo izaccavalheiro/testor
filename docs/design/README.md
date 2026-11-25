@@ -6,6 +6,6 @@ the terminal stays unchanged, and nothing starts a command without an explicit o
 
 | Design | Roadmap | Status |
 | ------ | ------- | ------ |
-| [Agent protocol](agent-protocol.md): runners that take work from a controller | 0.4, 0.5 | step 1 done ([jobs](../jobs.md)) |
+| [Agent protocol](agent-protocol.md): runners that take work from a controller | 0.4, 0.5 | steps 1 and 2 done ([jobs](../jobs.md)) |
 | [Storage, queue and event ports](ports.md): files, SQLite/PostgreSQL, S3, RabbitMQ/NATS | 0.6 | proposed |
 | [Identity](identity.md): OIDC, projects and teams, asymmetric tokens, workload identity | 0.7 | proposed |

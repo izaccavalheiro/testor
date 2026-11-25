@@ -12,6 +12,7 @@
 #                                              # user with the agent role (task testor:token)
 #     "labels": ["windows", "gpu"],            # jobs that ask for labels need all of them
 #     "home": "~/test-run/.testor",            # the testor home holding run.ps1 (this default)
+#     "upload": false,                         # true on another machine than testor's: see below
 #     "projects": {
 #       "my-app": { "workspace": "~/test-run/my-app", "git": false,
 #                   "commands": { "test": "npm test", "lint": "npm run lint" } } } }
@@ -21,6 +22,11 @@
 # scope, can only choose among the commands the owner of this machine wrote here. With
 # "git": true, a job's ref (branch, tag or commit) is checked out in the workspace first
 # (git fetch, then a detached checkout).
+#
+# On another machine than testor's, set "upload": true and give the agent a home of its own (a
+# folder with run.ps1 in it): run.ps1 records the run there, and the agent sends it to testor
+# as it happens (the record, the log in chunks, then screenshots, artifacts and the final
+# record), then deletes its copy. testor treats it like a run of its own.
 #
 # While a job runs the agent renews its lease every 10 s; testor asks it to cancel through the
 # heartbeat's answer. It runs as the account that starts it: give it the test account
@@ -46,10 +52,95 @@ if (-not (Test-Path -LiteralPath $runPs1)) { throw "no run.ps1 in $home_ (set ho
 $labels = @($settings.labels | Where-Object { $_ })
 $projects = if ($settings.projects) { $settings.projects } else { @{} }
 $skipCert = $settings.skipCertificateCheck -eq $true
+$upload = $settings.upload -eq $true
 
-function Call([string]$path, $body) {
+# --- a run on this machine, sent to testor ("upload": true) ----------------------------------
+# run.ps1 writes the run into this agent's home; what it writes is sent as it changes: the
+# record, the log in chunks at offsets, then the screenshots, artifacts and final record.
+
+function Send-Log($job, $state) {
+  $path = Join-Path (Join-Path $home_ "logs") "$($state.runId).log"
+  if (-not (Test-Path -LiteralPath $path)) { return }
+  # run.ps1 is still writing it: read without locking it.
+  $stream = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+  try {
+    while ($stream.Length -gt $state.sent) {
+      $buffer = [byte[]]::new([math]::Min(1MB, $stream.Length - $state.sent))
+      $stream.Position = $state.sent
+      $read = $stream.Read($buffer, 0, $buffer.Length)
+      if ($read -le 0) { break }
+      if ($read -lt $buffer.Length) { [Array]::Resize([ref]$buffer, $read) }
+      $answer = Invoke-WebRequest -Method Post -Uri "$base/api/v1/agent/jobs/$($job.id)/log?offset=$($state.sent)" `
+        -Headers @{ Authorization = "Bearer $token" } -ContentType "application/octet-stream" -Body $buffer `
+        -SkipHttpErrorCheck -SkipCertificateCheck:$skipCert -TimeoutSec 60
+      if ($answer.StatusCode -eq 200) { $state.sent += $read }
+      # testor has a different length (a chunk sent twice, or lost): go on from there.
+      elseif ($answer.StatusCode -eq 409 -and $answer.Headers["X-Log-Size"]) { $state.sent = [long]"$($answer.Headers['X-Log-Size'])" }
+      else { throw "the log was refused ($($answer.StatusCode))" }
+    }
+  } finally { $stream.Dispose() }
+}
+
+function Sync-Run($job, $state) {
+  $runs = Join-Path $home_ "runs"
+  if (-not $state.runId) {
+    foreach ($file in @(Get-ChildItem -LiteralPath $runs -Filter "*.json" -ErrorAction SilentlyContinue)) {
+      $record = try { Get-Content -Raw -LiteralPath $file.FullName | ConvertFrom-Json } catch { $null }
+      if ($record.job -eq $job.id) { $state.runId = $record.id; break }
+    }
+    if (-not $state.runId) { return }
+  }
+  $text = try { Get-Content -Raw -LiteralPath (Join-Path $runs "$($state.runId).json") } catch { $null }
+  if ($text -and $text -ne $state.record) {
+    $record = $text | ConvertFrom-Json -AsHashtable
+    # The final record goes last, after the log and the files. A run that ended before it was
+    # first sent (a quick one) is opened with its record as it was while it ran.
+    if ($record.status -ne "running" -and -not $state.record) {
+      $opening = $record.Clone()
+      $opening.status = "running"
+      foreach ($key in "endedAt", "durationMs", "exitCode", "error") { $opening.Remove($key) }
+      $null = Call "/agent/jobs/$($job.id)/run" $opening "Put"
+      $state.record = "(opened)"
+    }
+    if ($record.status -eq "running") { $null = Call "/agent/jobs/$($job.id)/run" $record "Put"; $state.record = $text }
+  }
+  Send-Log $job $state
+}
+
+function Complete-Run($job, $state, [bool]$cancelled) {
+  Sync-Run $job $state
+  if (-not $state.runId) { return }
+  $runFile = Join-Path (Join-Path $home_ "runs") "$($state.runId).json"
+  $record = Get-Content -Raw -LiteralPath $runFile | ConvertFrom-Json -AsHashtable
+  if ($record.status -eq "running") {
+    # Its PowerShell was ended (a cancel, or killed) before it could write its end.
+    $record.status = if ($cancelled) { "cancelled" } else { "aborted" }
+    $record.endedAt = (Get-Date).ToUniversalTime().ToString("o")
+  }
+  Send-Log $job $state
+  foreach ($area in "screenshots", "artifacts") {
+    $dir = Join-Path (Join-Path $home_ $area) $state.runId
+    if (-not (Test-Path -LiteralPath $dir)) { continue }
+    foreach ($file in @(Get-ChildItem -LiteralPath $dir -Recurse -File -Force | Where-Object { -not $_.LinkType })) {
+      $rel = ([IO.Path]::GetRelativePath($dir, $file.FullName) -replace "\\", "/") -split "/" | ForEach-Object { [Uri]::EscapeDataString($_) }
+      try {
+        $null = Invoke-RestMethod -Method Put -Uri "$base/api/v1/agent/jobs/$($job.id)/files/$area/$($rel -join '/')" `
+          -Headers @{ Authorization = "Bearer $token" } -ContentType "application/octet-stream" -InFile $file.FullName `
+          -SkipCertificateCheck:$skipCert -TimeoutSec 300
+      } catch { Log "$($job.id) $area/$($rel -join '/') not sent: $($_.Exception.Message)" }
+    }
+  }
+  $null = Call "/agent/jobs/$($job.id)/run" $record "Put"
+  # testor has it all: the copy here is not needed any more.
+  Remove-Item -LiteralPath $runFile, (Join-Path (Join-Path $home_ "logs") "$($state.runId).log") -ErrorAction SilentlyContinue
+  foreach ($area in "screenshots", "artifacts", "cancel") {
+    Remove-Item -LiteralPath (Join-Path (Join-Path $home_ $area) $state.runId) -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Call([string]$path, $body, [string]$method = "Post") {
   $request = @{
-    Method = "Post"; Uri = "$base/api/v1$path"; ContentType = "application/json"
+    Method = $method; Uri = "$base/api/v1$path"; ContentType = "application/json"
     Headers = @{ Authorization = "Bearer $token" }; Body = ($body | ConvertTo-Json -Depth 5 -Compress)
     TimeoutSec = $Wait + 15; SkipCertificateCheck = $skipCert
   }
@@ -101,14 +192,33 @@ function Invoke-Job($job) {
   Log "$($job.id) running $($job.project) $($job.kind) (pid $($process.Id))"
 
   $cancelledAt = $null
-  while (-not $process.WaitForExit(10000)) {
-    try {
-      $beat = Call "/agent/jobs/$($job.id)/heartbeat" @{}
-      if ($beat.cancel -and -not $cancelledAt) { $cancelledAt = Get-Date; Log "$($job.id) cancel asked" }
-    } catch {
-      # The lease is gone (expired, or the job ended): another agent may run it now.
-      Log "$($job.id) lost its lease ($($_.Exception.Message)); stopping the run"
-      $cancelledAt = (Get-Date).AddSeconds(-60)
+  $lost = $false
+  $state = @{ runId = $null; sent = [long]0; record = $null }
+  $beatAt = Get-Date
+  # Uploading, the run is sent every second; the lease is renewed every 10 s either way.
+  while (-not $process.WaitForExit($(if ($upload) { 1000 } else { 10000 }))) {
+    if ($upload) {
+      try { Sync-Run $job $state } catch { Log "$($job.id) could not send the run yet: $($_.Exception.Message)" }
+    }
+    if (-not $upload -or ((Get-Date) - $beatAt).TotalSeconds -ge 10) {
+      $beatAt = Get-Date
+      try {
+        $beat = Call "/agent/jobs/$($job.id)/heartbeat" @{}
+        if ($beat.cancel -and -not $cancelledAt) {
+          $cancelledAt = Get-Date
+          Log "$($job.id) cancel asked"
+          # On this machine run.ps1 ends its own tree when asked (cancel\<run id>).
+          if ($upload -and $state.runId) {
+            $null = New-Item -ItemType Directory -Force (Join-Path $home_ "cancel")
+            Set-Content -LiteralPath (Join-Path (Join-Path $home_ "cancel") $state.runId) -Value ""
+          }
+        }
+      } catch {
+        # The lease is gone (expired, or the job ended): another agent may run it now.
+        Log "$($job.id) lost its lease ($($_.Exception.Message)); stopping the run"
+        $cancelledAt = (Get-Date).AddSeconds(-60)
+        $lost = $true
+      }
     }
     # testor cancels the run itself (cancel\<run id>); if it is still there 10 s later, end it here.
     if ($cancelledAt -and ((Get-Date) - $cancelledAt).TotalSeconds -ge 10) {
@@ -117,6 +227,9 @@ function Invoke-Job($job) {
   }
   $process.WaitForExit()
   Remove-Item "$out.out", "$out.err" -ErrorAction SilentlyContinue
+  if ($upload -and -not $lost) {
+    try { Complete-Run $job $state ($null -ne $cancelledAt) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
+  }
   try {
     $done = Call "/agent/jobs/$($job.id)/finish" @{ exitCode = $process.ExitCode }
     Log "$($job.id) $($done.status) (exit $($process.ExitCode))"

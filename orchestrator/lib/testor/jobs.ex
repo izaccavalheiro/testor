@@ -64,15 +64,29 @@ defmodule Testor.Jobs do
   its next heartbeat, and its run (when there is one) is cancelled the usual way.
   """
   def cancel(id) do
-    case GenServer.call(__MODULE__, {:cancel, id}) do
+    case request_cancel(id) do
       {:ok, %{"runId" => run} = job} when is_binary(run) ->
-        _ = Testor.Web.Actions.cancel(run)
+        # A run on this machine is cancelled here; a remote one by its agent, which hears it
+        # at its next heartbeat.
+        if not is_binary(get_in(Store.get(run) || %{}, ["remote"])), do: Testor.Web.Actions.cancel(run)
         {:ok, job}
 
       other ->
         other
     end
   end
+
+  @doc "Marks job `id` cancelled (queued) or to be cancelled (held), without touching its run."
+  def request_cancel(id), do: GenServer.call(__MODULE__, {:cancel, id})
+
+  @doc "Job `id` when `agent` holds it: `{:ok, job}` or `{:error, :not_found | :not_yours | :ended}`."
+  def held(id, agent), do: GenServer.call(__MODULE__, {:held, id, agent})
+
+  @doc """
+  Binds run `run` to job `id` held by `agent` (a remote agent's first record of it): `{:ok, job}`,
+  or `{:error, :other_run}` when the job already has another run.
+  """
+  def bind_run(id, agent, run), do: GenServer.call(__MODULE__, {:bind_run, id, agent, run})
 
   # --- server -------------------------------------------------------------------------------
 
@@ -182,6 +196,17 @@ defmodule Testor.Jobs do
     end
   end
 
+  def handle_call({:held, id, agent}, _from, jobs), do: {:reply, held(jobs, id, agent), jobs}
+
+  def handle_call({:bind_run, id, agent, run}, _from, jobs) do
+    case held(jobs, id, agent) do
+      {:ok, %{"runId" => ^run} = job} -> {:reply, {:ok, job}, jobs}
+      {:ok, %{"runId" => _}} -> {:reply, {:error, :other_run}, jobs}
+      {:ok, job} -> job |> Map.put("runId", run) |> then(&{:reply, {:ok, &1}, save(jobs, &1)})
+      error -> {:reply, error, jobs}
+    end
+  end
+
   def handle_call({:cancel, id}, _from, jobs) do
     case Map.get(jobs, id) do
       nil ->
@@ -220,11 +245,13 @@ defmodule Testor.Jobs do
             else: {"expired", "its agent stopped answering"}
 
         Logger.warning("jobs: #{job["id"]} #{note} (#{job["agent"]})")
+        # Its run (a remote one has no process here to watch) ended with its agent.
+        if is_binary(job["runId"]), do: Store.settle(job["runId"], "aborted")
 
         job =
           job
           |> Map.merge(%{"status" => status, "error" => note})
-          |> Map.drop(["leaseUntil", "agent"])
+          |> Map.drop(["leaseUntil", "agent", "runId"])
           |> then(&if(status == "expired", do: Map.put(&1, "endedAt", now_iso()), else: &1))
 
         save(acc, job)
@@ -291,8 +318,11 @@ defmodule Testor.Jobs do
 
   # A quick job can end before the store has read its run's record: reads link it as soon as
   # the store has it.
+  # Oldest first, so a job tried again shows its newest run.
   defp runs_by_job do
-    for %{"job" => job, "id" => run} when is_binary(job) <- Store.all(), into: %{}, do: {job, run}
+    for %{"job" => job, "id" => run} when is_binary(job) <- Enum.reverse(Store.all()),
+        into: %{},
+        do: {job, run}
   end
 
   defp with_run(nil, _index), do: nil
