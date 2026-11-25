@@ -185,12 +185,18 @@ try {
 
 # Secrets stay out of the stored log: the values of environment variables whose names look
 # secret (TOKEN, SECRET, PASSWORD, PASSWD, API_KEY, PRIVATE_KEY, CREDENTIAL) or are listed in
-# $env:TESTOR_MASK (comma-separated names), 6 characters or longer, are written as ***. The
-# terminal still gets the output unchanged.
+# $env:TESTOR_MASK (comma-separated names; the agent lists a job's secrets there), 6 characters
+# or longer, are written as ***; so is each line of one that spans lines (a key, a certificate).
+# The terminal still gets the output unchanged. Unique by value, then longest first:
+# Sort-Object -Unique would compare lengths and leave one of two equally long secrets unmasked.
 $maskNames = @("$env:TESTOR_MASK" -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $secrets = @(Get-ChildItem env: | Where-Object {
     ($_.Name -match "TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL" -or $_.Name -in $maskNames) -and
-    "$($_.Value)".Length -ge 6 } | ForEach-Object { "$($_.Value)" } | Sort-Object Length -Descending -Unique)
+    "$($_.Value)".Length -ge 6 } | ForEach-Object {
+    $value = "$($_.Value)"
+    $value
+    if ($value -match "\n") { $value -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -ge 6 } }
+  } | Select-Object -Unique | Sort-Object Length -Descending)
 function Hide-Secrets([string]$line) {
   foreach ($secret in $secrets) { $line = $line.Replace($secret, "***") }
   $line

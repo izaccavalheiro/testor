@@ -17,7 +17,10 @@ spec:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/agents-configmap.yaml") . | sha256sum }}
     spec:
-      automountServiceAccountToken: false
+      {{- with (include "testor.agentServiceAccount" .) }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.agents.serviceAccount.automountToken }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -33,6 +36,9 @@ spec:
           env:
             - name: TESTOR_AGENT_TOKEN
               valueFrom: { secretKeyRef: { name: {{ .Values.agents.tokenSecret }}, key: token } }
+            {{- with .Values.agents.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -42,6 +48,9 @@ spec:
             - { name: config, mountPath: /etc/testor-agent, readOnly: true }
             - { name: home, mountPath: /home/agent }
             - { name: tmp, mountPath: /tmp }
+            {{- range $i, $mount := .Values.agents.secretMounts }}
+            - { name: secret-{{ $i }}, mountPath: {{ $mount.mountPath }}, readOnly: true }
+            {{- end }}
       volumes:
         - name: config
           configMap: { name: {{ include "testor.fullname" . }}-agent }
@@ -49,6 +58,10 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- range $i, $mount := .Values.agents.secretMounts }}
+        - name: secret-{{ $i }}
+          secret: { secretName: {{ $mount.secret }}, defaultMode: 0440 }
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

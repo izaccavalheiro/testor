@@ -6,5 +6,7 @@ metadata:
   labels: {{- include "testor.labels" . | nindent 4 }}
 data:
   agent.json: |
-    {{- dict "server" (include "testor.agentServer" .) "home" "/home/agent/testor" "upload" true "labels" .Values.agents.labels "projects" .Values.agents.projects | toPrettyJson | nindent 4 }}
+    {{- $config := dict "server" (include "testor.agentServer" .) "home" "/home/agent/testor" "upload" true "labels" .Values.agents.labels "projects" .Values.agents.projects }}
+    {{- with .Values.agents.vault }}{{ $_ := set $config "vault" . }}{{ end }}
+    {{- $config | toPrettyJson | nindent 4 }}
 {{- end }}

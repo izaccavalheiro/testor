@@ -127,6 +127,56 @@ is queued). See [deploy/helm/testor](../deploy/helm/testor/README.md).
 `scripts/container-e2e.sh` runs testor and an agent container on one network and a job through
 them, as CI does.
 
+## Secrets
+
+A job's command often needs a secret: a registry token, a database password, a cloud key.
+The agent hands them out: a project in `agent.json` maps the environment variables its
+commands get to **where their values are**, and the agent reads them on its machine when it
+takes a job. testor never sees them, a job cannot ask for others, and the run's log has `***`
+in their place.
+
+```json
+{ "server": "https://testor.example.com", "tokenFile": "agent.token",
+  "vault": { "address": "https://vault.example.com:8200", "kubernetesRole": "testor-agent" },
+  "projects": {
+    "my-app": { "workspace": "~/src/my-app",
+                "commands": { "test": "npm ci; npm test" },
+                "secrets": { "NPM_TOKEN": "vault:secret/data/ci/my-app#npm",
+                             "DB_PASSWORD": "file:/run/secrets/db",
+                             "SENTRY_DSN": "env:CI_SENTRY_DSN" } } } }
+```
+
+| Reference | From | How |
+| --------- | ---- | --- |
+| `env:NAME` | a variable of the agent's own environment | a Kubernetes Secret as `env`, a CI variable, a systemd `Environment=` |
+| `file:PATH` | a file, without its last newline | a mounted Secret, Docker secrets (`/run/secrets`), systemd credentials |
+| `vault:PATH#FIELD` | HashiCorp Vault or OpenBao, KV v1 or v2 | `VAULT_ADDR` or `vault.address`; a token from `VAULT_TOKEN` or `vault.tokenFile`, or a Kubernetes login (`vault.kubernetesRole`, the pod's service account token; `vault.authPath`, `vault.jwtFile`); `vault.namespace` or `VAULT_NAMESPACE` |
+| `aws:ID[#FIELD]` | AWS Secrets Manager | the `aws` CLI and its credentials (an instance profile, IAM roles for service accounts) |
+| `gcp:SECRET` | Google Secret Manager | `gcloud secrets versions access`: a name, or `projects/P/secrets/S[/versions/V]` (`latest` by default) |
+| `azure:VAULT/NAME` | Azure Key Vault | the `az` CLI and its credentials (a managed identity, Azure workload identity) |
+| `sops:FILE[#KEY]` | a file encrypted with SOPS | `sops --decrypt` and its keys (age, PGP, a cloud KMS) |
+
+`#FIELD` picks a value of a secret that holds JSON. `"secretTools": {"aws": "/opt/aws/bin/aws"}`
+gives a CLI's path when it is not on `PATH`. The CLIs use the machine's own identity, so the
+agent needs no long-lived cloud keys: give the agent's pod or machine a workload identity that
+may read those secrets only.
+
+- **Masked.** The agent lists the variables in `TESTOR_MASK`; `run.ps1` writes their values
+  (6 characters or longer, and each line of one that spans lines) as `***` in the log it keeps
+  and sends, and in the run's error. The terminal of a run started by hand is unchanged.
+- **Before the run.** A secret that cannot be read fails the job before anything runs, with
+  an error naming the secret and its source, never a value; the CLIs' stderr is not kept.
+- **For that run only.** The values are in the environment of the run's process and gone
+  from the agent's once it starts. Names must be environment variable names, and not
+  `TESTOR_*`.
+- **Kubernetes.** The Helm chart's agents take `agents.env` (`valueFrom: secretKeyRef`),
+  `agents.secretMounts` (Secrets mounted read-only), `agents.vault` and an
+  `agents.serviceAccount` whose annotations give a cloud workload identity; see the
+  [chart](../deploy/helm/testor/README.md).
+
+Masking is a safety net, not a boundary: a test that encodes a secret (base64, reversed) and
+prints it gets it past. Give jobs secrets meant for tests, scoped to what the tests need.
+
 ## A job
 
 | Field | Meaning |

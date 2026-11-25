@@ -24,6 +24,9 @@ POST /api/v1/jobs {project, kind} ──▶ testor's queue ──lease──▶ 
 - **Leases, labels, refs.** Agents renew a lease while they run a job; a job whose agent
   disappears is tried again. Jobs can ask for labels (`windows`, `gpu`) and a git ref the agent
   checks out (or clones). One job per project runs at a time.
+- **Secrets.** A project's secrets come from Vault, AWS, GCP or Azure secret managers, SOPS
+  files, the environment or files, read by the agent on its machine with its own identity;
+  testor never sees them, and the run's log shows `***`.
 - **Signed by the agent.** A run an agent sends is signed with its own key, which testor pins:
   [signed results](signed-results.md).
 

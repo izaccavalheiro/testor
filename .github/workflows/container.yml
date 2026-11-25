@@ -157,5 +157,14 @@ jobs:
           helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \
             --set agents.projects.web.repository=https://example.com/web.git \
             --set agents.projects.web.commands.test=test --set agents.autoscaling.keda=true > out/agents.yaml
+          helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \
+            --set agents.projects.web.commands.test=test --set agents.projects.web.secrets.DB=file:/s/db \
+            --set 'agents.secretMounts[0].secret=ci' --set 'agents.secretMounts[0].mountPath=/s' \
+            --set 'agents.env[0].name=NPM' --set 'agents.env[0].valueFrom.secretKeyRef.name=ci' \
+            --set 'agents.env[0].valueFrom.secretKeyRef.key=npm' --set agents.vault.address=https://vault:8200 \
+            --set agents.serviceAccount.create=true --set agents.serviceAccount.automountToken=true \
+            --set 'agents.serviceAccount.annotations.iam\.gke\.io/gcp-service-account=ci@p.iam.gserviceaccount.com' \
+            > out/agent-secrets.yaml
+          grep -q '"vault"' out/agent-secrets.yaml && grep -q 'serviceAccountName: t-testor-agent' out/agent-secrets.yaml
           docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
-            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml
+            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml

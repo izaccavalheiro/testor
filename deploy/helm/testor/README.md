@@ -45,6 +45,10 @@ helm upgrade testor deploy/helm/testor --reuse-values \
 | `agents.image` | `ghcr.io/izaccavalheiro/testor-agent` | an image built FROM it with your projects' tools |
 | `agents.tokenSecret` | | a Secret with `token`: a token of a user with the `agent` role |
 | `agents.projects` | `{}` | agent.json's projects: a `repository` to clone, the `commands` jobs may run |
+| `agents.env` | `[]` | more environment for the agents: `valueFrom.secretKeyRef` for secrets referenced as `env:` |
+| `agents.secretMounts` | `[]` | `{secret, mountPath}`: Secrets mounted read-only, for secrets referenced as `file:` |
+| `agents.vault` | `{}` | agent.json's `vault`: `address`, `kubernetesRole`, `namespace`... |
+| `agents.serviceAccount` | none | `create`, `name`, `annotations` (a cloud workload identity for `aws:`, `gcp:`, `azure:`), `automountToken` (for Vault's Kubernetes login) |
 | `agents.labels` | `[linux]` | jobs asking for labels go to agents that have them all |
 | `agents.autoscaling.keda` | `false` | a KEDA ScaledObject on `testor_jobs` (Prometheus), from `minReplicas` (0) to `maxReplicas` |
 
