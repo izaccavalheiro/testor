@@ -66,6 +66,15 @@ jobs:
           docker buildx build --builder default --load -f runner/Dockerfile -t testor-agent:ci .
           scripts/container-e2e.sh testor:ci testor-agent:ci
 
+      - name: The agent image for arm64 starts PowerShell and parses the agent (under QEMU)
+        run: |
+          docker buildx build --load --platform linux/arm64 -f runner/Dockerfile -t testor-agent:arm64 .
+          docker run --rm --platform linux/arm64 --entrypoint pwsh testor-agent:arm64 -NoProfile -Command '
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile("/opt/testor-agent/agent.ps1", [ref]$null, [ref]$errors)
+            if ($errors) { $errors; exit 1 }
+            "PowerShell $($PSVersionTable.PSVersion) on $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"'
+
       - id: meta
         if: env.PUBLISH == 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -101,7 +110,7 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      # The agent image (runner/Dockerfile): linux/amd64, as PowerShell's tarball is.
+      # The agent image (runner/Dockerfile): linux/amd64 and linux/arm64.
       - id: agent-meta
         if: env.PUBLISH == 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -118,7 +127,7 @@ jobs:
         with:
           context: .
           file: runner/Dockerfile
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.agent-meta.outputs.tags }}
           labels: ${{ steps.agent-meta.outputs.labels }}

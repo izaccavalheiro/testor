@@ -25,6 +25,7 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   gateway, a hub or another service verifies a testor token without a secret.
   `Testor.Auth.CLI.roll_token_key` adds a new key while the previous one verifies its tokens
   until they expire; `TESTOR_TOKEN_KEY` shares one key across replicas.
+- The agent image (`ghcr.io/izaccavalheiro/testor-agent`) is built for **linux/arm64** too.
 - **Scheduled jobs**: `schedules` in `config.json` queue a job when their cron expression
   (UTC, five fields or `@daily`...) matches the minute; none while the last one has not ended.
   `GET /api/v1/schedules` lists them with their next time.
