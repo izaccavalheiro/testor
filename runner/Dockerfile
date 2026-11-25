@@ -13,12 +13,13 @@
 FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0
 # PowerShell's tarball for the platform being built, checked against the SHA-256 its release
 # publishes (hashes.sha256).
-ARG TARGETARCH=amd64
+# BuildKit sets TARGETARCH (a default here would replace it); without BuildKit it is empty: amd64.
+ARG TARGETARCH
 ARG PWSH_VERSION=7.6.9
 ARG PWSH_SHA256_AMD64=1da6d6d6035d651f20e70ddee7c4c15ac6ab8b9fb40ee92240d91263f28a884b
 ARG PWSH_SHA256_ARM64=02eb9991af447c7e7fe881acde195961afd397c40b8eb1c2b3856b84ec2d85f2
 RUN case "${TARGETARCH}" in \
-      amd64) arch=x64; sum="${PWSH_SHA256_AMD64}" ;; \
+      amd64|"") arch=x64; sum="${PWSH_SHA256_AMD64}" ;; \
       arm64) arch=arm64; sum="${PWSH_SHA256_ARM64}" ;; \
       *) echo "no PowerShell for ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
