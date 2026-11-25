@@ -25,6 +25,7 @@ Two principles hold through every milestone:
 | **0.4.0** | Jobs: runs queued through the API (scope `execute`, opt-in) and taken by an agent on the runner (`runner/agent.ps1`) by lease, with labels, a git ref, one job per project at a time, retries and cancelling; the first step of the agent protocol | released |
 | **0.5.0** | Agents on other machines: an agent with `"upload": true` keeps its own home and sends each run to testor over HTTPS (record, log chunks at offsets, screenshots and artifacts); remote runs are live, parsed, signed and cancellable like local ones | released |
 | **0.6.0** | Agents in containers and Kubernetes: the agent image, the Helm chart's agents with KEDA autoscaling on queued jobs, repositories cloned on demand; spec results from Vitest 5 (its verbose reporter) | released |
+| **0.7.0** | Runs signed by their agent: ECDSA P-256 keys pinned on first lease, an in-toto attestation per remote run checked byte for byte against the files received, verifiable with OpenSSL | released |
 
 ## Next milestones
 
