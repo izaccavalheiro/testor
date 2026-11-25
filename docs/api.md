@@ -133,6 +133,32 @@ endpoint's secret; check it in constant time and refuse old timestamps. Deliveri
 2xx answer are tried again after 1, 10 and 60 seconds. Endpoints are set by whoever can write
 the secrets folder, never through the API.
 
+## Commit statuses
+
+A run of a commit shows on its pull request, next to CI's checks: when a run whose
+`source.commit` testor knows (from a clean tree: an agent's job, or `remote.yml`) starts, its
+commit gets a pending `testor/<kind>` status; when it ends, success or failure (GitHub's
+`error` for cancelled or aborted), with its counts and a link to the run. `statuses.json` in
+the secrets folder says where:
+
+```json
+{ "baseUrl": "https://testor.example.com",
+  "providers": {
+    "github": { "type": "github", "token": "github_pat_..." },
+    "gitlab": { "type": "gitlab", "api": "https://gitlab.example.com/api/v4", "tokenEnv": "GITLAB_TOKEN" } },
+  "projects": {
+    "web": { "provider": "github", "repository": "acme/web" },
+    "lib": { "provider": "gitlab", "repository": "acme/lib" } } }
+```
+
+A GitHub token needs the commit statuses permission only (`statuses: write` on a
+fine-grained token, or a GitHub App's); a GitLab one the `api` scope. `api` defaults to
+`https://api.github.com` and `https://gitlab.com/api/v4` (GitHub Enterprise:
+`https://<host>/api/v3`). `tokenEnv` reads the token from that variable instead. Without
+`baseUrl` a status has no link. A status is tried three times, and one that fails is logged.
+Make a status a required check in the branch's protection rules to block merging until the
+tests pass, and use [release gates](attestation.md#release-gates) for what ships.
+
 ## Audit trail
 
 `GET /api/v1/audit?limit=100` (scope `maintain`): `{"entries": [...], "verified": {"ok": true,

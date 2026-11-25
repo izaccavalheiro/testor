@@ -12,6 +12,9 @@ description: Prometheus metrics of runs, jobs and the machine, OpenTelemetry tra
 - **OpenTelemetry traces**: with `OTEL_EXPORTER_OTLP_ENDPOINT`, a span for each job and its
   run goes to your collector (Tempo, Jaeger, Honeycomb, Datadog). Queue a job with CI's
   `traceparent` and the pipeline, the job and the run are one trace.
+- **Commit statuses**: runs of a commit show on its pull request in GitHub or GitLab
+  (`testor/<kind>`: pending, then success or failure, linked to the run), from
+  `statuses.json`; make them required checks to block merging until tests pass.
 - **Webhooks**: when a run ends, testor POSTs it to the endpoints in `webhooks.json` (in the
   secrets folder, never set through the API), signed with HMAC-SHA256 over the timestamp and
   body, and tried again on failure. Use them to post to chat, gate a pipeline or start a deploy.

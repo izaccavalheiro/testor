@@ -13,6 +13,9 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   optional agent signature and age); `GET /api/v1/gates/<name>?commit=<sha>` answers whether
   the commit passes from each kind's latest run of it from a clean tree, checking testor's
   attestation again with its key, for a pipeline or an OPA policy. `GET /api/v1/gates`.
+- **Commit statuses**: runs of a commit show on its pull request in GitHub (including
+  Enterprise) or GitLab: `testor/<kind>` pending while it runs, then success or failure with its
+  counts and a link, from `statuses.json` in the secrets folder.
 - Attestations sign the run's `source` (commit, branch, dirty) and `job` too.
 - The agent records the commit it checked out (`TESTOR_COMMIT`, `TESTOR_BRANCH`,
   `TESTOR_DIRTY`) for a git workspace's runs.

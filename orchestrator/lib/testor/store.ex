@@ -272,6 +272,7 @@ defmodule Testor.Store do
   defp finished(id) do
     Testor.Attestation.attest_later(id)
     Testor.Webhooks.notify("run.finished", id)
+    Testor.CommitStatus.notify(id)
     if run = get(id), do: Testor.Tracing.run_ended(run)
   end
 
@@ -313,6 +314,8 @@ defmodule Testor.Store do
 
     Logger.info("store: #{id} started (#{run["project"]} #{run["kind"]})")
     Events.broadcast("global", "run", run)
+    # Its commit's pull request shows it running (Testor.CommitStatus).
+    Testor.CommitStatus.notify(id)
   end
 
   defp on_finish(run) do
