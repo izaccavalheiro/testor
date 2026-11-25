@@ -289,7 +289,9 @@ try {
 
   $hello = New-Job "hello"
   pwsh -NoProfile -File $agentScript -Config $agentConfig -Once -Wait 5 | Out-Null
-  $done = Get-Job $hello.id
+  # The store reads the run's record within a moment of its end; the job links it then.
+  $deadline = (Get-Date).AddSeconds(10)
+  do { $done = Get-Job $hello.id; if (-not $done.runId) { Start-Sleep -Milliseconds 300 } } until ($done.runId -or (Get-Date) -gt $deadline)
   $run = if ($done.runId) { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)").run }
   $runLog = if ($done.runId) { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)/log" }
   Check "jobs: an agent runs a queued job" ($done.status -eq "passed" -and $done.exitCode -eq 0) "($($done | ConvertTo-Json -Compress))"

@@ -136,6 +136,21 @@ defmodule Testor.JobsTest do
       assert Jobs.finish(job["id"], "a1", %{}) == {:error, :ended}
     end
 
+    test "a job that ended before the store read its run finds it when read" do
+      job = job!("quick")
+      {:ok, _} = Jobs.lease("a1", [])
+      {:ok, done} = Jobs.finish(job["id"], "a1", %{"exitCode" => 0})
+      refute Map.has_key?(done, "runId")
+      assert [%{"id" => _} = listed] = Jobs.list("passed")
+      refute Map.has_key?(listed, "runId")
+
+      run = record(%{"project" => "quick", "job" => job["id"], "status" => "passed"})
+      on_exit(fn -> Store.delete(run) end)
+      assert %{"runId" => ^run} = Jobs.get(job["id"])
+      assert [%{"runId" => ^run}] = Jobs.list("passed")
+      assert Jobs.get("nope") == nil
+    end
+
     test "results: passed, failed, an error kept short" do
       a = job!("results-a")
       b = job!("results-b")

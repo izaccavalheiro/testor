@@ -93,7 +93,7 @@ defmodule Testor.Jobs do
   end
 
   @impl true
-  def handle_call({:get, id}, _from, jobs), do: {:reply, Map.get(jobs, id), jobs}
+  def handle_call({:get, id}, _from, jobs), do: {:reply, jobs |> Map.get(id) |> with_run(runs_by_job()), jobs}
 
   def handle_call({:list, status}, _from, jobs) do
     list =
@@ -102,7 +102,8 @@ defmodule Testor.Jobs do
       |> Enum.filter(&(status == nil or &1["status"] == status))
       |> Enum.sort_by(&order/1, :desc)
 
-    {:reply, list, jobs}
+    index = runs_by_job()
+    {:reply, Enum.map(list, &with_run(&1, index)), jobs}
   end
 
   def handle_call({:enqueue, params, who}, _from, jobs) do
@@ -285,6 +286,22 @@ defmodule Testor.Jobs do
       %{"status" => s, "agent" => ^agent} = job when s in @active -> {:ok, job}
       %{"status" => s} when s in @active -> {:error, :not_yours}
       _ -> {:error, :ended}
+    end
+  end
+
+  # A quick job can end before the store has read its run's record: reads link it as soon as
+  # the store has it.
+  defp runs_by_job do
+    for %{"job" => job, "id" => run} when is_binary(job) <- Store.all(), into: %{}, do: {job, run}
+  end
+
+  defp with_run(nil, _index), do: nil
+  defp with_run(%{"runId" => _} = job, _index), do: job
+
+  defp with_run(job, index) do
+    case Map.get(index, job["id"]) do
+      nil -> job
+      run -> Map.put(job, "runId", run)
     end
   end
 
