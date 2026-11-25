@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-25
+
 ### Breaking
 
 - **While authentication is off, only private addresses are answered**: loopback, RFC 1918,
