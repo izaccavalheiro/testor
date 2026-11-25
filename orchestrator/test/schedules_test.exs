@@ -46,7 +46,17 @@ defmodule Testor.SchedulesTest do
     end
 
     test "what is not an expression" do
-      for bad <- ["* * * *", "60 * * * *", "* 24 * * *", "5-1 * * * *", "*/0 * * * *", "a * * * *", "1-2-3 * * * *", "*/2/3 * * * *", "1/x * * * *"] do
+      for bad <- [
+            "* * * *",
+            "60 * * * *",
+            "* 24 * * *",
+            "5-1 * * * *",
+            "*/0 * * * *",
+            "a * * * *",
+            "1-2-3 * * * *",
+            "*/2/3 * * * *",
+            "1/x * * * *"
+          ] do
         assert {:error, _} = Cron.parse(bad), bad
       end
 
@@ -73,12 +83,27 @@ defmodule Testor.SchedulesTest do
       )
     end
 
-    @nightly %{"name" => "nightly", "cron" => "0 2 * * *", "project" => "web", "kind" => "test", "labels" => ["linux"], "ref" => "main"}
+    @nightly %{
+      "name" => "nightly",
+      "cron" => "0 2 * * *",
+      "project" => "web",
+      "kind" => "test",
+      "labels" => ["linux"],
+      "ref" => "main"
+    }
 
     test "queue a job at their minute, none while the last is not over" do
       config([@nightly, %{"name" => "hourly", "cron" => "@hourly", "project" => "api", "kind" => "lint"}])
 
-      assert [%{"project" => "web", "requestedBy" => "schedule:nightly", "labels" => ["linux"], "ref" => "main"}, %{"project" => "api"}] =
+      assert [
+               %{
+                 "project" => "web",
+                 "requestedBy" => "schedule:nightly",
+                 "labels" => ["linux"],
+                 "ref" => "main"
+               },
+               %{"project" => "api"}
+             ] =
                Schedules.fire(at("2026-11-26T02:00:00Z"))
 
       assert Schedules.fire(at("2026-11-26T02:01:00Z")) == []
@@ -142,7 +167,10 @@ defmodule Testor.SchedulesTest do
 
       config([@nightly, Map.merge(@nightly, %{"name" => "other", "project" => "secret"})])
       hash = Password.hash(@password, 1000)
-      Application.put_env(:testor, :auth, %{"users" => %{"web" => %{"password" => hash, "projects" => ["web"]}}})
+
+      Application.put_env(:testor, :auth, %{
+        "users" => %{"web" => %{"password" => hash, "projects" => ["web"]}}
+      })
 
       conn =
         conn(:get, "/api/v1/schedules")
