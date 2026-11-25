@@ -32,7 +32,7 @@ The statement:
 
 | Field | Meaning |
 | ----- | ------- |
-| `run` | the run record when it ended: `id`, `project`, `kind`, `command`, `status`, `exitCode`, `error`, `warning`, `startedAt`, `endedAt`, `durationMs`, `summary` (spec files and tests passed, failed, skipped), `actor`, `source` (`commit`, `branch`, `dirty`: what was tested; from 0.9), `job`, `screenshots`, `artifacts` |
+| `run` | the run record when it ended: `id`, `project`, `kind`, `command`, `status`, `exitCode`, `error`, `warning`, `startedAt`, `endedAt`, `durationMs`, `summary` (spec files and tests passed, failed, skipped), `actor`, `source` (`commit`, `branch`, `dirty`, `committedAt`: what was tested; from 0.9), `job`, `screenshots`, `artifacts` |
 | `runner` | `host` (the machine's name), `os` (`windows`, `linux`, `macos`), `testor` (its version) |
 | `signedAt` | when testor signed it (UTC) |
 

@@ -166,6 +166,17 @@ defmodule Testor.Web.OpenAPI do
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" => op("approvals", "Deny: nothing is done", %{"type" => "object"})
       },
+      "/projects/{project}/dora" => %{
+        "parameters" => [
+          %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},
+          %{"name" => "kind", "in" => "query", "schema" => %{"type" => "string", "default" => "deploy"}},
+          %{"name" => "days", "in" => "query", "schema" => %{"type" => "integer", "default" => 30}}
+        ],
+        "get" =>
+          op("runs", "DORA metrics of the runs of the task that delivers the project, over days", %{
+            "type" => "object"
+          })
+      },
       "/gates" => %{
         "get" => op("gates", "config.json's release gates, or why one is left out", %{"type" => "object"})
       },
