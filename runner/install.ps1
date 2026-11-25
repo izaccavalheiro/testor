@@ -23,6 +23,16 @@
 #   -Format      formats the sources in place (mix format), for `task testor:format`
 #   -Uninstall   removes the service (and on Windows the firewall rule); data is kept
 #
+#   -FromRelease <version|latest>
+#                installs a prebuilt release from GitHub instead of building one: no Erlang
+#                or Elixir needed. The archive for this OS and architecture and run.ps1 are
+#                checked against the release's SHA256SUMS, and with the GitHub CLI (gh) on the
+#                PATH against the release's provenance attestation (-RequireAttestation fails
+#                without gh). Releases from 0.3.0 carry run.ps1. The testor home is
+#                -TestorHome (default ~/test-run/.testor); -Repository names another fork.
+#
+#                  pwsh install.ps1 -FromRelease latest -Bind 100.101.102.103
+#
 # The service's environment (saved in <home>/service.json, so later deploys keep it; pass ""
 # to remove one): -Bind (TESTOR_BIND), -AllowedHosts (TESTOR_ALLOWED_HOSTS), -TrustedProxies
 # (TESTOR_TRUSTED_PROXIES), -Anonymous (TESTOR_ANONYMOUS), -SecretsDir (TESTOR_SECRETS_DIR).
@@ -31,6 +41,10 @@ param(
   [switch]$Test,
   [switch]$Format,
   [switch]$Smoke,
+  [string]$FromRelease = "",
+  [string]$Repository = "izaccavalheiro/testor",
+  [string]$TestorHome = "",
+  [switch]$RequireAttestation,
   [string[]]$TestArgs = @(),
   [int]$Port = 6767,
   # The service's environment, kept across redeploys: TESTOR_BIND (an address, "" for every
@@ -45,8 +59,16 @@ param(
 $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $true
 
-$src = Split-Path $PSScriptRoot          # <home>/src
-$testorHome = Split-Path $src             # <home>
+if ($FromRelease) {
+  if ($Test -or $Format -or $Smoke) { throw "-FromRelease installs a release; -Test, -Format and -Smoke need the sources" }
+  $src = $null
+  $testorHome = if ($TestorHome) { $TestorHome } else { Join-Path (Join-Path $HOME "test-run") ".testor" }
+  $null = New-Item -ItemType Directory -Force -Path $testorHome
+  $testorHome = (Resolve-Path $testorHome).Path
+} else {
+  $src = Split-Path $PSScriptRoot          # <home>/src
+  $testorHome = Split-Path $src             # <home>
+}
 $workspaces = Split-Path $testorHome      # the folder of the project snapshots
 $app = Join-Path $testorHome "app"
 $name = "Testor"
@@ -107,13 +129,63 @@ if ($Uninstall) {
   return
 }
 
-if (-not (Get-Command mix -ErrorAction SilentlyContinue)) {
-  throw "Elixir is not installed: run runner/setup.ps1"
+# Downloads release <version> for this machine into a new temporary folder, checks it, and
+# returns the folder: the release in testor/, and run.ps1.
+function Get-Release([string]$version) {
+  $os = if ($IsWindows) { "windows" } elseif ($IsMacOS) { "macos" } else { "linux" }
+  $arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
+    "X64" { "x64" } "Arm64" { "arm64" } default { throw "no release is built for $_" }
+  }
+  if ($version -eq "latest") {
+    $version = (Invoke-RestMethod "https://api.github.com/repos/$Repository/releases/latest").tag_name
+  }
+  $version = $version.TrimStart("v")
+  $archive = "testor-$version-$os-$arch.tar.gz"
+  $dir = Join-Path ([IO.Path]::GetTempPath()) "testor-release-$([guid]::NewGuid().ToString('N'))"
+  $null = New-Item -ItemType Directory -Path $dir
+  # Nothing of a release that fails a check is left behind.
+  # Its messages go to the console: the function's only output is the folder.
+  try { Get-ReleaseFiles $dir $version $archive | ForEach-Object { Write-Host $_ } } catch { Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue; throw }
+  $dir
 }
 
-Set-Location (Join-Path $src "orchestrator")
-mix local.hex --force --if-missing | Out-Null
-mix local.rebar --force --if-missing | Out-Null
+function Get-ReleaseFiles([string]$dir, [string]$version, [string]$archive) {
+  $base = "https://github.com/$Repository/releases/download/v$version"
+  # The progress bar slows downloads down and floods SSH sessions.
+  $ProgressPreference = "SilentlyContinue"
+  "== downloading $archive (testor $version)"
+  foreach ($file in $archive, "run.ps1", "SHA256SUMS") {
+    try { Invoke-WebRequest "$base/$file" -OutFile (Join-Path $dir $file) }
+    catch { throw "cannot download $base/${file}: $($_.Exception.Message) (releases before 0.3.0 have no run.ps1; $os-$arch may not be built)" }
+  }
+  $sums = @{}
+  foreach ($line in Get-Content (Join-Path $dir "SHA256SUMS")) {
+    if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') { $sums[$Matches[2].Trim()] = $Matches[1].ToLower() }
+  }
+  foreach ($file in $archive, "run.ps1") {
+    $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $dir $file)).Hash.ToLower()
+    if ($sums[$file] -ne $actual) { throw "$file does not match the release's SHA256SUMS: refusing to install it" }
+  }
+  "== checksums match"
+  if (Get-Command gh -ErrorAction SilentlyContinue) {
+    foreach ($file in $archive, "run.ps1") { gh attestation verify (Join-Path $dir $file) --repo $Repository | Out-Null }
+    "== provenance verified: built by $Repository's release workflow"
+  } elseif ($RequireAttestation) {
+    throw "-RequireAttestation needs the GitHub CLI (gh) to verify the release's provenance"
+  } else {
+    Write-Warning "gh is not installed: the release was checked against its checksums, not its provenance attestation"
+  }
+  tar -xzf (Join-Path $dir $archive) -C $dir
+}
+
+if (-not $FromRelease) {
+  if (-not (Get-Command mix -ErrorAction SilentlyContinue)) {
+    throw "Elixir is not installed: run runner/setup.ps1, or install a prebuilt release with -FromRelease latest"
+  }
+  Set-Location (Join-Path $src "orchestrator")
+  mix local.hex --force --if-missing | Out-Null
+  mix local.rebar --force --if-missing | Out-Null
+}
 
 if ($Format) {
   $env:MIX_ENV = "test"
@@ -147,7 +219,9 @@ if ($Smoke) {
   return
 }
 
-Copy-Item (Join-Path $PSScriptRoot "run.ps1") (Join-Path $testorHome "run.ps1") -Force
+$release = if ($FromRelease) { Get-Release $FromRelease } else { $null }
+$wrapper = if ($release) { Join-Path $release "run.ps1" } else { Join-Path $PSScriptRoot "run.ps1" }
+Copy-Item $wrapper (Join-Path $testorHome "run.ps1") -Force
 
 # The service's environment: what this call names, else what the last install saved.
 $serviceFile = Join-Path $testorHome "service.json"
@@ -171,9 +245,14 @@ $serviceEnv | ConvertTo-Json | Set-Content -Path $serviceFile -Encoding utf8NoBO
 
 $staging = Join-Path $testorHome "app.new"
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
-$env:MIX_ENV = "prod"
-mix deps.get --only prod | Out-Null
-mix release --overwrite --quiet --path $staging
+if ($release) {
+  Move-Item (Join-Path $release "testor") $staging
+  Remove-Item -Recurse -Force $release
+} else {
+  $env:MIX_ENV = "prod"
+  mix deps.get --only prod | Out-Null
+  mix release --overwrite --quiet --path $staging
+}
 
 Stop-Testor
 if (Test-Path $app) { Remove-Item -Recurse -Force $app }

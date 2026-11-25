@@ -87,7 +87,10 @@ PowerShell).
    runs in the built-in Windows PowerShell and installs it), then:
 
    ```sh
-   curl -fsSLO https://raw.githubusercontent.com/izaccavalheiro/testor/main/runner/setup.ps1
+   # A released setup.ps1 (from 0.3.0), checked against the release's checksums:
+   curl -fsSLO https://github.com/izaccavalheiro/testor/releases/latest/download/setup.ps1
+   curl -fsSLO https://github.com/izaccavalheiro/testor/releases/latest/download/SHA256SUMS
+   sha256sum --ignore-missing -c SHA256SUMS   # or: gh attestation verify setup.ps1 --repo izaccavalheiro/testor
    pwsh setup.ps1 -Check        # what is missing; on Windows: powershell -ExecutionPolicy Bypass -File setup.ps1 -Check
    pwsh setup.ps1               # install it (add -Tailscale to install Tailscale too)
    ```

@@ -40,7 +40,9 @@ config :testor,
   trusted_proxies: System.get_env("TESTOR_TRUSTED_PROXIES"),
   anonymous: anonymous
 
-if config_env() == :prod do
+# TESTOR_LOG: "file" (default for a release: <home>/testor.log, as a service nobody reads stdout
+# of) or "stdout" (containers, whose runtime collects it).
+if config_env() == :prod and System.get_env("TESTOR_LOG", "file") == "file" do
   # Run by a scheduled task, nobody reads stdout: log to a file next to the data.
   config :logger, :default_handler,
     config: [

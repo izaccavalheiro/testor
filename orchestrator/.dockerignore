@@ -1,0 +1,7 @@
+_build
+deps
+cover
+tmp
+test
+Dockerfile
+.dockerignore

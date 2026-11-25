@@ -24,7 +24,9 @@ Open **no** inbound port except SSH (or not even SSH: Tailscale SSH works too).
 
 ```sh
 # on the VM
-curl -fsSLO https://raw.githubusercontent.com/izaccavalheiro/testor/main/runner/setup.ps1
+curl -fsSLO https://github.com/izaccavalheiro/testor/releases/latest/download/setup.ps1
+curl -fsSLO https://github.com/izaccavalheiro/testor/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
 pwsh setup.ps1 -Tailscale && sudo tailscale up
 ```
 
