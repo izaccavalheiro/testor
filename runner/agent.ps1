@@ -56,6 +56,42 @@ $projects = if ($settings.projects) { $settings.projects } else { @{} }
 $skipCert = $settings.skipCertificateCheck -eq $true
 $upload = $settings.upload -eq $true
 
+# The agent's own key (ECDSA P-256), made on its first start: testor pins its public half to
+# this agent at the first lease, and checks the attestation of each run sent with it.
+$keyFile = Join-Path $home_ "agent.key"
+$ecdsa = [Security.Cryptography.ECDsa]::Create([Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+if (Test-Path -LiteralPath $keyFile) {
+  $ecdsa.ImportFromPem((Get-Content -Raw -LiteralPath $keyFile))
+} else {
+  [IO.File]::WriteAllText($keyFile, $ecdsa.ExportPkcs8PrivateKeyPem())
+  if (-not $IsWindows) { [IO.File]::SetUnixFileMode($keyFile, [IO.UnixFileMode]"UserRead, UserWrite") }
+}
+$publicKey = $ecdsa.ExportSubjectPublicKeyInfoPem()
+$keyId = ([Security.Cryptography.SHA256]::HashData($ecdsa.ExportSubjectPublicKeyInfo()) | ForEach-Object { $_.ToString("x2") }) -join ""
+
+# The in-toto statement of a run sent to testor, in a DSSE envelope signed with the agent's
+# key: the log and the files sent, each with its SHA-256, and the run's record.
+function New-Attestation($job, $state, $record, $files) {
+  $logFile = Join-Path (Join-Path $home_ "logs") "$($state.runId).log"
+  $subjects = @()
+  if (Test-Path -LiteralPath $logFile) { $subjects += [ordered]@{ name = "log"; digest = @{ sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $logFile).Hash.ToLower() } } }
+  foreach ($file in $files) { $subjects += [ordered]@{ name = $file.name; digest = @{ sha256 = $file.sha256 } } }
+  $run = [ordered]@{ id = $state.runId; job = $job.id }
+  foreach ($key in "project", "kind", "command", "status", "exitCode", "startedAt", "endedAt", "durationMs") { $run[$key] = $record[$key] }
+  $statement = [ordered]@{
+    _type = "https://in-toto.io/Statement/v1"
+    subject = $subjects
+    predicateType = "https://github.com/izaccavalheiro/testor/blob/main/docs/attestation.md#agent-run-v1"
+    predicate = [ordered]@{ run = $run; host = [Environment]::MachineName.ToLower(); signedAt = (Get-Date).ToUniversalTime().ToString("o") }
+  }
+  $type = "application/vnd.in-toto+json"
+  $payload = [Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $statement -Depth 8 -Compress))
+  # DSSE's pre-authentication encoding of the payload, as testor checks it.
+  $pae = [byte[]]([Text.Encoding]::UTF8.GetBytes("DSSEv1 $($type.Length) $type $($payload.Length) ") + $payload)
+  $signature = $ecdsa.SignData($pae, [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.DSASignatureFormat]::Rfc3279DerSequence)
+  @{ payloadType = $type; payload = [Convert]::ToBase64String($payload); signatures = @(@{ keyid = $keyId; sig = [Convert]::ToBase64String($signature) }) }
+}
+
 # --- a run on this machine, sent to testor ("upload": true) ----------------------------------
 # run.ps1 writes the run into this agent's home; what it writes is sent as it changes: the
 # record, the log in chunks at offsets, then the screenshots, artifacts and final record.
@@ -120,6 +156,7 @@ function Complete-Run($job, $state, [bool]$cancelled) {
     $record.endedAt = (Get-Date).ToUniversalTime().ToString("o")
   }
   Send-Log $job $state
+  $sent = @()
   foreach ($area in "screenshots", "artifacts") {
     $dir = Join-Path (Join-Path $home_ $area) $state.runId
     if (-not (Test-Path -LiteralPath $dir)) { continue }
@@ -129,9 +166,14 @@ function Complete-Run($job, $state, [bool]$cancelled) {
         $null = Invoke-RestMethod -Method Put -Uri "$base/api/v1/agent/jobs/$($job.id)/files/$area/$($rel -join '/')" `
           -Headers @{ Authorization = "Bearer $token" } -ContentType "application/octet-stream" -InFile $file.FullName `
           -SkipCertificateCheck:$skipCert -TimeoutSec 300
+        $plain = ([IO.Path]::GetRelativePath($dir, $file.FullName) -replace "\\", "/")
+        $sent += @{ name = "$area/$plain"; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $file.FullName).Hash.ToLower() }
       } catch { Log "$($job.id) $area/$($rel -join '/') not sent: $($_.Exception.Message)" }
     }
   }
+  # Signed by this agent, before the final record: testor checks it against what it received.
+  try { $null = Call "/agent/jobs/$($job.id)/attestation" (New-Attestation $job $state $record $sent) "Put" }
+  catch { Log "$($job.id) attestation refused: $($_.Exception.Message)" }
   $null = Call "/agent/jobs/$($job.id)/run" $record "Put"
   # testor has it all: the copy here is not needed any more.
   Remove-Item -LiteralPath $runFile, (Join-Path (Join-Path $home_ "logs") "$($state.runId).log") -ErrorAction SilentlyContinue
@@ -254,7 +296,7 @@ function Invoke-Job($job) {
 Log "taking jobs from $base (labels: $($labels -join ', '); projects: $(@($projects.Keys) -join ', '))"
 do {
   try {
-    $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait }
+    $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait; key = $publicKey }
     if ($job) { Invoke-Job $job }
   } catch {
     Log "testor did not answer: $($_.Exception.Message)"

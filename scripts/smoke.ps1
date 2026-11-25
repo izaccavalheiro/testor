@@ -316,7 +316,13 @@ try {
   $cancelled = Get-Job $slowJob.id
   Check "jobs: cancelling a running job ends its run and the job" ($slowRun.Count -eq 1 -and $agentEnded -and $cancelled.status -eq "cancelled") "($($cancelled | ConvertTo-Json -Compress))"
 
-  # An agent on "another machine": a home of its own, its runs sent to testor over HTTP.
+  # An agent on "another machine": a home of its own, its runs sent to testor over HTTP. An
+  # agent user of its own too: testor pins each agent user's signing key.
+  $env:TESTOR_PASSWORD = "smoke-test-password"
+  & $bin eval "Testor.Auth.CLI.user ~s[far-agent], ~s[agent]" | Out-Null
+  Remove-Item Env:TESTOR_PASSWORD
+  Start-Sleep -Milliseconds 1500
+  $env:TESTOR_AGENT_TOKEN = (& $bin eval "Testor.Auth.CLI.token ~s[far-agent], 1" | Select-Object -Last 1).Trim()
   $farHome = New-Item -ItemType Directory -Force (Join-Path $work "far-home")
   Copy-Item (Join-Path (Join-Path $repo "runner") "run.ps1") $farHome
   $farDir = New-Item -ItemType Directory -Force (Join-Path $work "far-app")
@@ -336,10 +342,14 @@ try {
     $farJob = Get-Job $far.id
     # The job names its run as soon as the agent opens it; the store has it within a moment.
     $farRun = if ($farJob.runId) { try { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)" } catch { $null } }
-    if (-not ($farRun.run.attested -and $farRun.run.status -ne "running")) { Start-Sleep -Milliseconds 500 }
-  } until (($farRun.run.attested -and $farRun.run.status -ne "running") -or (Get-Date) -gt $deadline)
+    $settled = $farRun.run.attested -and $farRun.run.agentAttested -and $farRun.run.status -ne "running"
+    if (-not $settled) { Start-Sleep -Milliseconds 500 }
+  } until ($settled -or (Get-Date) -gt $deadline)
   $farLog = if ($farJob.runId) { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)/log" }
-  Check "remote: a job run on another machine is sent to testor" ($farJob.status -eq "passed" -and $farRun.run.remote -eq "smoke-agent" -and $farRun.run.status -eq "passed") "($($farRun.run | ConvertTo-Json -Compress))"
+  Check "remote: a job run on another machine is sent to testor" ($farJob.status -eq "passed" -and $farRun.run.remote -eq "far-agent" -and $farRun.run.status -eq "passed") "($($farRun.run | ConvertTo-Json -Compress))"
+  $agentEnvelope = Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($farJob.runId)/attestation?by=agent"
+  $agents = @((Invoke-RestMethod -Headers $basic "$base/api/v1/agents").data)
+  Check "remote: the agent signed its run, and testor checked it against what it received" ($farRun.run.agentAttested -and $agentEnvelope.payloadType -eq "application/vnd.in-toto+json" -and @($agents.agent) -contains "far-agent") "($($farRun.run.agentAttested); $(@($agents.agent) -join ','))"
   Check "remote: its log, specs and screenshot arrive, and it is signed" ("$farLog" -match "hello from afar" -and $farRun.run.summary.specs -eq 1 -and @($farRun.screenshots).Count -eq 1 -and $farRun.run.attested) "($($farRun | ConvertTo-Json -Depth 4 -Compress))"
   Check "remote: the agent keeps no copy once sent" (@(Get-ChildItem -LiteralPath (Join-Path $farHome "runs") -Filter "*.json" -ErrorAction SilentlyContinue).Count -eq 0)
 

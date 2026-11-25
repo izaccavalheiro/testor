@@ -7,6 +7,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Runs signed by their agent** (the agent protocol's third step): an agent makes an ECDSA
+  P-256 key on its first start and presents it with each lease; testor pins the first key of
+  each agent user and refuses another (`Testor.Auth.CLI.forget_agent_key` resets it). Each run
+  an agent sends carries its own in-toto attestation (DSSE), which testor keeps only when its
+  signature holds and its digests match the files received exactly. `agentAttested` on runs,
+  `GET /api/v1/runs/:id/attestation?by=agent`, `GET /api/v1/agents`; verifiable with OpenSSL.
+  Give each agent a user of its own.
+
 ## 0.6.0 - 2026-11-25
 
 ### Added

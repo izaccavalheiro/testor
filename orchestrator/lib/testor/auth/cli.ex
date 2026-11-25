@@ -61,6 +61,13 @@ defmodule Testor.Auth.CLI do
     IO.puts("#{name} removed")
   end
 
+  @doc "Forgets the signing key pinned to agent `name`: its next lease pins the key it presents."
+  def forget_agent_key(name) do
+    if Testor.AgentKeys.forget(name),
+      do: IO.puts("the key of #{name} is forgotten: its next lease pins a new one"),
+      else: IO.puts("#{name} has no pinned key")
+  end
+
   @doc "Revokes every token `name` holds now."
   def revoke(name) do
     now = System.system_time(:second)

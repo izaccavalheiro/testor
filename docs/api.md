@@ -67,6 +67,9 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `PUT /api/v1/agent/jobs/:id/run` | agent | a remote agent's run record (run.ps1's): binds the run to the job |
 | `POST /api/v1/agent/jobs/:id/log?offset=` | agent | append a chunk (1 MB at most) at the log's size; `409` with `X-Log-Size` otherwise |
 | `PUT /api/v1/agent/jobs/:id/files/<screenshots or artifacts>/<path>` | agent | a screenshot or artifact of the run |
+| `PUT /api/v1/agent/jobs/:id/attestation` | agent | the agent's signed attestation of the run (ECDSA P-256); checked against the files received |
+| `GET /api/v1/agents` | read | agents and their pinned signing keys (`publicKey`, `keyid`, `pinnedAt`) |
+| `GET /api/v1/runs/:id/attestation?by=agent` | read | the attestation the run's agent signed |
 
 See [jobs.md](jobs.md).
 

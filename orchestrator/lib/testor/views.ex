@@ -63,7 +63,11 @@ defmodule Testor.Views do
         shots = Files.screenshots(id, specs)
 
         %{
-          "run" => run |> Store.with_live() |> Map.put("attested", Testor.Attestation.exists?(id)),
+          "run" =>
+            run
+            |> Store.with_live()
+            |> Map.put("attested", Testor.Attestation.exists?(id))
+            |> Map.put("agentAttested", File.regular?(Testor.Remote.agent_file(id))),
           "specs" => Store.with_shot_counts(specs, shots),
           "screenshots" => shots,
           "artifacts" => Files.artifacts(id),
