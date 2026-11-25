@@ -309,6 +309,7 @@ defmodule Testor.OIDCTest do
             {%{"exp" => now - 120}, "expired"},
             {%{"iat" => now + 600}, "is not valid"},
             {%{"nonce" => "replayed"}, "nonce does not match"},
+            {%{"nonce" => nil}, "nonce does not match"},
             {%{"groups" => ["nobody"]}, "no group that has a role"},
             {%{"email_verified" => false}, "not verified"},
             {%{"email" => "not a name"}, "no usable email"}
