@@ -146,7 +146,7 @@ defmodule Testor.Auth.JobTokens do
         raise "#{path} holds a key that is not an RSA private key"
     end
   rescue
-    error in [MatchError, ArgumentError] ->
+    _error in [MatchError, ArgumentError] ->
       reraise RuntimeError, [message: "#{path} holds a key that is not an RSA private key"], __STACKTRACE__
   end
 
