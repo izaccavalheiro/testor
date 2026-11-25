@@ -143,6 +143,12 @@ defmodule Testor.Web.OpenAPI do
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" => op("jobs", "Cancel a job (scope execute)", %{"type" => "object"})
       },
+      "/schedules" => %{
+        "get" =>
+          op("jobs", "config.json's schedules, each with its next time (UTC) or why it is left out", %{
+            "type" => "object"
+          })
+      },
       "/agent/lease" => %{
         "post" =>
           op(

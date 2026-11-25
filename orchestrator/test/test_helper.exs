@@ -13,6 +13,8 @@ Application.put_env(:testor, :data_dir, data_dir)
 Application.put_env(:testor, :secrets_dir, data_dir)
 Application.put_env(:testor, :ip, {127, 0, 0, 1})
 Application.put_env(:testor, :port, 0)
+# The scheduler does not tick on its own in tests: they fire the minutes they choose.
+Application.put_env(:testor, :schedule_ticks, false)
 # Plug.Test's requests are for www.example.com: a name the Host allow-list must know.
 Application.put_env(:testor, :allowed_hosts, "www.example.com")
 # Test runs are sleepers without run.ps1's cancel watcher: no need to wait 5 s for them.

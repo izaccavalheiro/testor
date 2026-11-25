@@ -63,6 +63,7 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | -------- | ----- | - |
 | `GET /api/v1/jobs?status=` | read | jobs, newest first |
 | `GET /api/v1/jobs/:id` | read | one job |
+| `GET /api/v1/schedules` | read | `config.json`'s schedules with their `next` time (UTC), or the `error` that leaves one out |
 | `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref?}`: `201`, or `403` while `execution.enabled` is off |
 | `POST /api/v1/jobs/:id/cancel` | execute | cancel a queued or running job |
 | `POST /api/v1/agent/lease` | agent | `{labels, wait}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most) |
