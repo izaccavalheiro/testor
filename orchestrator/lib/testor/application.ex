@@ -25,6 +25,7 @@ defmodule Testor.Application do
       Testor.Store,
       Testor.Jobs,
       Testor.Schedules,
+      Testor.Approvals,
       Testor.Sessions,
       Testor.Stats,
       Testor.Janitor,

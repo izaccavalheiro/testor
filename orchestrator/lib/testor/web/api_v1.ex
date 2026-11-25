@@ -275,6 +275,48 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # Approvals of what AI agents ask for (Testor.Approvals).
+  get "/approvals" do
+    conn = fetch_query_params(conn)
+    list = Testor.Approvals.list(conn.query_params["status"])
+    json(conn, 200, %{"data" => Testor.Access.filter(list, conn.assigns.principal)})
+  end
+
+  get "/approvals/:id" do
+    case Testor.Approvals.get(id) do
+      %{} = approval ->
+        if Testor.Access.allowed?(conn.assigns.principal, approval["project"]),
+          do: json(conn, 200, approval),
+          else: error(conn, 404, "not_found", "no approval #{id}")
+
+      nil ->
+        error(conn, 404, "not_found", "no approval #{id}")
+    end
+  end
+
+  post "/approvals/:id/:decision" when decision in ["approve", "deny"] do
+    case Testor.Approvals.decide(
+           id,
+           conn.assigns.principal,
+           if(decision == "approve", do: :approve, else: :deny)
+         ) do
+      {:ok, approval} ->
+        json(conn, 200, approval)
+
+      {:error, :not_found} ->
+        error(conn, 404, "not_found", "no approval #{id}")
+
+      {:error, :decided} ->
+        error(conn, 409, "decided", "this approval is no longer pending")
+
+      {:error, :own} ->
+        error(conn, 403, "own_request", "someone other than who asked must decide")
+
+      {:error, {:forbidden, scope}} ->
+        error(conn, 403, "forbidden", "deciding needs the #{scope} scope on its project")
+    end
+  end
+
   # Release gates (Testor.Gates): whether a commit may ship, from signed results.
   get "/gates" do
     json(conn, 200, %{"data" => Testor.Access.filter(Testor.Gates.list(), conn.assigns.principal)})

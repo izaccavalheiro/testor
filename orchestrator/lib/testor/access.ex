@@ -79,7 +79,7 @@ defmodule Testor.Access do
   def event?(principal, name, data) do
     cond do
       not restricted?(principal) -> true
-      name in ["run", "job"] -> allowed?(principal, data["project"])
+      name in ["run", "job", "approval"] -> allowed?(principal, data["project"])
       name == "live" -> allowed?(principal, run_project(data["id"]))
       name in ["sessions", "maintenance"] -> false
       true -> true
