@@ -140,6 +140,14 @@ defmodule Testor.Web.ApiV1 do
     json(conn, 200, %{"data" => Query.flaky(project, conn.query_params["kind"])})
   end
 
+  # DORA's four metrics of the runs of the task that delivers the project (Testor.Dora).
+  get "/projects/:project/dora" do
+    conn = fetch_query_params(conn)
+    kind = conn.query_params["kind"] || "deploy"
+    days = int(conn.query_params["days"], 30, 1, 365)
+    json(conn, 200, Testor.Dora.metrics(project, kind, days))
+  end
+
   get "/audit" do
     conn = fetch_query_params(conn)
     limit = int(conn.query_params["limit"], 100, 1, 1000)

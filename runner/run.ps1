@@ -64,7 +64,13 @@ $record = [ordered]@{
   }
   # What was tested, from the workstation (remote.yml): flaky specs are found per commit.
   source     = if ($env:TESTOR_COMMIT) {
-    [ordered]@{ commit = $env:TESTOR_COMMIT; branch = $env:TESTOR_BRANCH; dirty = $env:TESTOR_DIRTY -eq "true" }
+    [ordered]@{
+      commit      = $env:TESTOR_COMMIT
+      branch      = $env:TESTOR_BRANCH
+      dirty       = $env:TESTOR_DIRTY -eq "true"
+      # When the commit was made: DORA's lead time for changes.
+      committedAt = if ("$env:TESTOR_COMMITTED_AT" -match "^\d{4}-\d\d-\d\dT") { $env:TESTOR_COMMITTED_AT } else { $null }
+    }
   } else { $null }
   # The job this run is for, when an agent started it (runner/agent.ps1).
   job        = if ($env:TESTOR_JOB_ID) { $env:TESTOR_JOB_ID } else { $null }

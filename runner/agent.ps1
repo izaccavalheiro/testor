@@ -469,6 +469,7 @@ function Invoke-Job($job) {
       $plain["TESTOR_COMMIT"] = "$head".Trim()
       $plain["TESTOR_BRANCH"] = if ($job.ref) { $job.ref } else { "$(git -C $runDir rev-parse --abbrev-ref HEAD 2>$null)".Trim() }
       $plain["TESTOR_DIRTY"] = if (git -C $runDir status --porcelain 2>$null) { "true" } else { "false" }
+      $plain["TESTOR_COMMITTED_AT"] = "$(git -C $runDir log -1 --format=%cI 2>$null)".Trim()
     }
   }
   if ($idToken) {

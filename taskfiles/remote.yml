@@ -58,6 +58,9 @@ vars:
     sh: 'git -C "{{._ROOT}}" rev-parse --abbrev-ref HEAD 2>/dev/null || true'
   _DIRTY:
     sh: 'if [ -n "$(git -C "{{._ROOT}}" status --porcelain 2>/dev/null)" ]; then echo true; else echo false; fi'
+  # When that commit was made (lead time for changes, /api/v1/projects/<p>/dora).
+  _COMMITTED:
+    sh: 'git -C "{{._ROOT}}" log -1 --format=%cI 2>/dev/null || true'
   _KEEP: '{{range $i, $k := splitList " " (.KEEP | default "node_modules .lockhash target .venv")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
@@ -73,6 +76,7 @@ vars:
     $env:TESTOR_COMMIT = '{{._COMMIT}}'
     $env:TESTOR_BRANCH = '{{._BRANCH | replace "'" "''"}}'
     $env:TESTOR_DIRTY = '{{._DIRTY}}'
+    $env:TESTOR_COMMITTED_AT = '{{._COMMITTED}}'
 
 tasks:
   sync:
