@@ -187,7 +187,8 @@ try {
 # secret (TOKEN, SECRET, PASSWORD, PASSWD, API_KEY, PRIVATE_KEY, CREDENTIAL) or are listed in
 # $env:TESTOR_MASK (comma-separated names; the agent lists a job's secrets there), 6 characters
 # or longer, are written as ***; so is each line of one that spans lines (a key, a certificate).
-# The terminal still gets the output unchanged.
+# The terminal still gets the output unchanged. Unique by value, then longest first:
+# Sort-Object -Unique would compare lengths and leave one of two equally long secrets unmasked.
 $maskNames = @("$env:TESTOR_MASK" -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 $secrets = @(Get-ChildItem env: | Where-Object {
     ($_.Name -match "TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL" -or $_.Name -in $maskNames) -and
@@ -195,7 +196,7 @@ $secrets = @(Get-ChildItem env: | Where-Object {
     $value = "$($_.Value)"
     $value
     if ($value -match "\n") { $value -split "\r?\n" | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -ge 6 } }
-  } | Sort-Object Length -Descending -Unique)
+  } | Select-Object -Unique | Sort-Object Length -Descending)
 function Hide-Secrets([string]$line) {
   foreach ($secret in $secrets) { $line = $line.Replace($secret, "***") }
   $line
