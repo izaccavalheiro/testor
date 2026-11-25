@@ -68,7 +68,11 @@ defmodule Testor.Gates do
   defp check_kind(gate, kind, commit, now) do
     case latest(gate["project"], kind, commit) do
       nil ->
-        %{"kind" => kind, "pass" => false, "reason" => "no finished run of #{kind} at this commit from a clean tree"}
+        %{
+          "kind" => kind,
+          "pass" => false,
+          "reason" => "no finished run of #{kind} at this commit from a clean tree"
+        }
 
       run ->
         reason = reason(gate, run, commit, now)

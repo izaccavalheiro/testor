@@ -21,29 +21,47 @@ defmodule Testor.GatesTest do
     end)
   end
 
-  defp gates(gates), do: File.write!(Path.join(Config.data_dir(), "config.json"), JSON.encode!(%{"gates" => gates}))
+  defp gates(gates),
+    do: File.write!(Path.join(Config.data_dir(), "config.json"), JSON.encode!(%{"gates" => gates}))
 
   # A finished run of `kind` at `commit`, signed by testor once it is in the store.
   defp signed_run(kind, status, extra \\ %{}) do
     source = Map.merge(%{"commit" => @commit, "dirty" => false}, extra["source"] || %{})
-    id = record(Map.merge(%{"project" => "web", "kind" => kind, "source" => source}, Map.delete(extra, "source")))
+
+    id =
+      record(
+        Map.merge(%{"project" => "web", "kind" => kind, "source" => source}, Map.delete(extra, "source"))
+      )
+
     on_exit(fn -> Store.delete(id) end)
     capture_log(fn -> finish(id, status) end)
     wait_until(fn -> Attestation.exists?(id) end)
     id
   end
 
-  defp gate(extra \\ %{}), do: Map.merge(%{"name" => "web-release", "project" => "web", "kinds" => ["test"]}, extra)
+  defp gate(extra \\ %{}),
+    do: Map.merge(%{"name" => "web-release", "project" => "web", "kinds" => ["test"]}, extra)
+
   defp result(gate, commit \\ @commit), do: Gates.evaluate(gate, commit) |> elem(1)
 
   test "passes when each kind's latest run of the commit passed and its attestation holds" do
     test_run = signed_run("test", "passed")
     e2e = signed_run("e2e", "passed")
 
-    assert %{"pass" => true, "commit" => @commit, "checks" => [test_check, %{"kind" => "e2e", "runId" => ^e2e}]} =
+    assert %{
+             "pass" => true,
+             "commit" => @commit,
+             "checks" => [test_check, %{"kind" => "e2e", "runId" => ^e2e}]
+           } =
              result(gate(%{"kinds" => ["test", "e2e"]}))
 
-    assert %{"kind" => "test", "pass" => true, "runId" => ^test_run, "status" => "passed", "attestation" => "/api/v1/runs/" <> _} =
+    assert %{
+             "kind" => "test",
+             "pass" => true,
+             "runId" => ^test_run,
+             "status" => "passed",
+             "attestation" => "/api/v1/runs/" <> _
+           } =
              test_check
 
     refute Map.has_key?(test_check, "reason")
@@ -64,8 +82,10 @@ defmodule Testor.GatesTest do
 
     passed = signed_run("test", "passed")
     assert %{"pass" => true} = result(gate())
+
     assert %{"checks" => [%{"reason" => "its latest run ended more than 1 hours ago"}]} =
-             Gates.evaluate(gate(%{"maxAgeHours" => 1}), @commit, DateTime.add(DateTime.utc_now(), 7200)) |> elem(1)
+             Gates.evaluate(gate(%{"maxAgeHours" => 1}), @commit, DateTime.add(DateTime.utc_now(), 7200))
+             |> elem(1)
 
     assert Gates.too_old?(1, "not a time", DateTime.utc_now())
 
@@ -99,7 +119,12 @@ defmodule Testor.GatesTest do
 
   test "configuration, and over HTTP for the projects one sees" do
     gates(%{
-      "web-release" => %{"project" => "web", "kinds" => ["test"], "maxAgeHours" => 24, "requireAgentSignature" => false},
+      "web-release" => %{
+        "project" => "web",
+        "kinds" => ["test"],
+        "maxAgeHours" => 24,
+        "requireAgentSignature" => false
+      },
       "secret" => %{"project" => "secret", "kinds" => ["test"]},
       "a" => %{"project" => "a b", "kinds" => ["t"]},
       "b" => %{"project" => "b", "kinds" => []},
@@ -111,7 +136,13 @@ defmodule Testor.GatesTest do
     listed = Map.new(Gates.list(), &{&1["name"], &1})
     assert %{"project" => "web", "kinds" => ["test"], "maxAgeHours" => 24} = listed["web-release"]
 
-    for {name, why} <- [{"a", "project"}, {"b", "kinds"}, {"c", "requireAgentSignature"}, {"d", "maxAgeHours"}, {"e", "an object"}] do
+    for {name, why} <- [
+          {"a", "project"},
+          {"b", "kinds"},
+          {"c", "requireAgentSignature"},
+          {"d", "maxAgeHours"},
+          {"e", "an object"}
+        ] do
       assert listed[name]["error"] =~ why
       assert {:error, _} = Gates.get(name)
     end
@@ -121,12 +152,23 @@ defmodule Testor.GatesTest do
     assert {:error, _} = Gates.evaluate(gate(), nil)
 
     hash = Password.hash(@password, 1000)
-    Application.put_env(:testor, :auth, %{"users" => %{"web" => %{"password" => hash, "projects" => ["web", "a"]}}})
-    get = fn path -> conn(:get, path) |> put_req_header("authorization", "Basic " <> Base.encode64("web:#{@password}")) |> Router.call(Router.init([])) end
+
+    Application.put_env(:testor, :auth, %{
+      "users" => %{"web" => %{"password" => hash, "projects" => ["web", "a"]}}
+    })
+
+    get = fn path ->
+      conn(:get, path)
+      |> put_req_header("authorization", "Basic " <> Base.encode64("web:#{@password}"))
+      |> Router.call(Router.init([]))
+    end
 
     assert %{"data" => data} = get.("/api/v1/gates").resp_body |> JSON.decode!()
     assert Enum.map(data, & &1["name"]) == ["web-release"]
-    assert %{"gate" => "web-release", "pass" => false} = get.("/api/v1/gates/web-release?commit=#{@commit}").resp_body |> JSON.decode!()
+
+    assert %{"gate" => "web-release", "pass" => false} =
+             get.("/api/v1/gates/web-release?commit=#{@commit}").resp_body |> JSON.decode!()
+
     assert get.("/api/v1/gates/web-release?commit=main").status == 400
     assert get.("/api/v1/gates/secret?commit=#{@commit}").status == 404
     assert get.("/api/v1/gates/nope?commit=#{@commit}").status == 404
