@@ -7,6 +7,7 @@ defmodule Testor.Web.Router do
     GET    /events/runs/:id        SSE: one run's log, specs and screenshots, live
     GET    /metrics                Prometheus metrics (Testor.Metrics)
     GET    /api/health             liveness and versions
+    GET    /.well-known/jwks.json  the public keys tokens are signed with (Testor.Auth.TokenKeys)
     GET    /api/state              everything /events starts with
     GET    /api/runs/:id           one run, its specs and screenshots
     GET    /api/runs/:id/log       its output as text (?tail=bytes)
@@ -79,6 +80,16 @@ defmodule Testor.Web.Router do
     |> put_resp_content_type("text/plain; version=0.0.4", nil)
     |> put_resp_header("cache-control", "no-store")
     |> send_resp(200, Testor.Metrics.render())
+  end
+
+  # The public keys of testor's tokens (Testor.Auth.TokenKeys), for services that verify them.
+  get "/.well-known/jwks.json" do
+    keys = if Auth.enabled?(), do: Auth.settings().token_keys
+
+    conn
+    |> put_resp_content_type("application/jwk-set+json")
+    |> put_resp_header("cache-control", "public, max-age=300")
+    |> send_resp(200, JSON.encode!(Testor.Auth.TokenKeys.jwks(keys)))
   end
 
   get "/api/health" do

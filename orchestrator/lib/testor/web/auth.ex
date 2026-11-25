@@ -175,6 +175,7 @@ defmodule Testor.Web.Auth do
       ["api", "health"] -> true
       ["api", "v1", "health"] -> true
       ["api", "v1", "openapi.json"] -> true
+      [".well-known", "jwks.json"] -> true
       ["s", _cap, area | _] when area in ["shots", "artifacts"] -> true
       _ -> false
     end

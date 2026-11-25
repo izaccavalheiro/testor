@@ -6,7 +6,16 @@ defmodule Testor.AuthTest do
   @key String.duplicate("s", 32)
 
   defp settings(users \\ %{}) do
-    %{enabled: true, users: users, key: @key, default_ttl: 3600, max_ttl: 86_400}
+    %{
+      enabled: true,
+      users: users,
+      key: @key,
+      token_keys: Testor.Auth.TokenKeys.from_seeds([String.duplicate("e", 32)]),
+      algorithm: "EdDSA",
+      accept_hs256: true,
+      default_ttl: 3600,
+      max_ttl: 86_400
+    }
   end
 
   defp user(role, valid_after \\ 0) do
