@@ -73,8 +73,7 @@ defmodule Testor.Auth.JobTokens do
       "subject_types_supported" => ["public"],
       "id_token_signing_alg_values_supported" => ["RS256"],
       "scopes_supported" => ["openid"],
-      "claims_supported" =>
-        ~w(iss aud sub iat nbf exp jti project kind ref job_id agent requested_by)
+      "claims_supported" => ~w(iss aud sub iat nbf exp jti project kind ref job_id agent requested_by)
     }
   end
 
@@ -167,7 +166,7 @@ defmodule Testor.Auth.JobTokens do
   def roll! do
     now = now()
     path = file()
-    entries = (if File.exists?(path), do: load_entries(path), else: [])
+    entries = if File.exists?(path), do: load_entries(path), else: []
 
     kept =
       for entry <- entries,

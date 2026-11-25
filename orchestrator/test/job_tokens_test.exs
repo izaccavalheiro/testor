@@ -26,7 +26,12 @@ defmodule Testor.JobTokensTest do
   setup %{ring: ring} do
     Guard.reset()
     :sys.replace_state(Jobs, fn _ -> %{} end)
-    File.write!(Path.join(Config.data_dir(), "config.json"), JSON.encode!(%{"execution" => %{"enabled" => true}}))
+
+    File.write!(
+      Path.join(Config.data_dir(), "config.json"),
+      JSON.encode!(%{"execution" => %{"enabled" => true}})
+    )
+
     Application.put_env(:testor, :auth_job_token_keys, ring)
     configure(%{"issuer" => @issuer <> "/", "audiences" => ["sts.amazonaws.com", "vault"]})
 
@@ -133,7 +138,10 @@ defmodule Testor.JobTokensTest do
     # A job without a ref has no ref claim.
     {:ok, other} = Jobs.enqueue(%{"project" => "api", "kind" => "test"}, "ada")
     assert %{status: 200} = post("/api/v1/agent/lease", %{}, "runner-2")
-    %{"token" => token} = post("/api/v1/agent/jobs/#{other["id"]}/token", %{"audience" => "vault"}, "runner-2") |> body()
+
+    %{"token" => token} =
+      post("/api/v1/agent/jobs/#{other["id"]}/token", %{"audience" => "vault"}, "runner-2") |> body()
+
     refute token |> part(1) |> JSON.decode!() |> Map.has_key?("ref")
   end
 
@@ -165,7 +173,15 @@ defmodule Testor.JobTokensTest do
   test "keys: made on first use, rolled, refused when they cannot be read" do
     Application.delete_env(:testor, :auth)
     Application.delete_env(:testor, :auth_job_token_keys)
-    File.write!(Auth.auth_file(), JSON.encode!(%{"users" => %{}, "enabled" => true, "jobTokens" => %{"issuer" => @issuer, "audiences" => ["a"]}}))
+
+    File.write!(
+      Auth.auth_file(),
+      JSON.encode!(%{
+        "users" => %{},
+        "enabled" => true,
+        "jobTokens" => %{"issuer" => @issuer, "audiences" => ["a"]}
+      })
+    )
 
     # Loading the settings makes the key, once job tokens are on.
     capture_log(fn -> assert %{job_token_keys: %{signing: %{kid: first}}} = Auth.load_settings() end)
@@ -185,7 +201,9 @@ defmodule Testor.JobTokensTest do
     old = Map.put(older, "retired", System.system_time(:second) - 4000)
     File.write!(JobTokens.file(), JSON.encode!(%{"keys" => [newer, old]}))
     third = JobTokens.roll!()
-    assert JobTokens.load!().public |> Enum.map(& &1.kid) |> Enum.sort() == Enum.sort([third, ring.signing.kid])
+
+    assert JobTokens.load!().public |> Enum.map(& &1.kid) |> Enum.sort() ==
+             Enum.sort([third, ring.signing.kid])
 
     for text <- ["nope", ~s({"keys":[]}), ~s({"keys":[{"pem":"x"}]}), ~s({"keys":[5]})] do
       File.write!(JobTokens.file(), text)
