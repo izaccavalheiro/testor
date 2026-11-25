@@ -13,6 +13,9 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   optional agent signature and age); `GET /api/v1/gates/<name>?commit=<sha>` answers whether
   the commit passes from each kind's latest run of it from a clean tree, checking testor's
   attestation again with its key, for a pipeline or an OPA policy. `GET /api/v1/gates`.
+- **Status badges**: `GET /api/v1/projects/<p>/badge.svg?kind=` (public for `config.json`'s
+  `publicBadges`), and a Backstage guide with a catalog annotation (`testor.io/project`) and a
+  proxy configuration (`deploy/backstage`).
 - **Approvals for AI agents' actions**: `approvals` in `config.json` lists MCP tools (such as
   `delete_run`, `cancel_run`) that wait for a person: the agent's call records a request that
   someone else with the tool's scope approves or denies (the dashboard, `/api/v1/approvals`),

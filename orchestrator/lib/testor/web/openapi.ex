@@ -166,6 +166,16 @@ defmodule Testor.Web.OpenAPI do
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" => op("approvals", "Deny: nothing is done", %{"type" => "object"})
       },
+      "/projects/{project}/badge.svg" => %{
+        "parameters" => [
+          %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},
+          %{"name" => "kind", "in" => "query", "schema" => %{"type" => "string"}}
+        ],
+        "get" =>
+          op("runs", "The latest result as an SVG badge (public for config.json's publicBadges)", %{
+            "type" => "string"
+          })
+      },
       "/gates" => %{
         "get" => op("gates", "config.json's release gates, or why one is left out", %{"type" => "object"})
       },

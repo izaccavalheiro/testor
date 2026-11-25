@@ -1,0 +1,17 @@
+# A Backstage component that shows its testor results. Replace the names, then register it
+# (or add the annotations to your component's own catalog-info.yaml).
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: web
+  annotations:
+    # The project in testor (agent.json's or the Taskfile's project name).
+    testor.io/project: web
+  links:
+    - url: https://testor.example.com/#/
+      title: Test runs (testor)
+      icon: dashboard
+spec:
+  type: service
+  lifecycle: production
+  owner: team-web
