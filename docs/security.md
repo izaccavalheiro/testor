@@ -348,6 +348,10 @@ first key an agent user presents and refuses any other (a stolen agent token alo
 for that agent's runs), and keeps the agent's attestation only when it matches, byte for byte,
 the files it received ([attestation.md](attestation.md#signed-by-the-agent)).
 
+With `isolate` in `agent.json`, each job runs in a worktree or copy of its project's workspace
+that is removed afterwards, so one run cannot leave files (a poisoned cache, a planted
+script) for the next ([jobs.md](jobs.md#isolation)).
+
 A job's secrets are resolved by its agent, on its machine, from the sources its own
 `agent.json` names (Vault, AWS, GCP, Azure secret managers, SOPS files, environment, files):
 they never pass through testor, and a job cannot ask for one its project does not list. Their
