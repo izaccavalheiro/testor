@@ -8,6 +8,7 @@ defmodule Testor.Metrics do
 
     * `testor_build_info{version}`
     * `testor_runs{status}`: runs kept, by status
+    * `testor_jobs{status}`: jobs by status; `queued` is what an autoscaler (KEDA) scales agents on
     * `testor_last_run_success{project,kind}`: 1 when the latest finished run of a task passed
     * `testor_last_run_timestamp_seconds{project,kind}`, `testor_last_run_duration_seconds{project,kind}`
     * `testor_event_streams`: open dashboard and API event streams
@@ -30,6 +31,12 @@ defmodule Testor.Metrics do
         sample("testor_build_info", %{"version" => to_string(Application.spec(:testor, :vsn))}, 1)
       ]),
       family("testor_runs", "gauge", "runs kept, by status", runs_by_status(runs)),
+      family(
+        "testor_jobs",
+        "gauge",
+        "jobs, by status (queued: what agents could scale on)",
+        jobs_by_status()
+      ),
       last_runs(runs),
       family("testor_event_streams", "gauge", "open event streams", [
         sample("testor_event_streams", %{}, Registry.count(Testor.StreamRegistry))
@@ -61,6 +68,13 @@ defmodule Testor.Metrics do
 
     for status <- Query.statuses(),
         do: sample("testor_runs", %{"status" => status}, Map.get(counts, status, 0))
+  end
+
+  defp jobs_by_status do
+    counts = Enum.frequencies_by(Testor.Jobs.list(), & &1["status"])
+
+    for status <- Testor.Jobs.statuses(),
+        do: sample("testor_jobs", %{"status" => status}, Map.get(counts, status, 0))
   end
 
   # The newest finished run of each project and task.

@@ -10,7 +10,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/run.ps1", "scripts/two-accounts/**", "deploy/helm/**", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "deploy/helm/**", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -61,6 +61,11 @@ jobs:
             -t testor:two-accounts .
           docker run --rm --user root --entrypoint bash testor:two-accounts /scenario.sh
 
+      - name: A job run by the agent image, its run sent to testor (scripts/container-e2e.sh)
+        run: |
+          docker buildx build --builder default --load -f runner/Dockerfile -t testor-agent:ci .
+          scripts/container-e2e.sh testor:ci testor-agent:ci
+
       - id: meta
         if: env.PUBLISH == 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -96,6 +101,36 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+      # The agent image (runner/Dockerfile): linux/amd64, as PowerShell's tarball is.
+      - id: agent-meta
+        if: env.PUBLISH == 'true'
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/testor-agent
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          flavor: |
+            latest=${{ !contains(github.ref_name, '-') }}
+      - id: agent-push
+        if: env.PUBLISH == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: runner/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.agent-meta.outputs.tags }}
+          labels: ${{ steps.agent-meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      - if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/testor-agent
+          subject-digest: ${{ steps.agent-push.outputs.digest }}
+          push-to-registry: true
+
   chart:
     name: Helm chart
     runs-on: ubuntu-24.04
@@ -119,5 +154,8 @@ jobs:
             --set serviceMonitor.enabled=true --set 'trustedProxies={10.0.0.0/8}' > out/full.yaml
           helm template t testor -n ci --set persistence.existingClaim=data \
             --set networkPolicy.enabled=false > out/claim.yaml
+          helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \
+            --set agents.projects.web.repository=https://example.com/web.git \
+            --set agents.projects.web.commands.test=test --set agents.autoscaling.keda=true > out/agents.yaml
           docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
-            -kubernetes-version 1.30.0 -skip ServiceMonitor /m/default.yaml /m/full.yaml /m/claim.yaml
+            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml

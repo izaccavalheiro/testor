@@ -73,7 +73,7 @@ See [jobs.md](jobs.md).
 ## Prometheus metrics
 
 `GET /metrics` (scope `read`) is the Prometheus text format: `testor_build_info`,
-`testor_runs{status}`, `testor_last_run_success{project,kind}`,
+`testor_runs{status}`, `testor_jobs{status}` (`queued`: what an autoscaler scales agents on), `testor_last_run_success{project,kind}`,
 `testor_last_run_timestamp_seconds`, `testor_last_run_duration_seconds`,
 `testor_event_streams`, `testor_disk_free_bytes`, `testor_disk_size_bytes`,
 `testor_stored_bytes{area}`, `testor_cpu_ratio`, `testor_memory_available_bytes`,
