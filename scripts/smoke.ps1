@@ -255,6 +255,14 @@ try {
   Start-Sleep -Milliseconds 1500
   $revoked = Invoke-WebRequest "$base/api/v1/auth/me" -Headers $bearer -SkipHttpErrorCheck
   Check "auth: revoked tokens stop working" ($revoked.StatusCode -eq 401)
+
+  # The terminal stays unchanged: a run's stderr holds only what the command wrote there.
+  $quietErr = Join-Path $work "quiet.err"
+  $quietDir = New-Item -ItemType Directory -Force (Join-Path $work "quiet")
+  $quiet = Start-Process pwsh -Wait -PassThru -RedirectStandardError $quietErr -RedirectStandardOutput (Join-Path $work "quiet.out") `
+    -ArgumentList "-NoProfile", "-Command", "Set-Location '$quietDir'; & '$testorHome/run.ps1' -Project quiet -Kind quiet -Body { 'ok' }"
+  $stray = (Get-Content -Raw -LiteralPath $quietErr -ErrorAction SilentlyContinue) + ""
+  Check "run.ps1 writes nothing of its own to stderr" ($quiet.ExitCode -eq 0 -and $stray.Trim() -eq "") "($($stray.Trim()))"
 } finally {
   Set-Location $repo
   foreach ($name in $sandboxed) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }

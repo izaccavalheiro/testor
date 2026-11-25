@@ -7,6 +7,12 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Fixed
+
+- `run.ps1` printed `testor: cancel watcher: The pipeline has been stopped.` on stderr at the end
+  of every run: stopping its cancel watcher is not an error. The terminal is unchanged again; the
+  smoke test now checks that a run's stderr holds nothing of testor's own.
+
 ## 0.3.0 - 2026-11-25
 
 ### Breaking
