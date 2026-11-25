@@ -430,7 +430,7 @@ try {
     $workspaceDir = if ($isoProject -eq "iso-git") { $isoGit } else { $isoCopy }
     $leftovers = @(Get-ChildItem -LiteralPath (Join-Path $testorHome "isolated") -ErrorAction SilentlyContinue).Count
     Check "isolation ($isoProject): each job starts clean, with the workspace's files, and leaves nothing behind" (
-      @($isoLogs | Where-Object { $_ -match "^passed: .*iso-clean.*iso-has-files" }).Count -eq 2 -and
+      @($isoLogs | Where-Object { $_ -match "(?s)^passed: .*iso-clean.*iso-has-files" }).Count -eq 2 -and
       -not (Test-Path -LiteralPath (Join-Path $workspaceDir "leftover.txt")) -and $leftovers -eq 0) "($($isoLogs -join ' | '); left: $leftovers)"
   }
 
