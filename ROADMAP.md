@@ -27,12 +27,13 @@ Two principles hold through every milestone:
 | **0.6.0** | Agents in containers and Kubernetes: the agent image, the Helm chart's agents with KEDA autoscaling on queued jobs, repositories cloned on demand; spec results from Vitest 5 (its verbose reporter) | released |
 | **0.7.0** | Runs signed by their agent: ECDSA P-256 keys pinned on first lease, an in-toto attestation per remote run checked byte for byte against the files received, verifiable with OpenSSL | released |
 | **0.8.0** | Teams and identity: per-project access and a role per project; EdDSA tokens with a published JWKS; single sign-on with OpenID Connect; secrets for jobs from Vault, cloud secret managers and SOPS, resolved on the runner and masked; identity tokens for jobs (testor as an OIDC issuer for cloud credentials); isolated workspaces; scheduled jobs; OpenTelemetry traces joined to CI's; the agent image for arm64 | released |
+| **0.9.0** | Delivery: release gates on signed results (for pipelines and OPA), commit statuses on GitHub and GitLab pull requests, approvals of AI agents' actions, DORA metrics, status badges and a Backstage guide | released |
 
 ## Next milestones
 
 Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-### 0.9: many testors, other backends
+### 0.10: many testors, other backends
 
 - A **hub**: the board and history across several testors, filtered by runner label.
 - [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the run
@@ -42,9 +43,8 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
 ### Later
 
-- **Release gates** on signed attestations, **commit statuses** on pull requests, and
-  **approvals** of AI agents' actions, **DORA metrics**, **badges** and a **Backstage** guide
-  (done, in the next release).
+- Certificates from ACME (Let's Encrypt) for the built-in TLS; a Terraform module.
+- Impact analysis: which tests to run first for a change, from past failures.
 - A per-project queue for SSH runs too, and per-run workspaces for them.
 
 ## 1.0: stable

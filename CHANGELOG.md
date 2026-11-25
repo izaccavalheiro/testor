@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.9.0 - 2026-11-25
+
 ### Added
 
 - **Release gates**: `gates` in `config.json` (a project and the kinds a release needs, an
