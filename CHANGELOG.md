@@ -53,6 +53,11 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   `"tokens": {"algorithm": "HS256"}` keeps issuing them. `rotate_key` now replaces the token
   keys too. Back up `token-keys.json` with `jwt.key`.
 
+### Documentation
+
+- **Encryption at rest**: why testor leaves it to the disk or volume (BitLocker, LUKS,
+  FileVault, encrypted StorageClasses and etcd), and what it protects.
+
 ### Fixed
 
 - The agent passes a job's command to PowerShell encoded: a command holding double quotes

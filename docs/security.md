@@ -377,11 +377,32 @@ what the runner observed; the third is informative only.
 
 ## Secrets
 
-`auth.json`, `jwt.key`, `token-keys.json` and `signing.key` live in the data folder unless `TESTOR_SECRETS_DIR`
-names another.
-Test commands run as the same account as testor (see below), so they can read either file
-wherever it is: moving them protects them only once the tests run as an account that cannot
-read that folder.
+`auth.json`, `jwt.key`, `token-keys.json`, `job-token-keys.json`, `signing.key` and
+`webhooks.json` live in the data folder unless `TESTOR_SECRETS_DIR` names another; testor
+creates its keys readable by their owner only. Test commands run as the same account as testor
+(see below), so they can read these files wherever they are: moving them protects them only once
+the tests run as an account that cannot read that folder. Replicas, or keys kept in a secret
+store, take `TESTOR_JWT_SECRET` and `TESTOR_TOKEN_KEY` from the environment instead of files.
+
+## Encryption at rest
+
+testor does not encrypt the files it keeps (runs, logs, screenshots, artifacts, keys) itself: a
+key it held would sit on the same disk, next to what it protects, and videos and reports are
+served by byte range straight from their files. Encrypt the storage instead:
+
+| Where testor runs | How |
+| ----------------- | --- |
+| Windows | BitLocker on the drive holding the testor home (`manage-bde -on C:`), with TPM |
+| Linux | LUKS (dm-crypt) on the volume, or the cloud disk's encryption |
+| macOS | FileVault |
+| Kubernetes | a StorageClass with encrypted volumes (EBS, Persistent Disk, Azure Disk encryption, often by default; customer-managed keys in the cloud's KMS), and encryption of Secrets in etcd (`EncryptionConfiguration`, a KMS provider) |
+| Backups | encrypt the archive (`age`, `gpg`) or the bucket it goes to |
+
+With volume encryption, what a stolen disk or snapshot holds is unreadable; what a process on
+the running machine can read is not changed by it: that is what accounts, permissions and the
+separate test account above are for. When logs and artifacts can go to object storage
+([ports](design/ports.md)), the bucket's server-side encryption (SSE-KMS or equivalent) will be
+the place for it.
 
 ## Running tests in a separate account
 
