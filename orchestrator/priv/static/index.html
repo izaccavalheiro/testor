@@ -481,6 +481,8 @@ function renderRun() {
     <dt>Ended</dt><dd>${run.endedAt ? new Date(run.endedAt).toLocaleString() : "–"}</dd>
     ${run.exitCode != null ? `<dt>Exit code</dt><dd>${esc(run.exitCode)}</dd>` : ""}
     ${run.error ? `<dt>Error</dt><dd style="color:var(--red)">${esc(run.error)}</dd>` : ""}
+    ${run.actor ? `<dt>Started by</dt><dd>${esc(run.actor.declared ?? run.actor.user)}${run.actor.declared ? ` <span class="muted">(as ${esc(run.actor.user)})</span>` : ""}${run.actor.client ? ` <span class="muted">from ${esc(run.actor.client)}</span>` : ""}</dd>` : ""}
+    ${run.attested ? `<dt>Attestation</dt><dd><a href="/api/v1/runs/${encodeURIComponent(run.id)}/attestation" target="_blank" rel="noopener">signed</a></dd>` : ""}
     <dt>Folder</dt><dd class="mono">${esc(run.workdir)}</dd>
     <dt>Run id</dt><dd class="mono">${esc(run.id)} · pid ${esc(run.pid)}</dd>
   </dl></div>

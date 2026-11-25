@@ -29,9 +29,18 @@ is up, and the orchestrator picks up whatever happened while it was down.
    end; the tracker reads the last lines and stops.
 
 If the SSH session dies (a closed laptop lid, a killed terminal), `run.ps1` never writes the
-end: the tracker notices the pid is gone and settles the run as `aborted`. Cancelling from the
-dashboard kills the session's process tree (`taskkill /T` on Windows; on Unix every
-descendant `ps` lists is stopped, then killed) and settles it as `cancelled`.
+end: the tracker notices the pid is gone and settles the run as `aborted`.
+
+Cancelling asks the run first: testor writes `cancel/<id>`, which a thread of `run.ps1` watches
+for; the run's own session then ends its process tree (`taskkill /T` on Windows; on Unix every
+descendant `ps` lists is killed with a system call, the run's PowerShell last), so testor never
+needs to kill processes of
+another account. When the process is still there after 5 seconds (a `run.ps1` from before
+0.3), testor kills the tree itself, after checking the pid is neither testor nor a process
+started after the run. Either way the run is settled as `cancelled`.
+
+When a run is finalized, testor signs what it observed (an in-toto statement in a DSSE
+envelope, Ed25519) into `attestations/<id>.dsse.json`: see [attestation.md](attestation.md).
 
 ## Remote scripts
 
@@ -197,6 +206,7 @@ the user, without elevation.
 | `~/test-run/<project>`          | a project's snapshot, where its commands run                 |
 | `~/test-run/.testor/run.ps1`    | the wrapper the Taskfiles call                               |
 | `~/test-run/.testor/runs/`, `logs/`, `screenshots/`, `artifacts/` | the data                   |
+| `~/test-run/.testor/cancel/`, `attestations/` | cancel requests to runs, signed attestations of finished runs |
 | `~/test-run/.testor/src/`       | the uploaded sources, with `deps` and `_build` kept between deploys |
 | `~/test-run/.testor/app/`       | the release the service runs                                 |
 | `~/test-run/.testor/testor.log` | the orchestrator's log                                       |

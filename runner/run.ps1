@@ -55,6 +55,13 @@ $record = [ordered]@{
   workdir    = $workdir
   startedAt  = $started.ToUniversalTime().ToString("o")
   status     = "running"
+  # Who started it: the account and SSH client the runner sees, and who the workstation says
+  # it is (TESTOR_ACTOR, from remote.yml: informative, not proof).
+  actor      = [ordered]@{
+    user     = [Environment]::UserName
+    client   = if ($env:SSH_CLIENT) { ($env:SSH_CLIENT -split " ")[0] } else { $null }
+    declared = if ($env:TESTOR_ACTOR) { $env:TESTOR_ACTOR } else { $null }
+  }
 }
 
 function Save-Record {
@@ -129,6 +136,43 @@ $env:TESTOR_RUN_ID = $id
 $env:SCREENSHOT_DIR = $shotDir
 $env:TESTOR_ARTIFACT_DIR = $artDir
 
+# Cancelling: the orchestrator writes cancel\<id>, and this session ends its own process tree
+# (this PowerShell included), so the orchestrator never kills processes of another account.
+# The record stays "running"; the orchestrator sees the process gone and settles it.
+$watcher = $null
+try {
+  # A runspace of its own on a thread of this process: no module to load (Start-ThreadJob's
+  # ThreadJob module took seconds to load in a fresh PowerShell on macOS).
+  $watcher = [powershell]::Create()
+  $null = $watcher.AddScript({
+    param($file, $owner)
+    trap { [Console]::Error.WriteLine("testor: cancel watcher: $_"); break }
+    while (-not (Test-Path -LiteralPath $file)) { Start-Sleep -Milliseconds 300 }
+    if ($IsWindows) { taskkill /PID $owner /T /F | Out-Null; return }
+    $children = @{}
+    foreach ($line in (ps -A -o pid=,ppid=)) {
+      $pair = -split $line
+      if ($pair.Count -eq 2) { $children[[int]$pair[1]] += @([int]$pair[0]) }
+    }
+    $tree = [Collections.Generic.List[int]]::new()
+    $queue = [Collections.Generic.Queue[int]]::new()
+    $queue.Enqueue($owner)
+    while ($queue.Count) {
+      $p = $queue.Dequeue()
+      if ($tree.Contains($p)) { continue }
+      $tree.Add($p)
+      foreach ($child in @($children[$p])) { if ($child) { $queue.Enqueue($child) } }
+    }
+    # Killed with system calls, no program started: on macOS a kill program started after the
+    # tree was stopped never ran. Every other process first, this PowerShell last.
+    foreach ($p in @($tree | Where-Object { $_ -ne $owner })) {
+      try { [Diagnostics.Process]::GetProcessById($p).Kill() } catch { }
+    }
+    [Diagnostics.Process]::GetCurrentProcess().Kill()
+  }.ToString()).AddArgument((Join-Path (Join-Path $root "cancel") $id)).AddArgument($PID)
+  $null = $watcher.BeginInvoke()
+} catch { Write-Warning "testor: no cancel watcher: $_"; $watcher = $null }
+
 $failure = $null
 $global:LASTEXITCODE = 0
 # Native output is decoded with the console code page (IBM850 here) once it passes through
@@ -157,6 +201,7 @@ try {
   $failure = $_
   if ($log) { $log.WriteLine("`n" + ($_ | Out-String).TrimEnd()) }
 } finally {
+  if ($watcher) { try { $watcher.Stop(); $watcher.Dispose() } catch { } }
   [Console]::OutputEncoding = $encoding
   if ($log) { $log.Dispose() }
   # Runs on success, on failure and on Ctrl+C; a killed session is marked aborted by the server.

@@ -190,16 +190,75 @@ with the user name and address.
 dashboard adds `X-Frame-Options: DENY` and `frame-ancestors 'none'`; API answers are
 `Cache-Control: no-store`; every response has an `X-Request-Id`.
 
+## Run attestations
+
+Every finished run is signed (Ed25519, an in-toto statement in a DSSE envelope) with
+`signing.key` in the secrets folder: `GET /api/v1/runs/<id>/attestation`, verified with the key
+from `GET /api/v1/attestation/key`. See [attestation.md](attestation.md).
+
+## Who started a run
+
+`run.ps1` records an `actor` with each run: the account (`user`) and SSH client address
+(`client`) the runner sees, and who the workstation says it is (`declared`, from
+`TESTOR_ACTOR`, which `remote.yml` sets to `<user>@<workstation>` or `ACTOR`). The first two are
+what the runner observed; the third is informative only.
+
 ## Secrets
 
-`auth.json` and `jwt.key` live in the data folder unless `TESTOR_SECRETS_DIR` names another.
+`auth.json`, `jwt.key` and `signing.key` live in the data folder unless `TESTOR_SECRETS_DIR`
+names another.
 Test commands run as the same account as testor (see below), so they can read either file
 wherever it is: moving them protects them only once the tests run as an account that cannot
 read that folder.
+
+## Running tests in a separate account
+
+By default testor and the tests run as the same account, so a test (or a dependency it
+installs) can read `jwt.key`, add itself to `auth.json` or change `run.ps1`. To make that
+impossible, run the service as one account and the tests (the SSH login) as another:
+
+| | service account (`testor`) | test account (the SSH login) |
+| --- | --- | --- |
+| secrets folder (`TESTOR_SECRETS_DIR`) | owns it, mode 0700 | no access |
+| the release, `run.ps1`, the testor home folder | owns them | read only |
+| `runs`, `logs`, `screenshots`, `artifacts`, `cancel` | read, write, delete | write (default ACL keeps what it writes the service's too) |
+| `attestations` | owns it | read only |
+
+The testor home must not be inside the test account's home folder (it could rename it and put
+its own in place). Cancelling works across the two accounts: testor writes `cancel/<id>`, and
+`run.ps1`, in the test account's session, ends its own process tree.
+
+On Linux (as root; verified in a container):
+
+```sh
+useradd --system --home-dir /srv/testor --shell /usr/sbin/nologin testor
+mkdir -p /srv/testor/home /srv/testor/secrets
+for d in runs logs screenshots artifacts cancel attestations; do mkdir -p /srv/testor/home/$d; done
+chown -R testor:testor /srv/testor && chmod 700 /srv/testor/secrets && chmod 755 /srv/testor/home
+for d in runs logs screenshots artifacts cancel; do
+  setfacl -m u:ci:rwx,u:testor:rwx /srv/testor/home/$d      # ci: the test account
+  setfacl -d -m u:ci:rwx,u:testor:rwx /srv/testor/home/$d
+done
+# the service (a system unit, User=testor) with:
+#   TESTOR_HOME=/srv/testor/home TESTOR_SECRETS_DIR=/srv/testor/secrets
+#   TESTOR_WORKSPACES=/home/ci/test-run
+```
+
+and in the projects' Taskfiles `HOME_DIR: /srv/testor/home` (an absolute path).
+
+On Windows the same split is a local account for the service (the scheduled task's
+principal) and a standard, non-administrator account for SSH: an administrator can read any
+file. Give the test account Modify on the five data folders (`icacls <dir> /grant ci:(OI)(CI)M`)
+and nothing on the secrets folder. This has not been verified end to end yet.
+
+What still needs one account, and so stops working when they differ: measuring and cleaning
+the test account's caches and snapshots (maintenance), and listing PowerShell sessions that
+`run.ps1` did not start.
 
 ## What stays out of reach
 
 Nothing in the API starts a command: commands reach the runner over SSH only. Maintenance
 deletes only a fixed list of targets named by id (never a path from a request), is off until
 `maintenance.enabled`, and needs the `maintain` scope. testor runs as the installing user (on
-Windows with a limited token).
+Windows with a limited token), unless it is set up in an account of its own
+([above](#running-tests-in-a-separate-account)).

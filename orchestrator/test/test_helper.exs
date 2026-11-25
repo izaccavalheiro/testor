@@ -15,6 +15,8 @@ Application.put_env(:testor, :ip, {127, 0, 0, 1})
 Application.put_env(:testor, :port, 0)
 # Plug.Test's requests are for www.example.com: a name the Host allow-list must know.
 Application.put_env(:testor, :allowed_hosts, "www.example.com")
+# Test runs are sleepers without run.ps1's cancel watcher: no need to wait 5 s for them.
+Application.put_env(:testor, :cancel_grace_ms, 300)
 
 for child <- Testor.Application.server() do
   {:ok, pid} = Supervisor.start_child(Testor.Supervisor, child)
