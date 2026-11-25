@@ -80,3 +80,42 @@ as, and the spec summary is parsed from the run's output. A test that is malicio
 account that can also read `signing.key`, can make testor sign anything. Signatures become
 evidence when tests run in an account that cannot read the secrets folder; see
 [security.md](security.md#what-stays-out-of-reach).
+
+## Signed by the agent
+
+A run that an agent on another machine sent ([jobs](jobs.md)) is also signed by the agent
+itself, so its evidence does not rest on testor alone: what the agent ran, and the files it
+produced, as the agent saw them.
+
+- **The key.** Each agent makes an ECDSA P-256 key on its first start (`agent.key` in its home,
+  readable by its owner only) and presents the public half with each lease. testor pins the
+  first key an agent user presents (trust on first use) in `agent-keys.json` in the secrets
+  folder and refuses any other: give each agent a user of its own. A rebuilt agent's new key
+  is accepted once its old one is forgotten:
+  `bin/testor eval 'Testor.Auth.CLI.forget_agent_key ~s[name]'`. `GET /api/v1/agents` lists the
+  pinned keys.
+- **The statement.** At the run's end the agent signs an in-toto statement in a DSSE envelope
+  (`predicateType` `…/docs/attestation.md#agent-run-v1`): its subjects are the log, screenshots
+  and artifacts it sent, with their SHA-256; its predicate the run (`id`, `job`, `project`,
+  `kind`, `command`, `status`, `exitCode`, times) and the agent's `host`.
+- **The check.** testor keeps it only if the signature is the pinned key's, it names this run
+  and job, and its subjects are exactly the files testor received with the digests testor
+  computes, so nothing was lost or changed on the way. The run then has `agentAttested`;
+  `GET /api/v1/runs/<id>/attestation?by=agent` gives the envelope.
+
+Verify it with OpenSSL (the signature is DER, over the same pre-authentication encoding):
+
+```sh
+curl -s -u ada "http://my-runner:6767/api/v1/runs/<id>/attestation?by=agent" > envelope.json
+# the agent's key, from GET /api/v1/agents or from the agent's machine
+type=$(jq -r .payloadType envelope.json)
+jq -r .payload envelope.json | base64 -d > payload.json
+jq -r '.signatures[0].sig' envelope.json | base64 -d > sig.der
+printf 'DSSEv1 %d %s %d ' "${#type}" "$type" "$(wc -c < payload.json)" > pae.bin
+cat payload.json >> pae.bin
+openssl dgst -sha256 -verify agent.pem -signature sig.der pae.bin
+```
+
+A local agent (on testor's machine) writes its runs into testor's home and signs nothing of
+its own: testor's attestation is the evidence there.
+

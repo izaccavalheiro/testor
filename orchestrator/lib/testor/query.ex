@@ -7,7 +7,7 @@ defmodule Testor.Query do
   alias Testor.{Config, Files, Store}
 
   @statuses ["running", "passed", "failed", "aborted", "cancelled"]
-  @fields ~w(id project kind command status exitCode startedAt endedAt durationMs summary warning error screenshots artifacts artifactsBytes actor attested source job remote)
+  @fields ~w(id project kind command status exitCode startedAt endedAt durationMs summary warning error screenshots artifacts artifactsBytes actor attested agentAttested source job remote)
 
   def statuses, do: @statuses
 

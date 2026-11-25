@@ -235,6 +235,11 @@ change. Log chunks are appended only at the log's current size (1 MB each); file
 same path rules as the file routes, screenshots must be images, and a run's artifacts stay
 under `artifacts.maxRunMB`. Use HTTPS (`TESTOR_TLS_CERT` or a proxy) between agents and testor.
 
+Such an agent signs each run it sends with an ECDSA P-256 key of its own. testor pins the
+first key an agent user presents and refuses any other (a stolen agent token alone cannot pass
+for that agent's runs), and keeps the agent's attestation only when it matches, byte for byte,
+the files it received ([attestation.md](attestation.md#signed-by-the-agent)).
+
 ## Run attestations
 
 Every finished run is signed (Ed25519, an in-toto statement in a DSSE envelope) with

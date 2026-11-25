@@ -99,6 +99,10 @@ reaches the agent at its next heartbeat; the agent asks `run.ps1` to end it.
 The agent only connects out (HTTPS to testor): the machine needs no inbound port, so it can sit
 behind NAT, in another network or in a cloud.
 
+Each run it sends is also **signed by the agent** with a key of its own, which testor pins to
+the agent's user at its first lease: give every agent a user of its own (see
+[signed by the agent](attestation.md#signed-by-the-agent)).
+
 ## Agents in containers and Kubernetes
 
 `ghcr.io/izaccavalheiro/testor-agent` is the agent as an image (linux/amd64): PowerShell 7,

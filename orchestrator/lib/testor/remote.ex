@@ -69,6 +69,110 @@ defmodule Testor.Remote do
     end
   end
 
+  @agent_predicate "https://github.com/izaccavalheiro/testor/blob/main/docs/attestation.md#agent-run-v1"
+  @statement_type "https://in-toto.io/Statement/v1"
+  @payload_type "application/vnd.in-toto+json"
+
+  def agent_predicate, do: @agent_predicate
+  def agent_file(run_id), do: Path.join(Config.attestations_dir(), run_id <> ".agent.dsse.json")
+
+  @doc """
+  Keeps the agent's own attestation of job `id`'s run (a DSSE envelope of an in-toto statement,
+  ECDSA P-256 with the agent's pinned key): `{:ok, %{"subjects" => n}}` once its signature holds
+  and its subjects are exactly the run's files testor has, each with the SHA-256 testor computes
+  (nothing lost or changed on the way), or `{:error, reason}`.
+  """
+  def attest(id, agent, envelope) do
+    with {:ok, run_id} <- bound_run(id, agent),
+         {:ok, key} <- key_of(agent),
+         {:ok, statement} <- verify(envelope, key),
+         :ok <- about(statement, run_id, id),
+         :ok <- same_files(statement["subject"], run_id) do
+      File.mkdir_p!(Config.attestations_dir())
+      Files.write_json(agent_file(run_id), envelope)
+      {:ok, %{"subjects" => length(statement["subject"])}}
+    end
+  end
+
+  defp key_of(agent) do
+    case Testor.AgentKeys.get(agent) do
+      nil -> {:error, :no_key}
+      key -> {:ok, key}
+    end
+  end
+
+  @doc "The statement in an agent's `envelope` when its signature is `key`'s; else `{:error, reason}`."
+  def verify(
+        %{"payloadType" => @payload_type, "payload" => payload, "signatures" => [_ | _] = signatures},
+        key
+      ) do
+    with {:ok, payload} <- Base.decode64(payload),
+         true <- Enum.any?(signatures, &signed?(&1, payload, key)) || {:error, :signature},
+         {:ok, %{"_type" => @statement_type, "predicateType" => @agent_predicate} = statement} <-
+           JSON.decode(payload) do
+      {:ok, statement}
+    else
+      {:error, :signature} -> {:error, :signature}
+      _ -> {:error, :malformed}
+    end
+  end
+
+  def verify(_envelope, _key), do: {:error, :malformed}
+
+  defp signed?(%{"sig" => sig}, payload, key) when is_binary(sig) do
+    case Base.decode64(sig) do
+      # A signature that is not DER verifies as false.
+      {:ok, der} -> :public_key.verify(pae(payload), :sha256, der, key)
+      :error -> false
+    end
+  end
+
+  defp signed?(_signature, _payload, _key), do: false
+
+  defp pae(payload),
+    do: "DSSEv1 #{byte_size(@payload_type)} #{@payload_type} #{byte_size(payload)} " <> payload
+
+  defp about(%{"predicate" => %{"run" => %{"id" => run_id, "job" => job}}}, run_id, job), do: :ok
+  defp about(_statement, _run_id, _job), do: {:error, :not_this_run}
+
+  # The subjects name the run's log, screenshots and artifacts: all of them, as testor has them.
+  defp same_files(subjects, run_id) when is_list(subjects) do
+    signed =
+      for %{"name" => name, "digest" => %{"sha256" => digest}} <- subjects,
+          into: %{},
+          do: {name, String.downcase(digest)}
+
+    held = held_files(run_id)
+
+    cond do
+      map_size(signed) != length(subjects) -> {:error, :malformed}
+      Map.keys(signed) |> Enum.sort() != Map.keys(held) |> Enum.sort() -> {:error, :files_differ}
+      Enum.any?(held, fn {name, path} -> sha256(path) != signed[name] end) -> {:error, :files_differ}
+      true -> :ok
+    end
+  end
+
+  defp same_files(_subjects, _run_id), do: {:error, :malformed}
+
+  defp held_files(run_id) do
+    log = if Files.entry(Config.log_file(run_id)) != :skip, do: [{"log", Config.log_file(run_id)}], else: []
+
+    areas =
+      for {area, dir} <- [{"screenshots", Config.shots_dir()}, {"artifacts", Config.artifacts_dir()}],
+          file <- Files.walk(Path.join(dir, run_id)),
+          do: {area <> "/" <> String.replace(file.rel, "\\", "/"), file.full}
+
+    Map.new(log ++ areas)
+  end
+
+  defp sha256(path) do
+    path
+    |> File.stream!(65_536)
+    |> Enum.reduce(:crypto.hash_init(:sha256), &:crypto.hash_update(&2, &1))
+    |> :crypto.hash_final()
+    |> Base.encode16(case: :lower)
+  end
+
   @doc """
   Writes a screenshot or artifact (`area`: `"screenshots"` or `"artifacts"`) of job `id`'s run
   at the path `segments`: `{:ok, bytes}` or `{:error, reason}`.

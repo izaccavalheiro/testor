@@ -46,7 +46,8 @@ for _ in $(seq 1 30); do
   JOBJSON=$(curl -fsS -u admin:$PASS "$BASE/api/v1/jobs/$JOB")
   RUN=$(echo "$JOBJSON" | json runId)
   STATUS=$( [ -n "$RUN" ] && curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN" | json run.status || true)
-  [ "$STATUS" = passed ] && break
+  SIGNED=$( [ -n "$RUN" ] && curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN" | json run.agentAttested || true)
+  [ "$STATUS" = passed ] && [ "$SIGNED" = True ] && break
   sleep 1
 done
 LOG=$(curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN/log")
@@ -56,4 +57,20 @@ echo "run $RUN: $STATUS"
 [ "$STATUS" = passed ] || { echo "FAIL: the run did not pass"; exit 1; }
 echo "$LOG" | grep -q "hello from a pod" || { echo "FAIL: the run's log did not arrive"; exit 1; }
 curl -fsS -u admin:$PASS "$BASE/metrics" | grep -q '^testor_jobs{status="passed"} 1' || { echo "FAIL: metrics do not count the job"; exit 1; }
-echo "ok: a job ran in an agent container and its run reached testor"
+[ "$SIGNED" = True ] || { echo "FAIL: the agent's attestation was not accepted"; exit 1; }
+# The agent's signature checks out with plain OpenSSL too (docs/attestation.md).
+if command -v openssl >/dev/null; then
+  curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN/attestation?by=agent" > "$WORK/envelope.json"
+  curl -fsS -u admin:$PASS "$BASE/api/v1/agents" | python3 -c 'import json, sys; print(json.load(sys.stdin)["data"][0]["publicKey"], end="")' > "$WORK/agent.pem"
+  python3 - "$WORK" <<'PY'
+import base64, json, sys
+work = sys.argv[1]
+env = json.load(open(f"{work}/envelope.json"))
+payload = base64.b64decode(env["payload"])
+t = env["payloadType"].encode()
+open(f"{work}/pae.bin", "wb").write(b"DSSEv1 %d %s %d " % (len(t), t, len(payload)) + payload)
+open(f"{work}/sig.der", "wb").write(base64.b64decode(env["signatures"][0]["sig"]))
+PY
+  openssl dgst -sha256 -verify "$WORK/agent.pem" -signature "$WORK/sig.der" "$WORK/pae.bin" || { echo "FAIL: OpenSSL does not verify the agent's signature"; exit 1; }
+fi
+echo "ok: a job ran in an agent container, its run reached testor, signed by the agent"

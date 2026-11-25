@@ -176,6 +176,16 @@ defmodule Testor.Web.OpenAPI do
             %{"type" => "object"}
           )
       },
+      "/agent/jobs/{id}/attestation" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "put" =>
+          op("agents", "The agent's own signed attestation of the job's run (ECDSA P-256) (scope agent)", %{
+            "type" => "object"
+          })
+      },
+      "/agents" => %{
+        "get" => op("agents", "Agents and the signing keys pinned to them", %{"type" => "object"})
+      },
       "/agent/jobs/{id}/finish" => %{
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" =>

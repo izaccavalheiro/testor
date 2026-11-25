@@ -158,6 +158,7 @@ defmodule Testor.Store do
         File.rm(Config.log_file(id))
         File.rm(Path.join(Config.cancel_dir(), id))
         File.rm(Path.join(Config.attestations_dir(), id <> ".dsse.json"))
+        File.rm(Path.join(Config.attestations_dir(), id <> ".agent.dsse.json"))
         File.rm_rf(Path.join(Config.shots_dir(), id))
         File.rm_rf(Path.join(Config.artifacts_dir(), id))
         {:reply, :ok, forget(state, id)}

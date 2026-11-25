@@ -103,9 +103,15 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # ?by=agent: the attestation the agent that ran it signed (runs from other machines).
   get "/runs/:id/attestation" do
     with_id(conn, id, fn conn ->
-      case Testor.Files.read_json(Testor.Attestation.file(id)) do
+      conn = fetch_query_params(conn)
+
+      file =
+        if conn.query_params["by"] == "agent", do: Remote.agent_file(id), else: Testor.Attestation.file(id)
+
+      case Testor.Files.read_json(file) do
         {:ok, envelope} ->
           json(conn, 200, envelope)
 
@@ -140,6 +146,21 @@ defmodule Testor.Web.ApiV1 do
       end
 
     json(conn, 200, %{"entries" => entries, "verified" => verified})
+  end
+
+  get "/agents" do
+    json(conn, 200, %{
+      "data" => Testor.AgentKeys.all() |> Enum.map(fn {name, key} -> Map.put(key, "agent", name) end)
+    })
+  end
+
+  put "/agent/jobs/:id/attestation" do
+    with_agent(conn, id, fn conn, agent ->
+      case body_params(conn, 1_048_576) do
+        {:ok, envelope, conn} -> id |> Remote.attest(agent, envelope) |> remote_reply(conn)
+        {:error, conn} -> conn
+      end
+    end)
   end
 
   get "/attestation/key" do
@@ -277,7 +298,8 @@ defmodule Testor.Web.ApiV1 do
   # or 204 when there is none.
   post "/agent/lease" do
     with {:ok, agent} <- signed_in(conn),
-         {:ok, params, conn} <- body_params(conn) do
+         {:ok, params, conn} <- body_params(conn),
+         :ok <- pin_key(conn, agent, params["key"]) do
       labels = if is_list(params["labels"]), do: Enum.filter(params["labels"], &is_binary/1), else: []
       wait = if is_integer(params["wait"]), do: params["wait"] |> max(0) |> min(25), else: 0
       deadline = System.monotonic_time(:millisecond) + wait * 1000
@@ -381,6 +403,28 @@ defmodule Testor.Web.ApiV1 do
     end
   end
 
+  # An agent presents its public key with each lease; the first one is pinned to it.
+  defp pin_key(_conn, _agent, nil), do: :ok
+
+  defp pin_key(conn, agent, pem) do
+    case Testor.AgentKeys.pin(agent, pem) do
+      :ok ->
+        :ok
+
+      {:error, :mismatch} ->
+        {:error,
+         error(
+           conn,
+           403,
+           "key_mismatch",
+           "#{agent} has another key pinned: forget it (Testor.Auth.CLI.forget_agent_key) if the agent was rebuilt"
+         )}
+
+      {:error, :bad_key} ->
+        {:error, error(conn, 400, "bad_key", "key is the SPKI PEM of an ECDSA P-256 public key")}
+    end
+  end
+
   defp with_agent(conn, id, fun) do
     with_id(conn, id, fn conn ->
       case signed_in(conn) do
@@ -420,8 +464,17 @@ defmodule Testor.Web.ApiV1 do
     |> error(409, "offset", "the log has #{size} bytes: send from there")
   end
 
+  defp remote_reply({:error, :no_key}, conn),
+    do: error(conn, 409, "no_key", "no key is pinned to this agent: lease with it first")
+
+  defp remote_reply({:error, :signature}, conn),
+    do: error(conn, 400, "signature", "the signature is not the agent's pinned key's")
+
+  defp remote_reply({:error, :files_differ}, conn),
+    do: error(conn, 409, "files_differ", "the attestation's files are not the ones testor received")
+
   defp remote_reply({:error, reason}, conn)
-       when reason in [:bad_run_id, :bad_status, :bad_path, :not_an_image],
+       when reason in [:bad_run_id, :bad_status, :bad_path, :not_an_image, :malformed, :not_this_run],
        do: error(conn, 400, "bad_request", "not accepted: #{reason}")
 
   defp remote_reply(error, conn), do: agent_reply(error, conn)
