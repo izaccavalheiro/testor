@@ -44,18 +44,22 @@ defmodule Testor.Config do
 
   @doc "The retention policy; config.json in the data folder overrides any key of the defaults."
   def retention do
-    user =
-      with {:ok, text} <- File.read(Path.join(data_dir(), "config.json")),
-           {:ok, map} when is_map(map) <- JSON.decode(strip_bom(text)) do
-        map
-      else
-        _ -> %{}
-      end
+    user = user()
 
     Map.new(@defaults, fn
       {key, value} when is_map(value) -> {key, Map.merge(value, Map.get(user, key, %{}))}
       {key, value} -> {key, Map.get(user, key, value)}
     end)
+  end
+
+  @doc "config.json in the data folder as written, `%{}` when there is none or it is not an object."
+  def user do
+    with {:ok, text} <- File.read(Path.join(data_dir(), "config.json")),
+         {:ok, map} when is_map(map) <- JSON.decode(strip_bom(text)) do
+      map
+    else
+      _ -> %{}
+    end
   end
 
   def strip_bom(<<0xEF, 0xBB, 0xBF, rest::binary>>), do: rest

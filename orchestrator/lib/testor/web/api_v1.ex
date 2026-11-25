@@ -275,6 +275,11 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # config.json's schedules (Testor.Schedules), each with its next time, of the projects one sees.
+  get "/schedules" do
+    json(conn, 200, %{"data" => Testor.Access.filter(Testor.Schedules.list(), conn.assigns.principal)})
+  end
+
   post "/jobs" do
     with {:ok, who} <- signed_in(conn),
          {:ok, params, conn} <- body_params(conn) do

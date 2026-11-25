@@ -24,6 +24,8 @@ POST /api/v1/jobs {project, kind} ──▶ testor's queue ──lease──▶ 
 - **Leases, labels, refs.** Agents renew a lease while they run a job; a job whose agent
   disappears is tried again. Jobs can ask for labels (`windows`, `gpu`) and a git ref the agent
   checks out (or clones). One job per project runs at a time.
+- **Scheduled.** Nightly suites and other recurring jobs from cron expressions in
+  `config.json`, never piling up behind a slow run.
 - **Isolated.** Each job can run in a git worktree or a copy of the workspace of its own,
   removed after, so one run never finds what another left.
 - **Secrets.** A project's secrets come from Vault, AWS, GCP or Azure secret managers, SOPS

@@ -127,6 +127,29 @@ is queued). See [deploy/helm/testor](../deploy/helm/testor/README.md).
 `scripts/container-e2e.sh` runs testor and an agent container on one network and a job through
 them, as CI does.
 
+## Schedules
+
+Nightly suites and other recurring runs: `schedules` in `config.json` queue a job when their
+cron expression matches the minute, as `POST /api/v1/jobs` would:
+
+```json
+{ "execution": { "enabled": true },
+  "schedules": [
+    { "name": "nightly-web", "cron": "0 2 * * *", "project": "web", "kind": "test",
+      "labels": ["linux"], "ref": "main" },
+    { "name": "hourly-lint", "cron": "@hourly", "project": "api", "kind": "lint" } ] }
+```
+
+- **Cron** of five fields in **UTC** (minute, hour, day of month, month, day of week): `*`,
+  numbers, ranges, lists and steps (`*/15`, `9-17`, `1-5`); `@hourly`, `@daily`, `@weekly`,
+  `@monthly`, `@yearly`. With both a day and a weekday, either matches, as in cron.
+- **No pile-up.** A schedule whose last job is still queued, leased or running queues none.
+- Its jobs are requested by `schedule:<name>` and go through the same agents, allow-lists,
+  labels, secrets and isolation as any other. They need jobs on (`execution.enabled`).
+- `config.json` is read every minute; a schedule that is not valid is left out, and
+  `testor.log` says why. `GET /api/v1/schedules` lists them with their next time (or why not),
+  for the projects one may see.
+
 ## Isolation
 
 By default a project's jobs run in its workspace, one at a time, so a run finds what the one
