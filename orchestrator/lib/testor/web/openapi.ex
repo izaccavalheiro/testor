@@ -24,6 +24,7 @@ defmodule Testor.Web.OpenAPI do
         %{"name" => "maintenance"},
         %{"name" => "jobs"},
         %{"name" => "gates"},
+        %{"name" => "approvals"},
         %{"name" => "agents"}
       ],
       "paths" => paths(),
@@ -143,6 +144,27 @@ defmodule Testor.Web.OpenAPI do
       "/jobs/{id}/cancel" => %{
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" => op("jobs", "Cancel a job (scope execute)", %{"type" => "object"})
+      },
+      "/approvals" => %{
+        "get" =>
+          op("approvals", "What AI agents asked to do and a person must approve (?status=pending)", %{
+            "type" => "object"
+          })
+      },
+      "/approvals/{id}" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "get" => op("approvals", "An approval, with the tool's result once done", %{"type" => "object"})
+      },
+      "/approvals/{id}/approve" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" =>
+          op("approvals", "Approve: testor calls the tool as the agent that asked (its tool's scope)", %{
+            "type" => "object"
+          })
+      },
+      "/approvals/{id}/deny" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" => op("approvals", "Deny: nothing is done", %{"type" => "object"})
       },
       "/gates" => %{
         "get" => op("gates", "config.json's release gates, or why one is left out", %{"type" => "object"})

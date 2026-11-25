@@ -106,6 +106,9 @@ td.path { word-break: break-all; color: var(--muted); }
 .lightbox.open { display: flex; }
 .lightbox img { max-width: 96vw; max-height: 86vh; object-fit: contain; background: #fff; }
 .lightbox .cap { color: #ddd; font-size: 13px; text-align: center; }
+.approvals { margin: 12px 20px 0; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: 10px; }
+.approvals[hidden] { display: none; }
+.approvals .item { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 4px 0; }
 .toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 30; max-width: calc(100vw - 32px); }
 .toast { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 8px; padding: 8px 12px; box-shadow: 0 4px 16px rgba(0,0,0,.12); font-size: 13px; cursor: pointer; animation: slide .2s ease-out; }
 .toast.passed { border-left-color: var(--green); } .toast.failed { border-left-color: var(--red); } .toast.aborted, .toast.cancelled { border-left-color: var(--amber); }
@@ -147,6 +150,7 @@ td.path { word-break: break-all; color: var(--muted); }
   </nav>
   <div class="right"><span id="who"></span><span id="usage"></span><span id="disk"></span><span><span class="dot" id="conn"></span> <span id="conn-text">connecting…</span></span></div>
 </header>
+<section id="approvals" class="approvals" hidden></section>
 <main id="app"></main>
 <div class="lightbox" id="lightbox"><img alt=""><div class="cap"></div></div>
 <div class="toasts" id="toasts"></div>
@@ -210,7 +214,11 @@ let viaSession = false;
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { "X-Testor": "1", ...(opts.headers || {}) } });
   if (res.status === 401 && viaSession) location.href = "/";
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+  if (!res.ok) {
+    // /api/v1 answers {"error": {"code", "message"}}; the dashboard's own routes {"error": "..."}.
+    const error = (await res.json().catch(() => ({}))).error;
+    throw new Error(error?.message || error || res.statusText);
+  }
   return res;
 }
 
@@ -273,6 +281,7 @@ function connect() {
   on("sessions", (list) => { S.sessions = list; });
   on("stats", (stats) => { S.stats = stats; shotsDirty = artsDirty = true; });
   on("maintenance", (m) => { maint = m; });
+  on("approval", () => loadApprovals());
   on("device", (d) => { S.device.sample = d.sample; S.device.history = [...S.device.history, d.point].slice(-360); });
   on("device_static", (st) => { S.device.static = st; });
   es.onopen = () => setConn("live");
@@ -795,8 +804,28 @@ function bindLightbox() {
 lb.addEventListener("click", (e) => { if (e.target.tagName !== "A") lb.classList.remove("open"); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") lb.classList.remove("open"); });
 
+// What AI agents asked to do and a person must approve (Testor.Approvals).
+async function loadApprovals() {
+  const el = $("#approvals");
+  try {
+    const { data } = await (await api("/api/v1/approvals?status=pending")).json();
+    el.hidden = data.length === 0;
+    el.innerHTML = `<b>Waiting for approval</b>` + data.map((a) => `<div class="item">
+      <span><b>${esc(a.requestedBy)}</b> asks to <b>${esc(a.tool)}</b> ${a.arguments?.id ? `<a class="mono" href="#/run/${encodeURIComponent(a.arguments.id)}">${esc(a.arguments.id)}</a>` : ""}${a.project ? ` (${esc(a.project)})` : ""}</span>
+      <span class="muted">until ${esc(when(a.expiresAt))}</span>
+      <button class="small" data-approve="${esc(a.id)}">Approve</button> <button class="small danger" data-deny="${esc(a.id)}">Deny</button></div>`).join("");
+    el.querySelectorAll("[data-approve],[data-deny]").forEach((b) => b.addEventListener("click", async () => {
+      const id = b.dataset.approve || b.dataset.deny;
+      try { await api(`/api/v1/approvals/${encodeURIComponent(id)}/${b.dataset.approve ? "approve" : "deny"}`, { method: "POST" }); }
+      catch (e) { alert(e.message); }
+      loadApprovals();
+    }));
+  } catch { el.hidden = true; }
+}
+
 connect();
 enter();
+loadApprovals();
 api("/api/v1/auth/me").then((r) => r.json()).then((me) => {
   if (me.via !== "session") return;
   viaSession = true;

@@ -13,6 +13,11 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   optional agent signature and age); `GET /api/v1/gates/<name>?commit=<sha>` answers whether
   the commit passes from each kind's latest run of it from a clean tree, checking testor's
   attestation again with its key, for a pipeline or an OPA policy. `GET /api/v1/gates`.
+- **Approvals for AI agents' actions**: `approvals` in `config.json` lists MCP tools (such as
+  `delete_run`, `cancel_run`) that wait for a person: the agent's call records a request that
+  someone else with the tool's scope approves or denies (the dashboard, `/api/v1/approvals`),
+  and testor then calls it as the agent, checking its access again; `get_approval` reads the
+  result. Requests expire (`ttlMinutes`, 30).
 - **Commit statuses**: runs of a commit show on its pull request in GitHub (including
   Enterprise) or GitLab: `testor/<kind>` pending while it runs, then success or failure with its
   counts and a link, from `statuses.json` in the secrets folder.

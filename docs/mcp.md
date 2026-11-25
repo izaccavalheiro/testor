@@ -36,10 +36,32 @@ The tools listed are the ones the caller's scopes allow.
 | `get_device` | read | OS, CPU, memory, GPUs, disks and the latest load sample |
 | `cancel_run` | operate | kills a running run's process tree |
 | `delete_run` | operate | deletes a finished run with its log, screenshots and artifacts |
+| `get_approval` | read | the state of an approval a tool asked for, and its result once done |
 
 Results carry the data as JSON text and as `structuredContent`; a tool that fails answers
 `isError: true` with the reason. Screenshot and artifact links are absolute and, while
 authentication is on, signed, so the agent can fetch them without credentials.
+
+## Approvals
+
+An agent can be kept from acting alone: `approvals` in `config.json` lists the tools that need a
+person's approval.
+
+```json
+{ "approvals": { "tools": ["delete_run", "cancel_run"], "ttlMinutes": 30 } }
+```
+
+Such a tool, called over MCP, does nothing yet: testor checks the agent's access, records the
+request and answers with the approval's id, and the dashboard shows it to people (with
+**Approve** and **Deny**; also `GET /api/v1/approvals?status=pending`,
+`POST /api/v1/approvals/<id>/approve` or `/deny`, and the `approval` event).
+
+- Someone **other than the agent's user**, holding the tool's scope on the run's project,
+  decides.
+- Once approved, testor calls the tool **as the agent**, checking its access again, and keeps
+  the result; the agent reads it with `get_approval` (`done`, `failed`, `denied`, `expired`).
+- A request not decided within `ttlMinutes` (30) expires and does nothing. Requests live in
+  memory: a restart drops the pending ones.
 
 ## Example
 

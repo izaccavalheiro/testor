@@ -60,5 +60,8 @@ an agent that can fetch URLs can look at a failure screenshot without credential
   with your SSH access to run tasks.
 - The server is stateless: no server-initiated notifications. Use `wait_for_run` to wait.
 - Give agents `read` tokens unless they need to cancel runs, and short lifetimes.
+- To keep an agent from acting alone, list tools in `approvals` (`config.json`): its
+  `cancel_run` or `delete_run` then waits for someone else to approve it on the dashboard
+  ([approvals](../reference/mcp.md#approvals)).
 
 Full reference: [MCP server](../reference/mcp.md).

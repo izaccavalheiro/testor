@@ -116,6 +116,19 @@ defmodule Testor.MCP.Tools do
       "scope" => "read"
     },
     %{
+      "name" => "get_approval",
+      "title" => "An approval",
+      "description" =>
+        "The state of an approval a tool asked a person for (pending, done, failed, denied, " <>
+          "expired) and, once done, the tool's result.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{"id" => %{"type" => "string", "description" => "the approval's id"}},
+        "required" => ["id"]
+      },
+      "scope" => "read"
+    },
+    %{
       "name" => "cancel_run",
       "title" => "Cancel a run",
       "description" => "Kills a running run's whole process tree and records it as cancelled.",
@@ -157,7 +170,9 @@ defmodule Testor.MCP.Tools do
 
       %{"scope" => scope} ->
         if scope in principal.scopes do
-          {:ok, args |> gated(name, base, principal, scope) |> result()}
+          if name in Testor.Approvals.tools(),
+            do: {:ok, args |> ask(name, base, principal, scope) |> result()},
+            else: {:ok, args |> gated(name, base, principal, scope) |> result()}
         else
           {:ok, failure("#{Testor.Auth.who(principal)} lacks the #{scope} scope this tool needs")}
         end
@@ -168,6 +183,13 @@ defmodule Testor.MCP.Tools do
 
   # A run, or a project, the principal may not see is one that does not exist (Testor.Access).
   defp gated(args, name, base, principal, scope) do
+    case access(args, name, principal, scope) do
+      :ok -> run(args, name, base, principal)
+      answer -> answer
+    end
+  end
+
+  defp access(args, name, principal, scope) do
     run_id = args["id"]
     run = is_binary(run_id) && Store.get(run_id)
 
@@ -182,9 +204,41 @@ defmodule Testor.MCP.Tools do
         {:ok, %{"flaky" => []}}
 
       true ->
-        run(args, name, base, principal)
+        :ok
     end
   end
+
+  # A tool that needs a person's approval (Testor.Approvals): asked for, not done.
+  defp ask(args, name, base, principal, scope) do
+    case access(args, name, principal, scope) do
+      :ok ->
+        project =
+          case is_binary(args["id"]) && Store.get(args["id"]) do
+            %{"project" => project} -> project
+            _ -> nil
+          end
+
+        {:ok, approval} = Testor.Approvals.request(name, args, principal, project, base)
+
+        {:ok,
+         %{
+           "approval" => approval,
+           "message" =>
+             "#{name} needs a person's approval: nothing was done yet. Ask someone to approve " <>
+               "#{approval["id"]} (POST /api/v1/approvals/#{approval["id"]}/approve, or the dashboard), " <>
+               "then read its result with get_approval."
+         }}
+
+      answer ->
+        answer
+    end
+  end
+
+  @doc "A tool's scope."
+  def scope(name), do: Enum.find_value(@tools, &(&1["name"] == name && &1["scope"]))
+
+  @doc "Calls tool `name` as `principal` now, past any approval (an approved request): a `CallToolResult`."
+  def execute(name, args, principal, base), do: args |> gated(name, base, principal, scope(name)) |> result()
 
   defp run(_args, "get_status", _base, principal) do
     {running, _} = Query.runs(%{status: "running", limit: 50, allow: &Access.allowed?(principal, &1)})
@@ -300,6 +354,19 @@ defmodule Testor.MCP.Tools do
         {:ok, run} -> {:ok, %{"run" => Query.compact(run)}}
         {:error, _, _, message} -> {:error, message}
       end
+    end
+  end
+
+  defp run(args, "get_approval", _base, principal) do
+    case is_binary(args["id"]) && Testor.Approvals.get(args["id"]) do
+      %{} = approval ->
+        if Access.allowed?(principal, approval["project"]) or
+             approval["requestedBy"] == Testor.Auth.who(principal),
+           do: {:ok, approval},
+           else: {:error, "no approval #{args["id"]}"}
+
+      _ ->
+        {:error, "no approval #{args["id"]}"}
     end
   end
 
