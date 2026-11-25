@@ -150,6 +150,8 @@ defmodule Testor.Web.ApiV1 do
     |> put_resp_header("cache-control", "no-cache, max-age=0")
     |> put_resp_header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'")
     |> send_resp(200, Testor.Badge.svg(project, conn.query_params["kind"]))
+  end
+
   # DORA's four metrics of the runs of the task that delivers the project (Testor.Dora).
   get "/projects/:project/dora" do
     conn = fetch_query_params(conn)

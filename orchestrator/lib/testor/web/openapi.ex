@@ -174,6 +174,8 @@ defmodule Testor.Web.OpenAPI do
         "get" =>
           op("runs", "The latest result as an SVG badge (public for config.json's publicBadges)", %{
             "type" => "string"
+          })
+      },
       "/projects/{project}/dora" => %{
         "parameters" => [
           %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},

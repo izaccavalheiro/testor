@@ -111,6 +111,7 @@ Spans are sent once, in the background; a collector that cannot be reached is lo
 when given) as an SVG badge, `Cache-Control: no-cache`. Scope `read`, unless `config.json`'s
 `publicBadges` lists the project: its badge then answers without credentials. See [badges and
 Backstage](../website/docs/features/badges-and-backstage.md).
+
 ## DORA metrics
 
 `GET /api/v1/projects/<project>/dora?kind=deploy&days=30` (scope `read`) gives the four DORA
