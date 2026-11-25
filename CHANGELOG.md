@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.8.0 - 2026-11-25
+
 ### Added
 
 - **Per-project access**: a user (and their tokens) can be limited to projects

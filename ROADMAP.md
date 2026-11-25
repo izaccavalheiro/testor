@@ -26,35 +26,19 @@ Two principles hold through every milestone:
 | **0.5.0** | Agents on other machines: an agent with `"upload": true` keeps its own home and sends each run to testor over HTTPS (record, log chunks at offsets, screenshots and artifacts); remote runs are live, parsed, signed and cancellable like local ones | released |
 | **0.6.0** | Agents in containers and Kubernetes: the agent image, the Helm chart's agents with KEDA autoscaling on queued jobs, repositories cloned on demand; spec results from Vitest 5 (its verbose reporter) | released |
 | **0.7.0** | Runs signed by their agent: ECDSA P-256 keys pinned on first lease, an in-toto attestation per remote run checked byte for byte against the files received, verifiable with OpenSSL | released |
+| **0.8.0** | Teams and identity: per-project access and a role per project; EdDSA tokens with a published JWKS; single sign-on with OpenID Connect; secrets for jobs from Vault, cloud secret managers and SOPS, resolved on the runner and masked; identity tokens for jobs (testor as an OIDC issuer for cloud credentials); isolated workspaces; scheduled jobs; OpenTelemetry traces joined to CI's; the agent image for arm64 | released |
 
 ## Next milestones
 
 Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-### 0.8: teams
-
-- **Per-project access** (done, in the next release): a user, a token or an agent limited to
-  some projects, on every run, job, list, stream and MCP tool, with a role per project.
-- **Asymmetric tokens** (done, in the next release): EdDSA, the public keys at
-  `/.well-known/jwks.json`, so other services verify them without a secret.
-- **Single sign-on** (done, in the next release): OpenID Connect sign-in for the dashboard,
-  groups mapped to roles and projects ([identity](docs/design/identity.md)).
-- **Secrets for jobs** (done, in the next release): agents resolve a job's secrets on their
-  machine (Vault, AWS, GCP, Azure secret managers, SOPS, environment, files) with the
-  machine's workload identity, masked in its logs.
-- **Identity tokens for jobs** (done, in the next release): testor as an OpenID Connect
-  issuer, so jobs trade a short token for cloud or Vault credentials, with no stored keys.
-- **Isolated workspaces for jobs** (done, in the next release): a git worktree or a copy per
-  job, removed after its run.
-
 ### 0.9: many testors, other backends
 
 - A **hub**: the board and history across several testors, filtered by runner label.
 - [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the run
-  index, S3-compatible object storage for logs and artifacts, RabbitMQ, NATS or SQS for jobs.
-- **OpenTelemetry traces** of runs and jobs (done, in the next release), joined to CI's trace.
-- **The agent image for arm64** (done, in the next release).
-- **Scheduled jobs** (done, in the next release): nightly suites from the same allow-lists.
+  index, S3-compatible object storage for logs and artifacts (with the bucket's server-side
+  encryption), RabbitMQ, NATS or SQS for jobs.
+- Signed links bound to the viewer and minutes long.
 
 ### Later
 
