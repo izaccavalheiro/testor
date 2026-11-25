@@ -32,8 +32,18 @@ const FEATURES: readonly (readonly [string, ReactNode, string])[] = [
   ],
   [
     "Secure when shared",
-    <>Users, roles and scopes, JWT tokens, signed links, CSRF protection, rate limiting and an audit log. Nothing in the API runs commands.</>,
+    <>Users, roles and scopes, JWT tokens, signed links, DNS rebinding and CSRF protection, rate limiting, built-in TLS, secrets masked in logs.</>,
     "/docs/features/authentication",
+  ],
+  [
+    "Jobs and agents",
+    <>Queue runs through the API; agents run them on your machines, other networks, containers or Kubernetes, and send them back. Off until you turn it on.</>,
+    "/docs/features/jobs-and-agents",
+  ],
+  [
+    "Evidence you can check",
+    <>Every run signed as an in-toto attestation, runs from agents signed by the agent too, and a tamper-evident audit trail, all verifiable with OpenSSL.</>,
+    "/docs/features/signed-results",
   ],
 ];
 
@@ -149,8 +159,8 @@ export default function Home(): ReactNode {
               <div className={styles.card}>
                 <h3>Cloud native</h3>
                 <p>
-                  <span className={styles.planned}>Planned</span> Container images, one hub for many runners,
-                  ephemeral runners on Kubernetes, object storage. <Link to="/docs/project/roadmap">Roadmap →</Link>
+                  Container images, a Helm chart, and test agents in Kubernetes scaled by KEDA on queued
+                  jobs. <Link to="/docs/features/jobs-and-agents">Jobs and agents →</Link>
                 </p>
               </div>
             </div>

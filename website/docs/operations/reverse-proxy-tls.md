@@ -7,35 +7,23 @@ description: Serve testor over HTTPS with Caddy, nginx or tailscale serve, and m
 # Reverse proxy and TLS
 
 testor speaks plain HTTP. That is fine over Tailscale (WireGuard encrypts it) and on a network
-only you use. Anywhere else, put a TLS-terminating proxy in front and keep testor itself off the
-network.
+only you use. Anywhere else, give testor a certificate, or put a TLS-terminating proxy in front
+and keep testor itself off the network.
 
 ## Listen on localhost only
 
-Set `TESTOR_BIND=127.0.0.1` for the service. The installer does not take this option yet (it is
-planned for 0.3), so set it where the service reads its environment, in a way a redeploy
-keeps:
-
-**Linux (systemd).** A drop-in survives redeploys, which rewrite the unit itself:
+Make testor listen on loopback only, so only the proxy reaches it, and tell it the proxy's
+name and address. `task testor:deploy` keeps these settings on the runner across redeploys:
 
 ```sh
-mkdir -p ~/.config/systemd/user/testor.service.d
-printf '[Service]\nEnvironment=TESTOR_BIND=127.0.0.1\n' > ~/.config/systemd/user/testor.service.d/bind.conf
-systemctl --user daemon-reload && systemctl --user restart testor
+task testor:deploy BIND=127.0.0.1 ALLOWED_HOSTS=testor.example.com TRUSTED_PROXIES=127.0.0.1
 ```
 
-**Windows.** The scheduled task's process inherits the user's environment variables:
+(`install.ps1 -Bind -AllowedHosts -TrustedProxies` on the runner itself.)
 
-```powershell
-[Environment]::SetEnvironmentVariable("TESTOR_BIND", "127.0.0.1", "User")
-Stop-ScheduledTask Testor; Start-ScheduledTask Testor
-```
-
-**macOS.** The launchd agent's plist is rewritten on each deploy. Rely on the macOS firewall,
-or on the proxy running on another machine that reaches testor over Tailscale.
-
-Check with `task testor:status`: health answers from the runner itself, and no longer from the
-workstation.
+**No proxy at all?** testor serves HTTPS itself with a certificate and its key in PEM files
+(`tailscale cert`, or any ACME client): `task testor:deploy TLS_CERT=/path/cert.pem
+TLS_KEY=/path/key.pem`.
 
 ## Caddy
 

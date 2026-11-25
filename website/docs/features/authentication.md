@@ -70,12 +70,14 @@ They can be shared with someone who has no account, for that time.
 
 ## Caveats
 
-- testor speaks plain **HTTP**. Use it over Tailscale (encrypted) or put a TLS proxy in front
+- testor speaks plain **HTTP** unless it has a certificate (`TESTOR_TLS_CERT`,
+  `TESTOR_TLS_KEY`). Without one, use it over Tailscale (encrypted) or put a TLS proxy in front
   ([reverse proxy and TLS](../operations/reverse-proxy-tls.md)); otherwise passwords and tokens
   cross the network readable.
 - Users are local to each runner; there is no single sign-on yet (OpenID Connect is on the
   [roadmap](../project/roadmap.md)).
 - Authentication covers testor's HTTP interfaces. Who can **run** commands is decided by SSH
-  keys on the runner, as before.
+  keys on the runner and, for [jobs](jobs-and-agents.md), by the `execute` scope together with the
+  commands each agent's own configuration lists.
 
 Full model: [Security](../reference/security.md).

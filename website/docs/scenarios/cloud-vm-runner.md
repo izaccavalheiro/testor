@@ -63,6 +63,7 @@ by a stop are marked aborted.
 - testor stores everything on the VM's disk. Snapshots, logs and artifacts disappear with the
   VM: keep the data disk if you recreate it, or back up `~/test-run/.testor`
   ([upgrade and backup](../operations/upgrade-and-backup.md)).
-- Ephemeral, autoscaled cloud runners, container images and object storage for artifacts are
-  planned, not available yet ([roadmap](../project/roadmap.md)).
+- For ephemeral, autoscaled runners, run [agents](../features/jobs-and-agents.md) in containers
+  or Kubernetes (KEDA scales them on queued jobs) instead of a long-lived VM. Object storage for
+  artifacts is on the [roadmap](../project/roadmap.md).
 - Plain HTTP on the internet exposes passwords and tokens: never open 6767 itself.

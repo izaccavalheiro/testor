@@ -66,6 +66,14 @@ editor; or to give an idle machine a job.
 - **Security.** Off until you add a user; then HTTP Basic for the dashboard, JWT bearer tokens
   for programs, roles and scopes, signed file links, rate limiting, CSRF protection and an
   audit log. See [docs/security.md](docs/security.md).
+- **Jobs and agents.** Opt-in: queue a run through the API (`POST /api/v1/jobs`) and an agent
+  (`runner/agent.ps1`) takes it and runs it on its machine, in another network, in a container
+  or in Kubernetes (agent pods scaled by KEDA on queued jobs), then sends it back. A job names a
+  project and task; the agent's own configuration holds the commands. See
+  [docs/jobs.md](docs/jobs.md).
+- **Evidence.** Every finished run signed as an in-toto attestation, runs from agents signed by
+  the agent too, a chained and signed audit trail; Prometheus `/metrics` and signed webhooks.
+  See [docs/attestation.md](docs/attestation.md).
 - **Unchanged terminal.** Output, stderr and exit codes reach your terminal exactly as without
   testor; scripts that pipe or parse a task's output keep working.
 
@@ -73,7 +81,7 @@ editor; or to give an idle machine a job.
 
 | Where       | What                                                                                   |
 | ----------- | -------------------------------------------------------------------------------------- |
-| runner      | Windows 10/11, Linux (with systemd) or macOS; an SSH server; [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell); Git; Erlang/OTP 27+ and Elixir 1.18+. `runner/setup.ps1` installs or checks them. |
+| runner      | Windows 10/11, Linux (with systemd) or macOS; an SSH server; [PowerShell 7](https://learn.microsoft.com/powershell/scripting/install/installing-powershell); Git; Erlang/OTP 27+ and Elixir 1.18+ to build from source, or nothing more with a prebuilt release (`install.ps1 -FromRelease latest`). `runner/setup.ps1` installs or checks them. Or the container image `ghcr.io/izaccavalheiro/testor` and the Helm chart in `deploy/helm/testor`. |
 | workstation | any OS with `ssh`, `git`, `tar` and [Task](https://taskfile.dev) (`go-task`) 3.x; on Windows, the built-in OpenSSH client and `tar.exe` will do |
 | network     | SSH from the workstation to the runner; [Tailscale](https://tailscale.com) is optional but makes it work from anywhere |
 
@@ -181,24 +189,28 @@ CI builds, tests and smoke-tests the release on all three.
 
 ## Security
 
-Authentication is off on a fresh install, so it works at once on a private network; add a user
+Authentication is off on a fresh install, so it works at once on a private network (until then
+testor answers only private and Tailscale addresses, and only host names it knows); add a user
 and it is on:
 
 ```sh
 read -rs TESTOR_PASSWORD; export TESTOR_PASSWORD
-task testor:user USER=ada ROLE=admin      # viewer, operator or admin
+task testor:user USER=ada ROLE=admin      # viewer, operator, admin, or agent
 task testor:token USER=ada SCOPE=read     # a Bearer token for an MCP client or CI
 ```
 
 The dashboard then asks for the user name and password (HTTP Basic); programs use Basic or
 JSON Web Tokens (HS256) from `POST /api/v1/auth/token`. Roles grant scopes (`read`, `operate`,
-`maintain`); passwords are PBKDF2-SHA256 hashes; repeated failures are rate limited;
-screenshots and artifacts are reached through signed, expiring links; state-changing requests
-from other sites are refused; every change is logged with who made it. Plain HTTP: use it over
-Tailscale (encrypted) or behind a TLS proxy with `TESTOR_BIND=127.0.0.1`. On Windows the
-installer's firewall rule opens the port only to the Tailscale range and the local subnet
-(`ALLOW_FROM`). Nothing in the API starts a command: SSH is the only way commands reach the
-runner. Details: [docs/security.md](docs/security.md).
+`maintain`, `execute`, `agent`); passwords are PBKDF2-SHA256 hashes; repeated failures are rate
+limited; screenshots and artifacts are reached through signed, expiring links; state-changing
+requests from other sites, and requests for host names testor does not know (DNS rebinding),
+are refused; every change is in a chained, signed audit trail. HTTPS with
+`TESTOR_TLS_CERT` and `TESTOR_TLS_KEY`, or use Tailscale (encrypted) or a TLS proxy with
+`TESTOR_BIND=127.0.0.1`. On Windows the installer's firewall rule opens the port only to the
+Tailscale range and the local subnet (`ALLOW_FROM`). The API starts runs only as opt-in
+**jobs**, naming a project and task whose command the agent's own configuration holds; tests
+can run in an account of their own that cannot read testor's secrets. Details:
+[docs/security.md](docs/security.md).
 
 ## Development
 

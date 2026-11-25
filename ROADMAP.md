@@ -31,30 +31,27 @@ Two principles hold through every milestone:
 
 Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-### 0.4: agents and queues (opt-in)
+### 0.8: teams
 
-- The [agent protocol](docs/design/agent-protocol.md): runners that connect out to a
-  controller, take jobs by lease and sign their results; a `process` executor first, SSH kept.
-  **Steps 1 and 2 are in:** [jobs](docs/jobs.md), run by an agent on testor's machine or on
-  another one that sends its runs over HTTPS; next, container and Kubernetes executors.
-- A per-project queue, so a second run of a project waits instead of overwriting the snapshot
-  the first one uses; per-run workspaces.
-- API-triggered runs: an `execute` scope, commands limited to a project's allow-list at a
-  commit, off unless `execution.enabled`. Scheduled runs from the same allow-list.
+- **Per-project access** (in progress): a user, a token or an agent limited to some projects,
+  on every run, job, list, stream and MCP tool.
+- [Identity](docs/design/identity.md): OpenID Connect sign-in for the dashboard, groups mapped
+  to roles and projects; asymmetric tokens (JWKS) so other services verify them without a secret.
+- Secrets for jobs: a broker (Vault, cloud secret managers, SOPS files) handing secrets to a
+  job by name, masked in its logs.
 
-### 0.5: many runners, cloud native
+### 0.9: many testors, other backends
 
-- A **hub**: the board and history across controllers and agents, filters by runner label.
-- Container and Kubernetes executors (a Job per run), the chart's agent, KEDA on queue depth.
-- [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the index,
-  S3-compatible object storage for files, RabbitMQ, NATS or SQS for jobs.
-- OpenTelemetry traces of runs.
+- A **hub**: the board and history across several testors, filtered by runner label.
+- [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the run
+  index, S3-compatible object storage for logs and artifacts, RabbitMQ, NATS or SQS for jobs.
+- OpenTelemetry traces of runs and jobs.
+- The agent image for arm64; scheduled jobs (nightly suites from the same allow-lists).
 
-### 0.6: teams
+### Later
 
-- [Identity](docs/design/identity.md): OpenID Connect sign-in, asymmetric tokens (JWKS),
-  projects and teams, workload identity and a secrets broker.
 - Release gates on signed attestations; check runs on pull requests from webhooks.
+- A per-project queue for SSH runs too, and per-run workspaces.
 
 ## 1.0: stable
 
