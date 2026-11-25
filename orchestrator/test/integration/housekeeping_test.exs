@@ -106,10 +106,10 @@ defmodule Testor.Integration.HousekeepingTest do
   describe "stats" do
     test "measures on demand and publishes changes" do
       Events.subscribe("global")
-      # Refreshes other tests queued are counted first: one landing after the file below could
-      # make its +1 meet a screenshot another test deleted, and no change would be published.
-      _ = Stats.get()
       write(Path.join([Config.shots_dir(), "stats-run", "s.png"]), "PNG")
+      # A change is published; other tests add and delete screenshots meanwhile, so the count
+      # known before could equal the new one. A count no folder has makes the refresh a change.
+      :sys.replace_state(Stats, &Map.put(&1, "screenshots", %{"count" => -1}))
       Stats.refresh_screenshots()
       Stats.refresh_artifacts()
       Stats.refresh_artifacts()
