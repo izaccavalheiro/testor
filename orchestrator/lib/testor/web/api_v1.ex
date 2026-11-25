@@ -107,7 +107,7 @@ defmodule Testor.Web.ApiV1 do
     with_id(conn, id, fn conn ->
       conn = fetch_query_params(conn)
       params = conn.query_params
-      tail = int(params["tail"], 512 * 1024, 1, 64 * 1024 * 1024)
+      tail = int(params["tail"], 512 * 1024, 1, Testor.Query.max_tail())
       context = int(params["context"], 0, 0, 20)
       log = Query.log(id, tail, params["grep"], context)
 

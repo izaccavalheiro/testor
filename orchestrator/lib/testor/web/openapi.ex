@@ -106,7 +106,11 @@ defmodule Testor.Web.OpenAPI do
           op("runs", "The end of a run's output, as text", nil,
             text: true,
             params: [
-              query("tail", %{"type" => "integer", "default" => 524_288}, "bytes from the end"),
+              query(
+                "tail",
+                %{"type" => "integer", "default" => 524_288, "maximum" => 8_388_608},
+                "bytes from the end"
+              ),
               query(
                 "grep",
                 %{"type" => "string"},

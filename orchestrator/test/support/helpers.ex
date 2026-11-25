@@ -108,8 +108,12 @@ defmodule Testor.Test.Helpers do
     {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false, packet: :raw], 5_000)
     body = Keyword.get(opts, :body)
 
+    extra = Keyword.get(opts, :headers, [])
+    host = if List.keymember?(extra, "host", 0), do: [], else: [{"host", "127.0.0.1:#{port}"}]
+
     headers =
-      [{"host", "127.0.0.1:#{port}"}, {"connection", "close"}] ++
+      host ++
+        [{"connection", "close"}] ++
         if(body,
           do: [
             {"content-type", Keyword.get(opts, :type, "application/json")},
@@ -117,7 +121,7 @@ defmodule Testor.Test.Helpers do
           ],
           else: []
         ) ++
-        Keyword.get(opts, :headers, [])
+        extra
 
     head = Enum.map_join(headers, "", fn {k, v} -> "#{k}: #{v}\r\n" end)
     method = method |> to_string() |> String.upcase()
@@ -219,6 +223,21 @@ defmodule Testor.Test.Helpers do
       data = Enum.find_value(lines, &(String.starts_with?(&1, "data: ") && String.trim_leading(&1, "data: ")))
       if name && data, do: [{name, JSON.decode!(data)}], else: []
     end)
+  end
+
+  @doc """
+  Makes `link` a link to the folder `target`: a junction on Windows (no privilege needed;
+  Erlang reports it as a symbolic link), a symbolic link elsewhere. No commas in the paths:
+  cmd.exe splits arguments at them.
+  """
+  def link_dir(target, link) do
+    if Testor.OS.windows?() do
+      win = &String.replace(&1, "/", "\\")
+      {_, 0} = System.cmd("cmd", ["/c", "mklink", "/J", win.(link), win.(target)])
+      :ok
+    else
+      :ok = File.ln_s(target, link)
+    end
   end
 
   @doc """

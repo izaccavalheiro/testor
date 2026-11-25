@@ -22,6 +22,10 @@
 #                and runs scripts/smoke.ps1 against it: the end-to-end check CI runs
 #   -Format      formats the sources in place (mix format), for `task testor:format`
 #   -Uninstall   removes the service (and on Windows the firewall rule); data is kept
+#
+# The service's environment (saved in <home>/service.json, so later deploys keep it; pass ""
+# to remove one): -Bind (TESTOR_BIND), -AllowedHosts (TESTOR_ALLOWED_HOSTS), -TrustedProxies
+# (TESTOR_TRUSTED_PROXIES), -Anonymous (TESTOR_ANONYMOUS), -SecretsDir (TESTOR_SECRETS_DIR).
 param(
   [switch]$Uninstall,
   [switch]$Test,
@@ -29,6 +33,13 @@ param(
   [switch]$Smoke,
   [string[]]$TestArgs = @(),
   [int]$Port = 6767,
+  # The service's environment, kept across redeploys: TESTOR_BIND (an address, "" for every
+  # interface), TESTOR_ALLOWED_HOSTS, TESTOR_TRUSTED_PROXIES, TESTOR_ANONYMOUS, TESTOR_SECRETS_DIR.
+  [string]$Bind = "",
+  [string]$AllowedHosts = "",
+  [string]$TrustedProxies = "",
+  [ValidateSet("", "private", "loopback", "any")][string]$Anonymous = "",
+  [string]$SecretsDir = "",
   [string[]]$AllowFrom = @("100.64.0.0/10", "LocalSubnet")
 )
 $ErrorActionPreference = "Stop"
@@ -138,10 +149,30 @@ if ($Smoke) {
 
 Copy-Item (Join-Path $PSScriptRoot "run.ps1") (Join-Path $testorHome "run.ps1") -Force
 
-$env:MIX_ENV = "prod"
-mix deps.get --only prod | Out-Null
+# The service's environment: what this call names, else what the last install saved.
+$serviceFile = Join-Path $testorHome "service.json"
+$serviceEnv = [ordered]@{}
+if (Test-Path $serviceFile) {
+  (Get-Content -Raw $serviceFile | ConvertFrom-Json -AsHashtable).GetEnumerator() | ForEach-Object { $serviceEnv[$_.Key] = $_.Value }
+}
+foreach ($pair in @(
+    @("TESTOR_BIND", $Bind, $PSBoundParameters.ContainsKey("Bind")),
+    @("TESTOR_ALLOWED_HOSTS", $AllowedHosts, $PSBoundParameters.ContainsKey("AllowedHosts")),
+    @("TESTOR_TRUSTED_PROXIES", $TrustedProxies, $PSBoundParameters.ContainsKey("TrustedProxies")),
+    @("TESTOR_ANONYMOUS", $Anonymous, $PSBoundParameters.ContainsKey("Anonymous")),
+    @("TESTOR_SECRETS_DIR", $SecretsDir, $PSBoundParameters.ContainsKey("SecretsDir")))) {
+  if (-not $pair[2]) { continue }
+  if ($pair[1]) { $serviceEnv[$pair[0]] = $pair[1] } else { $serviceEnv.Remove($pair[0]) }
+}
+foreach ($value in $serviceEnv.Values) {
+  if ($value -match '["\r\n%]') { throw "service settings cannot hold double quotes, percent signs or line breaks: $value" }
+}
+$serviceEnv | ConvertTo-Json | Set-Content -Path $serviceFile -Encoding utf8NoBOM
+
 $staging = Join-Path $testorHome "app.new"
 if (Test-Path $staging) { Remove-Item -Recurse -Force $staging }
+$env:MIX_ENV = "prod"
+mix deps.get --only prod | Out-Null
 mix release --overwrite --quiet --path $staging
 
 Stop-Testor
@@ -150,7 +181,8 @@ Move-Item $staging $app
 
 if ($IsWindows) {
   $bat = Join-Path $app "bin\testor.bat"
-  $command = "set `"TESTOR_HOME=$testorHome`" && set `"TESTOR_WORKSPACES=$workspaces`" && set `"TESTOR_PORT=$Port`" && `"$bat`" start"
+  $extra = ($serviceEnv.GetEnumerator() | ForEach-Object { "set `"$($_.Key)=$($_.Value)`" && " }) -join ""
+  $command = "set `"TESTOR_HOME=$testorHome`" && set `"TESTOR_WORKSPACES=$workspaces`" && set `"TESTOR_PORT=$Port`" && $extra`"$bat`" start"
   $action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c $command" -WorkingDirectory $testorHome
   $trigger = New-ScheduledTaskTrigger -AtStartup
   $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType S4U -RunLevel Limited
@@ -164,6 +196,7 @@ if ($IsWindows) {
   Start-ScheduledTask -TaskName $name
 } elseif ($IsLinux) {
   $null = New-Item -ItemType Directory -Force -Path (Split-Path $unit)
+  $extra = ($serviceEnv.GetEnumerator() | ForEach-Object { "Environment=`"$($_.Key)=$($_.Value)`"`n" }) -join ""
   @"
 [Unit]
 Description=testor, the test orchestrator (port $Port)
@@ -173,10 +206,15 @@ After=network-online.target
 Environment=TESTOR_HOME=$testorHome
 Environment=TESTOR_WORKSPACES=$workspaces
 Environment=TESTOR_PORT=$Port
+$extra
 WorkingDirectory=$testorHome
 ExecStart=$app/bin/testor start
 Restart=always
 RestartSec=5
+# What a user unit can harden without privileges: no privilege gain through setuid programs,
+# and files only the user reads.
+NoNewPrivileges=yes
+UMask=0077
 
 [Install]
 WantedBy=default.target
@@ -191,6 +229,8 @@ WantedBy=default.target
   $PSNativeCommandUseErrorActionPreference = $true
 } else {
   $null = New-Item -ItemType Directory -Force -Path (Split-Path $plist)
+  $extra = ($serviceEnv.GetEnumerator() | ForEach-Object {
+      "    <key>$($_.Key)</key><string>$([Security.SecurityElement]::Escape($_.Value))</string>`n" }) -join ""
   @"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -203,7 +243,7 @@ WantedBy=default.target
     <key>TESTOR_HOME</key><string>$testorHome</string>
     <key>TESTOR_WORKSPACES</key><string>$workspaces</string>
     <key>TESTOR_PORT</key><string>$Port</string>
-    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+$extra    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>WorkingDirectory</key><string>$testorHome</string>
   <key>RunAtLoad</key><true/>
@@ -215,10 +255,12 @@ WantedBy=default.target
   launchctl bootstrap "gui/$(id -u)" $plist
 }
 
+$healthHost = if ($serviceEnv["TESTOR_BIND"] -and $serviceEnv["TESTOR_BIND"] -notin "0.0.0.0", "::") { $serviceEnv["TESTOR_BIND"] } else { "127.0.0.1" }
+if ($healthHost -match ":") { $healthHost = "[$healthHost]" }
 $deadline = (Get-Date).AddSeconds(30)
 do {
   Start-Sleep -Milliseconds 500
-  try { $health = Invoke-RestMethod "http://127.0.0.1:$Port/api/health" -TimeoutSec 2 } catch { $health = $null }
+  try { $health = Invoke-RestMethod "http://${healthHost}:$Port/api/health" -TimeoutSec 2 } catch { $health = $null }
 } until ($health -or (Get-Date) -gt $deadline)
 if (-not $health) { throw "testor did not answer on port $Port; see $(Join-Path $testorHome 'testor.log')" }
 $hostName = [Environment]::MachineName.ToLower()

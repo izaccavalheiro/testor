@@ -161,6 +161,11 @@ try {
   Check "v1: OpenAPI document" ($openapi.openapi -eq "3.1.0" -and $openapi.paths."/runs")
   $grep = Invoke-WebRequest "$base/api/v1/runs/$($test.id)/log?grep=failed"
   Check "v1: log filtered" ($grep.Content -match "tests/b.test.ts" -and "$($grep.Headers["X-Log-Matches"])" -eq "1") "($($grep.Content))"
+  # DNS rebinding: a name that is not this machine's is refused; IP addresses and localhost are not.
+  $rebound = Invoke-WebRequest "$base/api/health" -Headers @{ Host = "rebind.attacker.example" } -SkipHttpErrorCheck
+  Check "edge: an unknown Host is refused" ($rebound.StatusCode -eq 421) "($($rebound.StatusCode))"
+  $local = Invoke-WebRequest "$base/api/health" -Headers @{ Host = "localhost" } -SkipHttpErrorCheck
+  Check "edge: localhost is answered" ($local.StatusCode -eq 200) "($($local.StatusCode))"
   function Mcp($method, $params, $headers = @{}) {
     $body = @{ jsonrpc = "2.0"; id = 1; method = $method; params = $params } | ConvertTo-Json -Depth 6 -Compress
     Invoke-RestMethod -Method Post -ContentType "application/json" -Headers $headers "$base/mcp" -Body $body
@@ -182,6 +187,7 @@ try {
   Check "cancel settles the run" ($cancel.status -eq "cancelled")
   $gone = $slow.WaitForExit(15000)
   Check "cancel killed the process tree" $gone
+
 
   $deadline = (Get-Date).AddSeconds(30)
   do { Start-Sleep -Seconds 1; $device = Invoke-RestMethod "$base/api/device" } until (($device.static -and $null -ne $device.sample.cpu) -or (Get-Date) -gt $deadline)

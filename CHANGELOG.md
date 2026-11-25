@@ -7,6 +7,48 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Breaking
+
+- **While authentication is off, only private addresses are answered**: loopback, RFC 1918,
+  link-local, Tailscale's 100.64.0.0/10 and IPv6 unique-local, so a runner on a public address
+  is no longer open to the internet. Health checks stay public. `TESTOR_ANONYMOUS=any` restores
+  the previous behaviour; adding a user (`task testor:user`) is better.
+- **Requests for an unknown host name are refused** (`421`): an IP address, `localhost` and
+  the machine's own name are answered; any other name (a reverse proxy's public name, a
+  Tailscale MagicDNS full name) must be listed in `TESTOR_ALLOWED_HOSTS`.
+
+### Security
+
+- DNS rebinding: the `Host` allow-list above. The `Origin` check alone did not stop it: after
+  rebinding, a page's origin and the request's host are the attacker's name.
+- Symbolic links and junctions are never followed: not by the file routes (a run could link
+  its artifact folder to `jwt.key`), the directory walks (a link loop made them endless), run
+  records and logs, nor by `run.ps1` when it copies screenshots and artifacts.
+- Cancelling a run checks the process its record names first: never testor itself or a
+  process above it, nor a process that started after the run (a reused pid); the run is then
+  cancelled without killing anything, with a warning. A record whose pid was not a number
+  crashed the store.
+- Limits: at most 256 event streams, 16 per user or address (`503`); a log read is 8 MB at
+  most (was 64 MB); password hashes run at most twice the schedulers at once (`503`); a user
+  is refused after 30 failed passwords in 15 minutes from any addresses, while credentials
+  already verified keep working.
+
+### Added
+
+- `TESTOR_TRUSTED_PROXIES`: reverse proxies whose `X-Forwarded-For` names the client, for rate
+  limiting, the audit log and the anonymous-access check.
+- `TESTOR_ALLOWED_HOSTS`, `TESTOR_ANONYMOUS`, and `TESTOR_SECRETS_DIR` (where `auth.json` and
+  `jwt.key` live).
+- `install.ps1 -Bind -AllowedHosts -TrustedProxies -Anonymous -SecretsDir` (and `BIND`,
+  `ALLOWED_HOSTS`, ... on `task testor:deploy`): the service's environment, saved in
+  `<home>/service.json` and kept by later deploys. The Linux unit adds `NoNewPrivileges` and
+  `UMask=0077`.
+
+### Fixed
+
+- `task testor:test` clears the runner's ExUnit `tmp` folder: a junction a failed test left
+  there failed every later run.
+
 ## 0.2.0 - 2026-11-24
 
 ### Added

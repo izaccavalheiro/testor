@@ -20,6 +20,15 @@ The installer sets the first three for the service; the rest are optional.
 | `TESTOR_PORT` | `6767` | the HTTP port |
 | `TESTOR_BIND` | `0.0.0.0` | the address to listen on; `127.0.0.1` behind a proxy ([how to set it](reverse-proxy-tls.md#listen-on-localhost-only)) |
 | `TESTOR_JWT_SECRET` | `<home>/jwt.key` | the token and signed-link key, 32 bytes or more, instead of the key file |
+| `TESTOR_ALLOWED_HOSTS` | (none) | host names answered besides IP addresses, `localhost` and the machine's name: `testor.example.com`, `.example.com` (subdomains), `*` (no check). See [network exposure](../reference/security.md#network-exposure) |
+| `TESTOR_TRUSTED_PROXIES` | (none) | addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the client |
+| `TESTOR_ANONYMOUS` | `private` | who is answered while authentication is off: `private` (loopback, private, link-local, Tailscale), `loopback`, or `any` |
+| `TESTOR_SECRETS_DIR` | `<home>` | where `auth.json` and `jwt.key` live |
+
+`task testor:deploy` sets `TESTOR_BIND`, `TESTOR_ALLOWED_HOSTS`, `TESTOR_TRUSTED_PROXIES`,
+`TESTOR_ANONYMOUS` and `TESTOR_SECRETS_DIR` for the service from `BIND`, `ALLOWED_HOSTS`,
+`TRUSTED_PROXIES`, `ANONYMOUS` and `SECRETS_DIR`; the runner keeps them in
+`<home>/service.json` until a deploy changes them (`BIND=""` removes one).
 
 ## `config.json`
 

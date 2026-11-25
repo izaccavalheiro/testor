@@ -9,8 +9,12 @@ File.mkdir_p!(data_dir)
 
 Application.put_env(:testor, :workspaces, workspaces)
 Application.put_env(:testor, :data_dir, data_dir)
+# The secrets with the data, never the machine's own testor home (TESTOR_SECRETS_DIR).
+Application.put_env(:testor, :secrets_dir, data_dir)
 Application.put_env(:testor, :ip, {127, 0, 0, 1})
 Application.put_env(:testor, :port, 0)
+# Plug.Test's requests are for www.example.com: a name the Host allow-list must know.
+Application.put_env(:testor, :allowed_hosts, "www.example.com")
 
 for child <- Testor.Application.server() do
   {:ok, pid} = Supervisor.start_child(Testor.Supervisor, child)

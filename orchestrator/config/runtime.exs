@@ -15,11 +15,30 @@ ip =
     {:error, _} -> raise "TESTOR_BIND is not an IP address: #{System.get_env("TESTOR_BIND")}"
   end
 
+# TESTOR_ANONYMOUS: who is answered while authentication is off (no user in auth.json):
+# "private" (default: loopback, private, link-local and Tailscale addresses), "loopback", or
+# "any" (every address, as before 0.3: only on a network you trust).
+anonymous =
+  case System.get_env("TESTOR_ANONYMOUS", "private") do
+    value when value in ["private", "loopback", "any"] -> value
+    value -> raise "TESTOR_ANONYMOUS is private, loopback or any, not #{inspect(value)}"
+  end
+
 config :testor,
   data_dir: data_dir,
+  # TESTOR_SECRETS_DIR: where auth.json and jwt.key live (unset: the data folder). Point it at
+  # a folder the account that runs the tests cannot read.
+  secrets_dir: System.get_env("TESTOR_SECRETS_DIR"),
   workspaces: workspaces,
   ip: ip,
-  port: String.to_integer(System.get_env("TESTOR_PORT", "6767"))
+  port: String.to_integer(System.get_env("TESTOR_PORT", "6767")),
+  # TESTOR_ALLOWED_HOSTS: host names the server answers besides IP addresses, localhost and
+  # this machine's name (DNS rebinding protection): "testor.example.com, .example.com" or "*".
+  allowed_hosts: System.get_env("TESTOR_ALLOWED_HOSTS"),
+  # TESTOR_TRUSTED_PROXIES: addresses or CIDR ranges of reverse proxies whose X-Forwarded-For
+  # names the client (for rate limiting, audit and the anonymous-access check).
+  trusted_proxies: System.get_env("TESTOR_TRUSTED_PROXIES"),
+  anonymous: anonymous
 
 if config_env() == :prod do
   # Run by a scheduled task, nobody reads stdout: log to a file next to the data.

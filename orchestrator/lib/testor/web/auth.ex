@@ -4,6 +4,9 @@ defmodule Testor.Web.Auth do
   (`Testor.Auth` describes the scheme), assigning `:principal`; `csrf/2` guards state-changing
   requests; `audit/2` logs them.
 
+  While authentication is off, only the addresses `TESTOR_ANONYMOUS` allows are answered
+  (private ones by default), so a runner on a public address is not open to the internet.
+
   Public paths, answered without credentials: `GET /api/health`, `GET /api/v1/health`,
   `GET /api/v1/openapi.json`, and the signed file links under `/s/`, which their route checks.
 
@@ -27,11 +30,38 @@ defmodule Testor.Web.Auth do
   def call(conn, _opts) do
     settings = Auth.settings()
 
-    if settings.enabled do
-      authenticate(conn, settings)
-    else
-      assign(conn, :principal, Auth.anonymous())
+    cond do
+      settings.enabled ->
+        authenticate(conn, settings)
+
+      anonymous_allowed?(conn.remote_ip, Testor.Config.anonymous()) or public?(conn) ->
+        assign(conn, :principal, Auth.anonymous())
+
+      true ->
+        exposed(conn)
     end
+  end
+
+  @doc """
+  Whether a client at `ip` is answered while authentication is off (`TESTOR_ANONYMOUS`):
+  `"private"` loopback, private, link-local and Tailscale addresses; `"loopback"`; `"any"`.
+  """
+  def anonymous_allowed?(_ip, "any"), do: true
+  def anonymous_allowed?(ip, "loopback"), do: Testor.Net.loopback?(ip)
+  def anonymous_allowed?(ip, _private), do: Testor.Net.private?(ip)
+
+  defp exposed(conn) do
+    address = conn.remote_ip |> :inet.ntoa() |> to_string()
+    mode = Testor.Config.anonymous()
+    Logger.warning("auth: refused #{address}: authentication is off and TESTOR_ANONYMOUS=#{mode}")
+
+    conn
+    |> Reply.error(
+      403,
+      "authentication_off",
+      "authentication is off, so testor answers #{mode} addresses only: add a user (task testor:user) or set TESTOR_ANONYMOUS=any"
+    )
+    |> halt()
   end
 
   defp authenticate(conn, settings) do
@@ -52,6 +82,12 @@ defmodule Testor.Web.Auth do
         conn
         |> put_resp_header("retry-after", to_string(seconds))
         |> Reply.error(429, "rate_limited", "too many failed attempts; try again in #{seconds} s")
+        |> halt()
+
+      {:error, :busy} ->
+        conn
+        |> put_resp_header("retry-after", "1")
+        |> Reply.error(503, "busy", "too many sign-ins at once; try again in a second")
         |> halt()
 
       {:error, :expired} ->

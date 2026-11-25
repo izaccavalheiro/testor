@@ -11,6 +11,18 @@ defmodule Testor.Config do
 
   def data_dir, do: Application.fetch_env!(:testor, :data_dir)
 
+  @doc "Where auth.json and jwt.key live: `TESTOR_SECRETS_DIR`, else the data folder."
+  def secrets_dir, do: Application.get_env(:testor, :secrets_dir) || data_dir()
+
+  @doc "Host names answered besides IP literals, localhost and this machine's names."
+  def allowed_hosts, do: Testor.Net.parse_hosts(Application.get_env(:testor, :allowed_hosts))
+
+  @doc "CIDR ranges of reverse proxies trusted to name the client in X-Forwarded-For."
+  def trusted_proxies, do: Testor.Net.parse_cidrs(Application.get_env(:testor, :trusted_proxies))
+
+  @doc "Who is answered while authentication is off: \"private\", \"loopback\" or \"any\"."
+  def anonymous, do: Application.get_env(:testor, :anonymous, "private")
+
   @doc "The folder that holds one snapshot folder per project."
   def workspaces, do: Application.get_env(:testor, :workspaces, Path.dirname(data_dir()))
 

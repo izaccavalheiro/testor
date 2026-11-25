@@ -10,8 +10,8 @@ defmodule Testor.Web.MCP do
 
   Security: the same authentication as the API (Basic, or better a Bearer token, which an MCP
   client sends as a configured header), the `read` scope to connect and each tool's own scope;
-  an `Origin` other than this server's is refused (DNS rebinding), and the body must be JSON,
-  which a cross-site form cannot send.
+  an `Origin` other than this server's is refused, and the body must be JSON, which a
+  cross-site form cannot send. DNS rebinding is stopped before, by `Testor.Web.Edge`.
   """
   import Plug.Conn
   alias Testor.MCP.Tools

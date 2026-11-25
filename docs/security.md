@@ -102,6 +102,38 @@ Images, videos and HTML reports load without credentials. A report runs sandboxe
 its relative links stay under its own signed prefix. The plain `/shots/` and `/artifacts/`
 routes need credentials. Links are sent with `Referrer-Policy: no-referrer`.
 
+## Network exposure
+
+**While authentication is off**, testor answers only clients at private addresses: loopback,
+RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), link-local, CGNAT (`100.64/10`, Tailscale's
+range) and IPv6 unique-local; any other address gets `403` (the health checks stay public).
+`TESTOR_ANONYMOUS` changes it: `loopback`, or `any` (every address, as before 0.3: only on a
+network you trust). Adding a user is the better fix.
+
+**DNS rebinding.** A page on another site can make the browser resolve its own name to this
+server and then read it as same-origin; the `Origin` check cannot tell, because origin and
+host are both the attacker's name. testor answers only requests whose `Host` is an IP address
+(a rebinding needs a name), `localhost`, this machine's name (also as `<name>.local`), or a
+name in `TESTOR_ALLOWED_HOSTS`; anything else gets `421`.
+
+```sh
+TESTOR_ALLOWED_HOSTS="testor.example.com, runner.tail1234.ts.net"   # exact names
+TESTOR_ALLOWED_HOSTS=".example.com"                                  # every subdomain
+TESTOR_ALLOWED_HOSTS="*"                                             # no check
+```
+
+**Behind a reverse proxy**, list it in `TESTOR_TRUSTED_PROXIES` (addresses or CIDR ranges):
+testor then takes the client's address from `X-Forwarded-For` (read from the right, skipping
+trusted proxies) for rate limiting, the audit log and the check above. Without it, every
+client has the proxy's address, which for a local proxy is loopback: a proxy on the same
+machine with authentication off is open to whoever reaches the proxy.
+
+Set these for the service with `task testor:deploy`, which the runner keeps between deploys:
+
+```sh
+task testor:deploy ALLOWED_HOSTS=testor.example.com TRUSTED_PROXIES=127.0.0.1 BIND=127.0.0.1
+```
+
 ## Cross-site requests
 
 A state-changing request (`POST`, `DELETE`) is refused (`403`) when its `Origin` is not this
@@ -110,7 +142,32 @@ Bearer token, the header `X-Testor: 1` or a JSON body. Cross-site forms cannot s
 two without a CORS preflight, which testor never grants. Since browsers send Basic credentials
 on their own, this is what stops another site from acting with them. The token endpoint needs
 only the origin check: its answer cannot be read cross-site. MCP requests must be JSON, and a
-foreign `Origin` is refused there too (DNS rebinding).
+foreign `Origin` is refused there too; DNS rebinding is stopped by the `Host` allow-list
+([network exposure](#network-exposure)).
+
+## Files runs leave
+
+Runs write the screenshots, artifacts, logs and records testor serves. A symbolic link or a
+junction among them is never followed: the file routes refuse a path with a link in it, the
+directory walks skip links (a loop cannot make them endless), and records and logs must be
+regular files. `run.ps1` does not copy links into a run's screenshots or artifacts.
+
+Cancelling kills the process a run's record names, and a run could rewrite its record. testor
+checks the process first and kills nothing when it is testor itself or a process above it
+(which would stop the service), when it has ended, or when it started after the run (its id
+was reused); the run is cancelled with a warning.
+
+## Limits
+
+| What | Limit | Beyond it |
+| ---- | ----- | --------- |
+| failed sign-ins per client address | 10 in 15 minutes | `429` until the window ends |
+| failed passwords per user, from any address | 30 in 15 minutes | `429` for passwords not yet verified; a browser that signed in keeps working |
+| password hashes at once | twice the CPU's schedulers | `503`, `Retry-After: 1` |
+| event streams | 256, and 16 per user (or per address without authentication) | `503`, `Retry-After: 10` |
+| a log read | 8 MB from the end | cut to the limit |
+| a request body | 64 KB (1 MB for MCP) | `413` |
+
 
 ## Transport
 
@@ -118,8 +175,8 @@ testor speaks plain HTTP. Basic credentials and tokens are only as private as th
 
 - over Tailscale, WireGuard encrypts the traffic end to end; the Windows firewall rule the
   installer adds lets in only the Tailscale range and the local subnet (`ALLOW_FROM`);
-- on a network that is not yours, put a TLS-terminating proxy in front (Caddy, nginx,
-  `tailscale serve`) and set `TESTOR_BIND=127.0.0.1` so testor listens locally only.
+- on a network that is not yours, put a TLS-terminating proxy in front (Caddy, nginx, `tailscale serve`) and set
+  `TESTOR_BIND=127.0.0.1` so testor listens locally only.
 
 ## Audit
 
@@ -132,6 +189,13 @@ with the user name and address.
 `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` on every response; the
 dashboard adds `X-Frame-Options: DENY` and `frame-ancestors 'none'`; API answers are
 `Cache-Control: no-store`; every response has an `X-Request-Id`.
+
+## Secrets
+
+`auth.json` and `jwt.key` live in the data folder unless `TESTOR_SECRETS_DIR` names another.
+Test commands run as the same account as testor (see below), so they can read either file
+wherever it is: moving them protects them only once the tests run as an account that cannot
+read that folder.
 
 ## What stays out of reach
 
