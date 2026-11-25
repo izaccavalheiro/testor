@@ -53,6 +53,20 @@ curl -s -H "authorization: Bearer $TOKEN" 'http://my-runner:6767/api/v1/runs?sta
 curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID/log?grep=FAIL&context=3"
 ```
 
+## Jobs and agents
+
+| Endpoint | Scope | |
+| -------- | ----- | - |
+| `GET /api/v1/jobs?status=` | read | jobs, newest first |
+| `GET /api/v1/jobs/:id` | read | one job |
+| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref?}`: `201`, or `403` while `execution.enabled` is off |
+| `POST /api/v1/jobs/:id/cancel` | execute | cancel a queued or running job |
+| `POST /api/v1/agent/lease` | agent | `{labels, wait}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most) |
+| `POST /api/v1/agent/jobs/:id/heartbeat` | agent | renew the lease: `{"cancel": bool}` |
+| `POST /api/v1/agent/jobs/:id/finish` | agent | `{exitCode, error?}` |
+
+See [jobs.md](jobs.md).
+
 ## Prometheus metrics
 
 `GET /metrics` (scope `read`) is the Prometheus text format: `testor_build_info`,

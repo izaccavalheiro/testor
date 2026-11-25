@@ -263,6 +263,52 @@ try {
     -ArgumentList "-NoProfile", "-Command", "Set-Location '$quietDir'; & '$testorHome/run.ps1' -Project quiet -Kind quiet -Body { 'ok' }"
   $stray = (Get-Content -Raw -LiteralPath $quietErr -ErrorAction SilentlyContinue) + ""
   Check "run.ps1 writes nothing of its own to stderr" ($quiet.ExitCode -eq 0 -and $stray.Trim() -eq "") "($($stray.Trim()))"
+
+  # Jobs: queued through the API, taken by an agent (runner/agent.ps1) that runs them through
+  # run.ps1 with the commands of its own configuration.
+  $configFile = Join-Path $testorHome "config.json"
+  $config = if (Test-Path $configFile) { Get-Content -Raw $configFile | ConvertFrom-Json -AsHashtable } else { @{} }
+  $config.execution = @{ enabled = $true; leaseSeconds = 30; maxAttempts = 3 }
+  $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configFile
+  $env:TESTOR_PASSWORD = "smoke-test-password"
+  & $bin eval "Testor.Auth.CLI.user ~s[smoke-agent], ~s[agent]" | Out-Null
+  Remove-Item Env:TESTOR_PASSWORD
+  Start-Sleep -Milliseconds 1500
+  $env:TESTOR_AGENT_TOKEN = (& $bin eval "Testor.Auth.CLI.token ~s[smoke-agent], 1" | Select-Object -Last 1).Trim()
+  $jobsDir = New-Item -ItemType Directory -Force (Join-Path $work "jobs-demo")
+  $agentConfig = Join-Path $work "agent.json"
+  @{ server = $base; home = $testorHome; labels = @("smoke")
+     projects = @{ "jobs-demo" = @{ workspace = "$jobsDir"; commands = @{ hello = "'hello from a job'"; slow = "Start-Sleep 60" } } } } |
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $agentConfig
+  $agentScript = Join-Path $repo "runner/agent.ps1"
+  function New-Job($kind) {
+    Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs" `
+      -Body (@{ project = "jobs-demo"; kind = $kind; labels = @("smoke") } | ConvertTo-Json)
+  }
+  function Get-Job($id) { Invoke-RestMethod -Headers $basic "$base/api/v1/jobs/$id" }
+
+  $hello = New-Job "hello"
+  pwsh -NoProfile -File $agentScript -Config $agentConfig -Once -Wait 5 | Out-Null
+  $done = Get-Job $hello.id
+  $run = if ($done.runId) { (Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)").run }
+  $runLog = if ($done.runId) { Invoke-RestMethod -Headers $basic "$base/api/v1/runs/$($done.runId)/log" }
+  Check "jobs: an agent runs a queued job" ($done.status -eq "passed" -and $done.exitCode -eq 0) "($($done | ConvertTo-Json -Compress))"
+  Check "jobs: the job's run is recorded and names the job" ($run.job -eq $hello.id -and $run.status -eq "passed" -and "$runLog" -match "hello from a job") "($($run | ConvertTo-Json -Compress))"
+
+  $refused = New-Job "deploy"
+  pwsh -NoProfile -File $agentScript -Config $agentConfig -Once -Wait 5 | Out-Null
+  $refused = Get-Job $refused.id
+  Check "jobs: a task the agent does not list is refused" ($refused.status -eq "failed" -and $refused.error -match "not in this agent") "($($refused | ConvertTo-Json -Compress))"
+
+  $slowJob = New-Job "slow"
+  $slowAgent = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-File", $agentScript, "-Config", $agentConfig, "-Once", "-Wait", "5"
+  $deadline = (Get-Date).AddSeconds(30)
+  do { Start-Sleep -Milliseconds 500; $slowRun = @((Invoke-RestMethod -Headers $basic "$base/api/v1/runs?status=running").data | Where-Object job -eq $slowJob.id) } until ($slowRun.Count -or (Get-Date) -gt $deadline)
+  $null = Invoke-RestMethod -Method Post -Headers $basic -ContentType "application/json" "$base/api/v1/jobs/$($slowJob.id)/cancel" -Body "{}"
+  $agentEnded = $slowAgent.WaitForExit(40000)
+  $cancelled = Get-Job $slowJob.id
+  Check "jobs: cancelling a running job ends its run and the job" ($slowRun.Count -eq 1 -and $agentEnded -and $cancelled.status -eq "cancelled") "($($cancelled | ConvertTo-Json -Compress))"
+  Remove-Item Env:TESTOR_AGENT_TOKEN
 } finally {
   Set-Location $repo
   foreach ($name in $sandboxed) { [Environment]::SetEnvironmentVariable($name, $savedEnv[$name]) }

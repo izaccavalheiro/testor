@@ -45,7 +45,8 @@ A running testor reads `auth.json` and the key again within a second: no restart
 | ---- | ------ | --- |
 | `viewer` | `read` | read runs, logs, specs, screenshots, artifacts, device stats, maintenance scans |
 | `operator` | `read operate` | also cancel and delete runs, run the janitor, start a maintenance scan |
-| `admin` | `read operate maintain` | also delete maintenance targets |
+| `admin` | `read operate maintain execute` | also delete maintenance targets, and queue and cancel jobs |
+| `agent` | `agent` | only take jobs and report on them (`runner/agent.ps1`) |
 
 A token carries a subset of its user's scopes (`scope` when it is requested) and is checked
 against the user on every request: removing a user, lowering a role or revoking takes effect
@@ -217,6 +218,15 @@ agents a token with the `read` scope unless they must cancel or delete runs.
 `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer` on every response; the
 dashboard adds `X-Frame-Options: DENY` and `frame-ancestors 'none'`; API answers are
 `Cache-Control: no-store`; every response has an `X-Request-Id`.
+
+## Jobs
+
+Jobs ([jobs.md](jobs.md)) let the API start runs, so they are off until `execution.enabled`
+and need authentication even then. Queuing or cancelling one needs the `execute` scope; taking
+one needs `agent`, which no other role has. A job names a project and a task, never a command:
+the agent runs only the commands its own `agent.json` lists, so a stolen `execute` token can
+run nothing the runner's owner did not write down. A job's `ref` must look like a git ref (no
+leading `-`). Run agents as the account tests run as, never as the service's.
 
 ## Run attestations
 

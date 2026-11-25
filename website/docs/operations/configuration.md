@@ -59,6 +59,16 @@ again at each cleanup, and by `run.ps1` at each run.
 | `maintenance.tempMinAgeDays` | 7 | temporary files younger than this are left alone |
 | `maintenance.snapshotIdleDays` | 14 | a project snapshot is suggested for deletion after this long without a run |
 
+### `execution` (jobs)
+
+```json
+{ "execution": { "enabled": false, "leaseSeconds": 30, "maxAttempts": 3 } }
+```
+
+Jobs ([jobs and agents](../reference/jobs.md)) are off until `enabled`; an agent's lease lasts
+`leaseSeconds` without a heartbeat; a job is tried `maxAttempts` times when its agents stop
+answering.
+
 ## `auth.json`
 
 Written by `task testor:user` and `Testor.Auth.CLI` (do not edit it by hand unless you must; it is

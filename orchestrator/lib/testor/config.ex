@@ -6,7 +6,10 @@ defmodule Testor.Config do
     "artifacts" => %{"maxAgeDays" => 7, "maxTotalMB" => 2048, "maxRunMB" => 256},
     "runs" => %{"maxRuns" => 500, "maxAgeDays" => 30},
     "cleanupIntervalMinutes" => 30,
-    "maintenance" => %{"enabled" => false, "tempMinAgeDays" => 7, "snapshotIdleDays" => 14}
+    "maintenance" => %{"enabled" => false, "tempMinAgeDays" => 7, "snapshotIdleDays" => 14},
+    # Jobs (Testor.Jobs): off until enabled; an agent's lease lasts leaseSeconds without a
+    # heartbeat, and a job is tried maxAttempts times when its agents stop answering.
+    "execution" => %{"enabled" => false, "leaseSeconds" => 30, "maxAttempts" => 3}
   }
 
   def data_dir, do: Application.fetch_env!(:testor, :data_dir)

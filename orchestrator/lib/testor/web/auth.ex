@@ -14,6 +14,8 @@ defmodule Testor.Web.Auth do
 
     * `maintain`: `POST /api/maintenance/clean`, `POST /api/v1/maintenance/clean`,
       `GET /api/v1/audit`
+    * `execute`: `POST /api/v1/jobs`, `POST /api/v1/jobs/:id/cancel`
+    * `agent`: everything under `/api/v1/agent/`
     * `read`: `POST /api/v1/auth/token` (which also requires Basic credentials) and `POST /mcp`
       (each tool requires its own scope)
     * `operate`: any other `POST`, `PUT`, `PATCH` or `DELETE`
@@ -157,6 +159,9 @@ defmodule Testor.Web.Auth do
       {"POST", ["api", "maintenance", "clean"]} -> "maintain"
       {"POST", ["api", "v1", "maintenance", "clean"]} -> "maintain"
       {"GET", ["api", "v1", "audit"]} -> "maintain"
+      {"POST", ["api", "v1", "jobs"]} -> "execute"
+      {"POST", ["api", "v1", "jobs", _, "cancel"]} -> "execute"
+      {_, ["api", "v1", "agent" | _]} -> "agent"
       {"POST", ["api", "v1", "auth", "token"]} -> "read"
       {"POST", ["mcp"]} -> "read"
       {method, _} when method in @unsafe -> "operate"

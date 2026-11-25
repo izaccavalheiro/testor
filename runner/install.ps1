@@ -165,13 +165,19 @@ function Get-ReleaseFiles([string]$dir, [string]$version, [string]$archive) {
   foreach ($line in Get-Content (Join-Path $dir "SHA256SUMS")) {
     if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+)$') { $sums[$Matches[2].Trim()] = $Matches[1].ToLower() }
   }
-  foreach ($file in $archive, "run.ps1") {
+  # agent.ps1 is in releases from 0.4.0: fetched and checked when the release lists it.
+  $files = @($archive, "run.ps1")
+  if ($sums["agent.ps1"]) {
+    try { Invoke-WebRequest "$base/agent.ps1" -OutFile (Join-Path $dir "agent.ps1") } catch { throw "cannot download $base/agent.ps1: $($_.Exception.Message)" }
+    $files += "agent.ps1"
+  }
+  foreach ($file in $files) {
     $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $dir $file)).Hash.ToLower()
     if ($sums[$file] -ne $actual) { throw "$file does not match the release's SHA256SUMS: refusing to install it" }
   }
   "== checksums match"
   if (Get-Command gh -ErrorAction SilentlyContinue) {
-    foreach ($file in $archive, "run.ps1") { gh attestation verify (Join-Path $dir $file) --repo $Repository | Out-Null }
+    foreach ($file in $files) { gh attestation verify (Join-Path $dir $file) --repo $Repository | Out-Null }
     "== provenance verified: built by $Repository's release workflow"
   } elseif ($RequireAttestation) {
     throw "-RequireAttestation needs the GitHub CLI (gh) to verify the release's provenance"
@@ -225,6 +231,9 @@ if ($Smoke) {
 $release = if ($FromRelease) { Get-Release $FromRelease } else { $null }
 $wrapper = if ($release) { Join-Path $release "run.ps1" } else { Join-Path $PSScriptRoot "run.ps1" }
 Copy-Item $wrapper (Join-Path $testorHome "run.ps1") -Force
+# The agent (jobs, docs/jobs.md) next to run.ps1, where its default configuration looks for it.
+$agentScript = if ($release) { Join-Path $release "agent.ps1" } else { Join-Path $PSScriptRoot "agent.ps1" }
+if (Test-Path -LiteralPath $agentScript) { Copy-Item $agentScript (Join-Path $testorHome "agent.ps1") -Force }
 
 # The service's environment: what this call names, else what the last install saved.
 $serviceFile = Join-Path $testorHome "service.json"

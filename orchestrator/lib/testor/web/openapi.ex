@@ -21,7 +21,9 @@ defmodule Testor.Web.OpenAPI do
         %{"name" => "auth"},
         %{"name" => "runs"},
         %{"name" => "runner"},
-        %{"name" => "maintenance"}
+        %{"name" => "maintenance"},
+        %{"name" => "jobs"},
+        %{"name" => "agents"}
       ],
       "paths" => paths(),
       "components" => %{
@@ -120,6 +122,44 @@ defmodule Testor.Web.OpenAPI do
             %{"type" => "object"},
             params: [query("kind", %{"type" => "string"}, "only runs of this task")]
           )
+      },
+      "/jobs" => %{
+        "get" =>
+          op("jobs", "Jobs, newest first", %{"type" => "object"},
+            params: [query("status", %{"enum" => Testor.Jobs.statuses()}, "only jobs with this status")]
+          ),
+        "post" =>
+          op(
+            "jobs",
+            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref?}",
+            %{"type" => "object"}
+          )
+      },
+      "/jobs/{id}" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "get" => op("jobs", "A job", %{"type" => "object"})
+      },
+      "/jobs/{id}/cancel" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" => op("jobs", "Cancel a job (scope execute)", %{"type" => "object"})
+      },
+      "/agent/lease" => %{
+        "post" =>
+          op(
+            "agents",
+            "Take the oldest job this agent can run, waiting up to `wait` seconds (scope agent): 200 or 204",
+            %{"type" => "object"}
+          )
+      },
+      "/agent/jobs/{id}/heartbeat" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" =>
+          op("agents", "Renew the lease; answers whether to cancel (scope agent)", %{"type" => "object"})
+      },
+      "/agent/jobs/{id}/finish" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" =>
+          op("agents", "Report the job's end: {exitCode, error?} (scope agent)", %{"type" => "object"})
       },
       "/audit" => %{
         "get" =>

@@ -7,6 +7,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Jobs and agents** (opt-in, the first step of the agent protocol): `POST /api/v1/jobs`
+  (scope `execute`) queues a run of a project's task; `runner/agent.ps1` takes jobs by lease,
+  runs them through `run.ps1` with the commands of its own `agent.json` (a job never carries a
+  command), sends heartbeats and reports the result. Leases, labels, a git ref to check out,
+  one job per project at a time, retries when an agent disappears, cancelling. Off until
+  `execution.enabled`, and only with authentication. Runs record their `job`. A new `agent`
+  role; `admin` gains the `execute` scope. See docs/jobs.md.
+
 ## 0.3.1 - 2026-11-25
 
 ### Fixed

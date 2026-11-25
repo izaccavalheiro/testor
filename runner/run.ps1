@@ -66,6 +66,8 @@ $record = [ordered]@{
   source     = if ($env:TESTOR_COMMIT) {
     [ordered]@{ commit = $env:TESTOR_COMMIT; branch = $env:TESTOR_BRANCH; dirty = $env:TESTOR_DIRTY -eq "true" }
   } else { $null }
+  # The job this run is for, when an agent started it (runner/agent.ps1).
+  job        = if ($env:TESTOR_JOB_ID) { $env:TESTOR_JOB_ID } else { $null }
 }
 
 function Save-Record {

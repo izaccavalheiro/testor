@@ -32,6 +32,7 @@ const FILES = {
   "docs/mcp.md": ["reference/mcp.md", "MCP server", 5],
   "docs/security.md": ["reference/security.md", "Security model", 6],
   "docs/attestation.md": ["reference/attestation.md", "Run attestations", 7],
+  "docs/jobs.md": ["reference/jobs.md", "Jobs and agents", 8],
   "VERSIONING.md": ["project/versioning.md", "Versioning and releases", 1],
   "ROADMAP.md": ["project/roadmap.md", "Roadmap", 2],
   "CHANGELOG.md": ["project/changelog.md", "Changelog", 3],
