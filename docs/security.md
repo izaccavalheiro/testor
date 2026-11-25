@@ -307,7 +307,9 @@ the test account's caches and snapshots (maintenance), and listing PowerShell se
 
 ## What stays out of reach
 
-Nothing in the API starts a command: commands reach the runner over SSH only. Maintenance
+Nothing in the API runs a command it names: commands reach a runner over SSH, or as
+[jobs](jobs.md) (opt-in, scope `execute`), which name a project and a task whose command the
+agent's own configuration holds. Maintenance
 deletes only a fixed list of targets named by id (never a path from a request), is off until
 `maintenance.enabled`, and needs the `maintain` scope. testor runs as the installing user (on
 Windows with a limited token), unless it is set up in an account of its own

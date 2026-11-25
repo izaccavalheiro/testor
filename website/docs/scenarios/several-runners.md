@@ -64,8 +64,9 @@ CMD: |
 
 ## Caveats
 
-- **Three dashboards**, three user lists, three histories: one hub for every runner is the 0.4
-  milestone of the [roadmap](../project/roadmap.md). Until then, `GET /api/v1/projects` on each
-  runner gives a script everything it needs to build a combined view.
+- **Three dashboards**, three user lists, three histories, when each runner runs its own testor.
+  For one view, run one testor and put an [agent](../features/jobs-and-agents.md) on each other
+  machine (`"upload": true`): their runs all reach it, each signed by its agent. A hub across
+  several testors is on the [roadmap](../project/roadmap.md).
 - **macOS** runs testor as a launchd agent in the user's session: turn on automatic login for a
   Mac nobody sits at. Its device stats are coarser (no per-core CPU, combined disk I/O).

@@ -40,8 +40,11 @@ or use stronger hardware.
 
 ## Can I run testor in Docker or Kubernetes?
 
-Not yet. Today it is installed as a service on the runner. A container image and cloud-native
-runners are on the [roadmap](project/roadmap.md) (0.3 and 0.6).
+Yes. `ghcr.io/izaccavalheiro/testor` runs testor's dashboard, API and MCP over a volume
+(unprivileged, read-only root; a Compose example is in `examples/compose`), and the Helm chart
+runs it on Kubernetes. Tests themselves run there through **agents**: the agent image
+(`ghcr.io/izaccavalheiro/testor-agent`), as pods the chart deploys and KEDA scales on queued
+jobs ([jobs and agents](features/jobs-and-agents.md)). SSH runners work as before.
 
 ## Can several people share a runner?
 
