@@ -1,11 +1,16 @@
 defmodule Testor.SpecParser do
   @moduledoc """
   Per-spec results read from a run's output, fed line by line so a live run's results grow as
-  its log does. Understands Vitest's default reporter, Playwright's list reporter (ok/x on
-  Windows terminals), pytest, go test and cargo test. No project has to change its reporters.
+  its log does. Understands Vitest's default and verbose reporters, Playwright's list reporter
+  (ok/x on Windows terminals), pytest, go test and cargo test.
+
+  Vitest 5's default reporter prints only failed files once it is not on a terminal (as under
+  testor); `--reporter=verbose` prints every test (`✓ tests/a.test.ts > suite > name 3ms`), which
+  is read per file. A file's own line (`✓ tests/a.test.ts (3 tests) 9ms`) has its totals, so
+  its tests' lines are not counted on top of it.
   """
 
-  defstruct specs: %{}, order: [], cargo: nil
+  defstruct specs: %{}, order: [], cargo: nil, vitest_files: MapSet.new()
 
   @type t :: %__MODULE__{}
 
@@ -56,6 +61,7 @@ defmodule Testor.SpecParser do
 
     cond do
       m = Regex.run(re(:vitest), line) -> vitest(state, m)
+      m = Regex.run(re(:vitest_test), line) -> vitest_test(state, m)
       m = Regex.run(re(:playwright), line) -> playwright(state, m)
       m = Regex.run(re(:pytest), line) -> pytest(state, m)
       m = Regex.run(re(:go), line) -> go(state, m)
@@ -69,6 +75,7 @@ defmodule Testor.SpecParser do
     [_, mark, file | rest] = m
     info = Enum.at(rest, 0, "")
     duration = Enum.at(rest, 1, "")
+    state = %{state | vitest_files: MapSet.put(state.vitest_files, String.replace(file, "\\", "/"))}
 
     update(state, file, "vitest", fn spec ->
       tests = capture_int(:tests, info) || spec["tests"]
@@ -85,6 +92,25 @@ defmodule Testor.SpecParser do
           "durationMs" => to_ms(duration) || spec["durationMs"]
       }
     end)
+  end
+
+  # One test of Vitest's verbose reporter, counted into its file unless the file had its own line.
+  defp vitest_test(state, m) do
+    [_, mark, file | rest] = m
+
+    if MapSet.member?(state.vitest_files, String.replace(file, "\\", "/")) do
+      state
+    else
+      update(state, file, "vitest", fn spec ->
+        %{
+          spec
+          | "tests" => spec["tests"] + 1,
+            "failed" => spec["failed"] + if(mark in ["×", "✗", "✘"], do: 1, else: 0),
+            "skipped" => spec["skipped"] + if(mark == "↓", do: 1, else: 0),
+            "durationMs" => spec["durationMs"] + (to_ms(Enum.at(rest, 0, "")) || 0)
+        }
+      end)
+    end
   end
 
   defp playwright(state, m) do
@@ -205,6 +231,10 @@ defmodule Testor.SpecParser do
       vitest:
         ~S"^\s*([✓√✔×✗✘❯>↓])\s+(?:\|[^|]+\|\s+|\S+\s+)?(" <>
           spec <> ~S")(?:\s+\(([^)]*)\))?(?:\s+(\d+(?:\.\d+)?m?s))?\s*$",
+      # " ✓ tests/a.test.ts > suite > adds 3ms", " × |web| src/b.test.ts > breaks 11ms" (verbose)
+      vitest_test:
+        ~S"^\s*([✓√✔×✗✘↓])\s+(?:\|[^|]+\|\s+|\S+\s+)?(" <>
+          spec <> ~S")\s+>\s+.+?(?:\s+(\d+(?:\.\d+)?m?s))?\s*$",
       # "  ok 3 [chromium] › e2e/auth.spec.ts:12:3 › signs in (1.2s)"
       playwright:
         ~S"^\s*(ok|x|✓|✘|×|-|°|~)\s+\d+\s+(?:\[[^\]]+\]\s+[›>]\s+)?(" <>
