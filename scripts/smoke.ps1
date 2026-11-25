@@ -434,6 +434,21 @@ try {
       -not (Test-Path -LiteralPath (Join-Path $workspaceDir "leftover.txt")) -and $leftovers -eq 0) "($($isoLogs -join ' | '); left: $leftovers)"
   }
 
+  # Release gates: a job's run records the commit it checked out; the gate passes on it from
+  # the run's signed result.
+  $config = Get-Content -Raw -LiteralPath $configFile | ConvertFrom-Json -AsHashtable
+  $config.gates = @{ "iso-release" = @{ project = "iso-git"; kinds = @("probe") } }
+  $config | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $configFile
+  $isoHead = "$(git -C $isoGit rev-parse HEAD)".Trim()
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    $gate = Invoke-RestMethod -Headers $basic "$base/api/v1/gates/iso-release?commit=$isoHead"
+    if (-not $gate.pass) { Start-Sleep -Milliseconds 500 }
+  } until ($gate.pass -or (Get-Date) -gt $deadline)
+  Check "gates: a job's run records its commit, and the gate passes on its signed result" ($gate.pass -and $gate.checks[0].runId) "($($gate | ConvertTo-Json -Depth 4 -Compress))"
+  $other = Invoke-RestMethod -Headers $basic "$base/api/v1/gates/iso-release?commit=abcdef0"
+  Check "gates: another commit does not pass" (-not $other.pass -and $other.checks[0].reason -match "no finished run") "($($other | ConvertTo-Json -Depth 4 -Compress))"
+
   $slowJob = New-Job "slow"
   $slowAgent = Start-Process pwsh -PassThru @hidden -ArgumentList "-NoProfile", "-File", $agentScript, "-Config", $agentConfig, "-Once", "-Wait", "5"
   $deadline = (Get-Date).AddSeconds(30)

@@ -28,7 +28,7 @@ defmodule Testor.Attestation do
   @predicate_type "https://github.com/izaccavalheiro/testor/blob/main/docs/attestation.md#run-v1"
   # DER of an Ed25519 SubjectPublicKeyInfo, before the 32 key bytes (RFC 8410).
   @spki_prefix <<0x30, 0x2A, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70, 0x03, 0x21, 0x00>>
-  @record ~w(id project kind command status exitCode error warning startedAt endedAt durationMs summary actor screenshots artifacts)
+  @record ~w(id project kind command status exitCode error warning startedAt endedAt durationMs summary actor source job screenshots artifacts)
 
   def predicate_type, do: @predicate_type
   def key_file, do: Path.join(Config.secrets_dir(), "signing.key")

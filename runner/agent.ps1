@@ -461,6 +461,16 @@ function Invoke-Job($job) {
   # trace, which the run's spans join (and test tools that propagate W3C trace context).
   $plain = @{}
   if ($job.traceparent) { $plain["TRACEPARENT"] = $job.traceparent }
+  # What was tested: the commit checked out (release gates look runs up by it), its ref, and
+  # whether the tree had changes.
+  if ($plan.git) {
+    $head = git -C $runDir rev-parse HEAD 2>$null
+    if (-not $LASTEXITCODE -and $head) {
+      $plain["TESTOR_COMMIT"] = "$head".Trim()
+      $plain["TESTOR_BRANCH"] = if ($job.ref) { $job.ref } else { "$(git -C $runDir rev-parse --abbrev-ref HEAD 2>$null)".Trim() }
+      $plain["TESTOR_DIRTY"] = if (git -C $runDir status --porcelain 2>$null) { "true" } else { "false" }
+    }
+  }
   if ($idToken) {
     $plain[$(if ($identity.file) { $identity.file } else { "TESTOR_ID_TOKEN_FILE" })] = $tokenFile
     if ($identity.env) { foreach ($name in $identity.env.Keys) { $plain[$name] = "$($identity.env[$name])" } }

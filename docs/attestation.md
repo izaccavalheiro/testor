@@ -32,7 +32,7 @@ The statement:
 
 | Field | Meaning |
 | ----- | ------- |
-| `run` | the run record when it ended: `id`, `project`, `kind`, `command`, `status`, `exitCode`, `error`, `warning`, `startedAt`, `endedAt`, `durationMs`, `summary` (spec files and tests passed, failed, skipped), `actor`, `screenshots`, `artifacts` |
+| `run` | the run record when it ended: `id`, `project`, `kind`, `command`, `status`, `exitCode`, `error`, `warning`, `startedAt`, `endedAt`, `durationMs`, `summary` (spec files and tests passed, failed, skipped), `actor`, `source` (`commit`, `branch`, `dirty`: what was tested; from 0.9), `job`, `screenshots`, `artifacts` |
 | `runner` | `host` (the machine's name), `os` (`windows`, `linux`, `macos`), `testor` (its version) |
 | `signedAt` | when testor signed it (UTC) |
 
@@ -80,6 +80,59 @@ as, and the spec summary is parsed from the run's output. A test that is malicio
 account that can also read `signing.key`, can make testor sign anything. Signatures become
 evidence when tests run in an account that cannot read the secrets folder; see
 [security.md](security.md#what-stays-out-of-reach).
+
+## Release gates
+
+A deploy should ship a commit only once its tests passed, and only on results testor signed.
+`gates` in `config.json` say what a release needs:
+
+```json
+{ "gates": {
+    "web-release": { "project": "web", "kinds": ["test", "e2e"],
+                     "requireAgentSignature": true, "maxAgeHours": 72 } } }
+```
+
+`GET /api/v1/gates/web-release?commit=<sha>` (scope `read`; a prefix of 7 or more is enough)
+answers from each kind's **latest finished run of that commit from a clean tree**
+(`source.commit`, `source.dirty: false`; an agent records them for the commit it checked out,
+`remote.yml` for a workstation's):
+
+```json
+{ "gate": "web-release", "project": "web", "commit": "3f4e006…", "pass": false,
+  "checks": [
+    { "kind": "test", "pass": true, "runId": "20261125-…", "status": "passed",
+      "attestation": "/api/v1/runs/20261125-…/attestation" },
+    { "kind": "e2e", "pass": false, "reason": "its latest run 20261125-… failed" } ] }
+```
+
+A kind passes when its latest run passed; **testor's attestation of it holds** (checked again
+with testor's key at every request, not taken from a flag) and its signed record names that
+run, `passed` and that commit; with `requireAgentSignature`, its agent signed it too; with
+`maxAgeHours`, it ended within that time. A later failure wins over an earlier pass, and a run
+from a tree with changes does not count. `GET /api/v1/gates` lists the gates.
+
+In a pipeline:
+
+```sh
+curl -fsS -H "authorization: Bearer $TESTOR_TOKEN" \
+  "https://testor.example.com/api/v1/gates/web-release?commit=$GITHUB_SHA" | jq -e .pass
+```
+
+Or as the input of a policy engine, for rules of your own (Open Policy Agent):
+
+```rego
+package release
+
+default allow := false
+
+allow if {
+  input.pass
+  every check in input.checks { time.now_ns() - time.parse_rfc3339_ns(check.endedAt) < 24 * 3600 * 1e9 }
+}
+```
+
+To check the signatures yourself rather than trust testor's answer, fetch each check's
+`attestation` and verify it as [above](#verifying-it).
 
 ## Signed by the agent
 
