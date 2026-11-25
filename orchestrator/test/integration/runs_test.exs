@@ -315,7 +315,8 @@ defmodule Testor.Integration.RunsTest do
     assert text =~ "1: line one"
     assert %{"content" => [%{"text" => tail}]} = tool("get_run_log", %{"id" => id, "tail_bytes" => 10})
     assert tail =~ "the last 10 of"
-    assert %{"content" => [%{"text" => "line one" <> _}]} = tool("get_run_log", %{"id" => id})
+    assert %{"content" => [%{"text" => text}]} = tool("get_run_log", %{"id" => id})
+    assert text =~ ~s(<untrusted-output run="#{id}">\nline one\n)
     assert %{"isError" => true} = tool("get_run_log", %{"id" => "nope"})
     assert %{"isError" => true} = tool("get_run_log", %{})
     assert %{"isError" => true} = tool("get_run_log", %{"id" => "a b"})

@@ -10,7 +10,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/run.ps1", "scripts/two-accounts/**", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/run.ps1", "scripts/two-accounts/**", "deploy/helm/**", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -96,3 +96,28 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
+  chart:
+    name: Helm chart
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      HELM: alpine/helm@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1 # 3.22.1
+      KUBECONFORM: ghcr.io/yannh/kubeconform@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e # v0.8.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint, render three configurations, validate them against Kubernetes' schemas
+        run: |
+          helm() { docker run --rm -v "$PWD/deploy/helm:/charts" -w /charts "$HELM" "$@"; }
+          helm lint testor --strict
+          mkdir -p out
+          helm template t testor -n ci > out/default.yaml
+          helm template t testor -n ci --set ingress.enabled=true --set ingress.tlsSecret=web \
+            --set tls.existingSecret=tls --set auth.existingSecret=admin \
+            --set serviceMonitor.enabled=true --set 'trustedProxies={10.0.0.0/8}' > out/full.yaml
+          helm template t testor -n ci --set persistence.existingClaim=data \
+            --set networkPolicy.enabled=false > out/claim.yaml
+          docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
+            -kubernetes-version 1.30.0 -skip ServiceMonitor /m/default.yaml /m/full.yaml /m/claim.yaml

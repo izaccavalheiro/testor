@@ -5,6 +5,7 @@ defmodule Testor.Web.Router do
     GET    /                       the dashboard (priv/static/index.html)
     GET    /events                 SSE: the run list, sessions and stats, live
     GET    /events/runs/:id        SSE: one run's log, specs and screenshots, live
+    GET    /metrics                Prometheus metrics (Testor.Metrics)
     GET    /api/health             liveness and versions
     GET    /api/state              everything /events starts with
     GET    /api/runs/:id           one run, its specs and screenshots
@@ -69,6 +70,13 @@ defmodule Testor.Web.Router do
 
   get "/events/runs/:id" do
     with_id(conn, id, &SSE.run(&1, id))
+  end
+
+  get "/metrics" do
+    conn
+    |> put_resp_content_type("text/plain; version=0.0.4", nil)
+    |> put_resp_header("cache-control", "no-store")
+    |> send_resp(200, Testor.Metrics.render())
   end
 
   get "/api/health" do
@@ -177,7 +185,14 @@ defmodule Testor.Web.Router do
     conn
     |> put_resp_header("x-content-type-options", "nosniff")
     |> put_resp_header("referrer-policy", "no-referrer")
+    |> hsts()
   end
+
+  # Served over HTTPS (TESTOR_TLS_CERT): browsers keep to HTTPS for a year.
+  defp hsts(%Plug.Conn{scheme: :https} = conn),
+    do: put_resp_header(conn, "strict-transport-security", "max-age=31536000")
+
+  defp hsts(conn), do: conn
 
   # A signed link opens the files of the run (or the loose screenshot) its first segment names.
   defp signed(conn, cap, [first | _] = segments, serve) do

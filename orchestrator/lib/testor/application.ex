@@ -28,10 +28,24 @@ defmodule Testor.Application do
       Testor.Janitor,
       Testor.Device,
       Testor.Maintenance,
-      {Bandit,
-       plug: Testor.Web.Router,
-       ip: Application.get_env(:testor, :ip, {0, 0, 0, 0}),
-       port: Application.fetch_env!(:testor, :port)}
+      Testor.Audit,
+      {Bandit, bandit_options()}
     ]
+  end
+
+  @doc """
+  The HTTP server's options. With `TESTOR_TLS_CERT` and `TESTOR_TLS_KEY` (PEM files) it speaks
+  HTTPS only, with Plug's strong cipher suite (TLS 1.2 and 1.3): a reverse proxy is optional.
+  """
+  def bandit_options(port \\ Application.fetch_env!(:testor, :port)) do
+    base = [plug: Testor.Web.Router, ip: Application.get_env(:testor, :ip, {0, 0, 0, 0}), port: port]
+
+    case {Application.get_env(:testor, :tls_cert), Application.get_env(:testor, :tls_key)} do
+      {cert, key} when is_binary(cert) and is_binary(key) ->
+        base ++ [scheme: :https, certfile: cert, keyfile: key, cipher_suite: :strong]
+
+      _ ->
+        base
+    end
   end
 end

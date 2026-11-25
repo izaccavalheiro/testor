@@ -38,7 +38,11 @@ config :testor,
   # TESTOR_TRUSTED_PROXIES: addresses or CIDR ranges of reverse proxies whose X-Forwarded-For
   # names the client (for rate limiting, audit and the anonymous-access check).
   trusted_proxies: System.get_env("TESTOR_TRUSTED_PROXIES"),
-  anonymous: anonymous
+  anonymous: anonymous,
+  # TESTOR_TLS_CERT, TESTOR_TLS_KEY: PEM files of a certificate (with its chain) and its key;
+  # with both, testor serves HTTPS only.
+  tls_cert: System.get_env("TESTOR_TLS_CERT"),
+  tls_key: System.get_env("TESTOR_TLS_KEY")
 
 # TESTOR_LOG: "file" (default for a release: <home>/testor.log, as a service nobody reads stdout
 # of) or "stdout" (containers, whose runtime collects it).

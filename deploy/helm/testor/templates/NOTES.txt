@@ -1,0 +1,13 @@
+testor {{ .Chart.AppVersion }} is starting in {{ .Release.Namespace }}.
+{{- if not .Values.auth.existingSecret }}
+
+No user exists yet, so testor answers nothing outside its pod (anonymous: {{ .Values.anonymous }}).
+Create the admin user (password from your shell, 12 characters or more):
+
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "testor.fullname" . }} -- \
+    env TESTOR_PASSWORD="$TESTOR_PASSWORD" /app/bin/testor eval 'Testor.Auth.CLI.user ~s[admin], ~s[admin]'
+
+or set auth.existingSecret to a Secret with a "password" key.
+{{- end }}
+
+Reach it: {{ if .Values.ingress.enabled }}https://{{ .Values.ingress.host }}{{ else }}kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "testor.fullname" . }} 6767{{ end }}

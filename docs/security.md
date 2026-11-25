@@ -171,18 +171,46 @@ was reused); the run is cancelled with a warning.
 
 ## Transport
 
-testor speaks plain HTTP. Basic credentials and tokens are only as private as the network:
+testor speaks plain HTTP unless it is given a certificate. Basic credentials and tokens are
+only as private as the network:
 
 - over Tailscale, WireGuard encrypts the traffic end to end; the Windows firewall rule the
   installer adds lets in only the Tailscale range and the local subnet (`ALLOW_FROM`);
-- on a network that is not yours, put a TLS-terminating proxy in front (Caddy, nginx, `tailscale serve`) and set
+- with `TESTOR_TLS_CERT` and `TESTOR_TLS_KEY` (PEM files: the certificate with its chain, and
+  its key) testor speaks HTTPS only, TLS 1.2 and 1.3 with strong ciphers, and sends
+  `Strict-Transport-Security`; `tailscale cert` or any ACME client provides the files
+  (`task testor:deploy TLS_CERT=... TLS_KEY=...`);
+- or put a TLS-terminating proxy in front (Caddy, nginx, `tailscale serve`) and set
   `TESTOR_BIND=127.0.0.1` so testor listens locally only.
 
 ## Audit
 
-Every state-changing request is logged to `testor.log` with who sent it, from where, and its
-status (`audit: ada from 100.64.0.7: POST /api/v1/runs/<id>/cancel -> 200`); failed logins
-with the user name and address.
+Every state-changing request and every failed sign-in is an entry of `<home>/audit.jsonl`:
+who, how (`basic`, `bearer`), from where, the method, path, status and request id. Each entry
+holds the SHA-256 of the one before (`prev`) and an Ed25519 signature with the attestation key
+(`sig`, over the entry without it), so an edited, removed or reordered entry breaks the chain
+at that line. `GET /api/v1/audit` (scope `maintain`) gives the last entries and whether the
+whole file verifies; anyone with the public key (`GET /api/v1/attestation/key`) can check a copy
+(`Testor.Audit.verify/3`). Over 16 MB the file is renamed `audit-<time>.jsonl` and the chain
+continues in a new one. Ship it to a SIEM as JSON lines. `testor.log` keeps a line per request
+too.
+
+## Secrets in logs
+
+`run.ps1` writes `***` in the stored log, and in the record's `error`, in place of the values
+of environment variables whose names look secret (`TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`,
+`API_KEY`, `PRIVATE_KEY`, `CREDENTIAL`) or are listed in `TESTOR_MASK` (comma-separated names),
+when 6 characters or longer. The terminal that started the run still sees the output
+unchanged. A secret a test prints after transforming it (base64, split) is not recognised:
+masking is a safety net, not a reason to print secrets.
+
+## AI agents (MCP)
+
+Run output, commands, errors and test names come from the code under test, which can write
+text meant to steer an agent (prompt injection). `get_run_log` returns the output fenced in
+`<untrusted-output run="<id>">` after a line saying to treat it as data, with any such fence
+inside the output defused, and the server's instructions say the same of every field. Give
+agents a token with the `read` scope unless they must cancel or delete runs.
 
 ## Other headers
 

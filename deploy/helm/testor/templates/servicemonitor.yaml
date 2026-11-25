@@ -1,0 +1,19 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "testor.fullname" . }}
+  labels: {{- include "testor.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "testor.selector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+      scheme: {{ include "testor.scheme" . | lower }}
+      {{- if .Values.serviceMonitor.tokenSecret }}
+      authorization:
+        credentials: { name: {{ .Values.serviceMonitor.tokenSecret }}, key: token }
+      {{- end }}
+{{- end }}

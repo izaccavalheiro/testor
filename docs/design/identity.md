@@ -1,0 +1,16 @@
+# Identity
+
+Status: proposed. Builds on: users, roles and scopes; HS256 tokens; signed links (0.2).
+
+- **OpenID Connect sign-in** for the dashboard (authorization code with PKCE, a session
+  cookie: `HttpOnly`, `Secure`, `SameSite=Lax`), groups or claims mapped to roles; Basic stays
+  for scripts and as a break-glass account.
+- **Asymmetric tokens**: testor's own tokens signed with EdDSA or ES256 and published as JWKS,
+  so a verifier (a hub, an agent) needs no secret; HS256 accepted until the next major version.
+- **Projects and teams**: a role per project (`viewer`, `operator`, `admin`), filtering every
+  list, event stream and MCP tool; signed links bound to the viewer and minutes long.
+- **Workload identity**: jobs ([agent-protocol.md](agent-protocol.md)) get a short OIDC token
+  from testor (issuer, audience, `sub` = project, kind and commit) to exchange for cloud
+  credentials, as GitHub Actions does; a secrets broker adapter (Vault, AWS, GCP, Azure secret
+  managers, SOPS files) hands secrets to a job by name, and their values are masked in its logs
+  by the agent before anything leaves the runner.

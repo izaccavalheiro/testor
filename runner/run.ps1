@@ -62,6 +62,10 @@ $record = [ordered]@{
     client   = if ($env:SSH_CLIENT) { ($env:SSH_CLIENT -split " ")[0] } else { $null }
     declared = if ($env:TESTOR_ACTOR) { $env:TESTOR_ACTOR } else { $null }
   }
+  # What was tested, from the workstation (remote.yml): flaky specs are found per commit.
+  source     = if ($env:TESTOR_COMMIT) {
+    [ordered]@{ commit = $env:TESTOR_COMMIT; branch = $env:TESTOR_BRANCH; dirty = $env:TESTOR_DIRTY -eq "true" }
+  } else { $null }
 }
 
 function Save-Record {
@@ -173,6 +177,19 @@ try {
   $null = $watcher.BeginInvoke()
 } catch { Write-Warning "testor: no cancel watcher: $_"; $watcher = $null }
 
+# Secrets stay out of the stored log: the values of environment variables whose names look
+# secret (TOKEN, SECRET, PASSWORD, PASSWD, API_KEY, PRIVATE_KEY, CREDENTIAL) or are listed in
+# $env:TESTOR_MASK (comma-separated names), 6 characters or longer, are written as ***. The
+# terminal still gets the output unchanged.
+$maskNames = @("$env:TESTOR_MASK" -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+$secrets = @(Get-ChildItem env: | Where-Object {
+    ($_.Name -match "TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|CREDENTIAL" -or $_.Name -in $maskNames) -and
+    "$($_.Value)".Length -ge 6 } | ForEach-Object { "$($_.Value)" } | Sort-Object Length -Descending -Unique)
+function Hide-Secrets([string]$line) {
+  foreach ($secret in $secrets) { $line = $line.Replace($secret, "***") }
+  $line
+}
+
 $failure = $null
 $global:LASTEXITCODE = 0
 # Native output is decoded with the console code page (IBM850 here) once it passes through
@@ -191,15 +208,15 @@ try {
     if ($_ -is [Management.Automation.ErrorRecord] -and $_.Exception -is [Management.Automation.RemoteException]) {
       $line = $_.ToString()
       [Console]::Error.WriteLine($line)
-      if ($log) { $log.WriteLine($line) }
+      if ($log) { $log.WriteLine((Hide-Secrets $line)) }
     } else {
-      if ($log) { $log.WriteLine($(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() })) }
+      if ($log) { $log.WriteLine((Hide-Secrets $(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() }))) }
       $_
     }
   }
 } catch {
   $failure = $_
-  if ($log) { $log.WriteLine("`n" + ($_ | Out-String).TrimEnd()) }
+  if ($log) { $log.WriteLine("`n" + (Hide-Secrets ($_ | Out-String).TrimEnd())) }
 } finally {
   if ($watcher) { try { $watcher.Stop(); $watcher.Dispose() } catch { } }
   [Console]::OutputEncoding = $encoding
@@ -212,7 +229,7 @@ try {
             else { $LASTEXITCODE }
     $record.status = if ($failure -or $exit) { "failed" } else { "passed" }
     $record.exitCode = $exit
-    if ($failure) { $record.error = ($failure.Exception.Message -split "`n")[0] }
+    if ($failure) { $record.error = Hide-Secrets ($failure.Exception.Message -split "`n")[0] }
     $record.endedAt = $ended.ToUniversalTime().ToString("o")
     $record.durationMs = [int]($ended - $started).TotalMilliseconds
 

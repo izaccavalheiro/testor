@@ -1,0 +1,162 @@
+defmodule Testor.Audit do
+  @moduledoc """
+  The audit trail: `<home>/audit.jsonl`, one JSON object per line for every state-changing
+  request and every failed sign-in, chained and signed so that editing, removing or reordering
+  an entry shows:
+
+      {"at": "...", "event": "request", "who": "ada", "via": "basic", "from": "100.64.0.7",
+       "method": "POST", "path": "/api/v1/runs/<id>/cancel", "status": 200, "requestId": "...",
+       "prev": "<SHA-256 of the previous line>", "sig": "<Ed25519 signature, base64>"}
+
+  `sig` signs the line without it, with the attestation key (`Testor.Attestation`), so anyone
+  with the public key (`GET /api/v1/attestation/key`) can check the trail; `verify/2` does.
+  The first entry's `prev` is 64 zeros. When the file passes #{16} MB it is renamed
+  `audit-<time>.jsonl` and the chain goes on in a new file.
+  """
+  use GenServer
+  require Logger
+  alias Testor.{Attestation, Config}
+
+  @genesis String.duplicate("0", 64)
+  @max_bytes 16 * 1024 * 1024
+
+  def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
+  def file, do: Path.join(Config.data_dir(), "audit.jsonl")
+
+  @doc "Appends an entry (`event` and its fields); returns at once."
+  def record(event, fields), do: GenServer.cast(__MODULE__, {:record, event, fields})
+
+  @doc "Waits until every entry recorded so far is written (tests, and reads that follow writes)."
+  def flush, do: GenServer.call(__MODULE__, :flush)
+
+  @doc "The last `limit` entries, newest last; a line that is not JSON as `%{\"malformed\" => line}`."
+  def tail(limit) do
+    flush()
+
+    case File.read(file()) do
+      {:ok, text} ->
+        text
+        |> String.split("\n", trim: true)
+        |> Enum.take(-limit)
+        |> Enum.map(fn line ->
+          case JSON.decode(line) do
+            {:ok, %{} = entry} -> entry
+            _ -> %{"malformed" => line}
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  @doc """
+  Checks the trail in `path` against `public` (the attestation key): `{:ok, entries}`, or
+  `{:error, line, reason}` for the first line that breaks it (`:chain`, `:signature`,
+  `:malformed`). `prev` is the hash the first line must follow (a rotated file's last line).
+  """
+  def verify(path \\ file(), public, prev \\ @genesis) do
+    lines =
+      case File.read(path) do
+        {:ok, text} -> String.split(text, "\n", trim: true)
+        _ -> []
+      end
+
+    lines
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, prev}, fn {line, number}, {:ok, prev} ->
+      case check(line, prev, public) do
+        :ok -> {:cont, {:ok, hash(line)}}
+        {:error, reason} -> {:halt, {:error, number, reason}}
+      end
+    end)
+    |> case do
+      {:ok, _} -> {:ok, length(lines)}
+      error -> error
+    end
+  end
+
+  defp check(line, prev, public) do
+    with {:ok, %{"prev" => ^prev, "sig" => sig} = entry} when is_binary(sig) <- decode(line, prev),
+         {:ok, sig} <- Base.decode64(sig),
+         unsigned = JSON.encode!(Map.delete(entry, "sig")),
+         true <- :crypto.verify(:eddsa, :none, unsigned, sig, [public, :ed25519]) do
+      :ok
+    else
+      {:chain, _} -> {:error, :chain}
+      false -> {:error, :signature}
+      _ -> {:error, :malformed}
+    end
+  end
+
+  defp decode(line, prev) do
+    case JSON.decode(line) do
+      {:ok, %{"prev" => ^prev}} = ok -> ok
+      {:ok, %{"prev" => other}} -> {:chain, other}
+      _ -> :malformed
+    end
+  end
+
+  defp hash(line), do: :crypto.hash(:sha256, line) |> Base.encode16(case: :lower)
+
+  # --- server --------------------------------------------------------------------------------
+
+  @impl true
+  def init(nil) do
+    {:ok, %{prev: last_hash()}}
+  end
+
+  @impl true
+  def handle_cast({:record, event, fields}, state) do
+    {:noreply, append(state, event, fields)}
+  end
+
+  @impl true
+  def handle_call(:flush, _from, state), do: {:reply, :ok, state}
+
+  defp append(state, event, fields) do
+    state = rotate(state)
+    {_, seed} = Attestation.keypair()
+
+    entry =
+      fields
+      |> Map.merge(%{
+        "at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "event" => event,
+        "prev" => state.prev
+      })
+
+    unsigned = JSON.encode!(entry)
+    sig = :crypto.sign(:eddsa, :none, unsigned, [seed, :ed25519]) |> Base.encode64()
+    line = JSON.encode!(Map.put(entry, "sig", sig))
+    File.write!(file(), line <> "\n", [:append])
+    %{state | prev: hash(line)}
+  rescue
+    error ->
+      Logger.error("audit: could not record #{event}: #{Exception.message(error)}")
+      state
+  end
+
+  defp rotate(state) do
+    if Testor.Files.size(file()) > Application.get_env(:testor, :audit_max_bytes, @max_bytes) do
+      stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S")
+      File.rename!(file(), Path.join(Config.data_dir(), "audit-#{stamp}.jsonl"))
+    end
+
+    state
+  end
+
+  # The chain continues from the last line written, across restarts.
+  defp last_hash do
+    case File.read(file()) do
+      {:ok, text} ->
+        case text |> String.split("\n", trim: true) |> List.last() do
+          nil -> @genesis
+          line -> hash(line)
+        end
+
+      _ ->
+        @genesis
+    end
+  end
+end

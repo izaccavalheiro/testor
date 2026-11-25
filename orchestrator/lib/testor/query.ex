@@ -7,7 +7,7 @@ defmodule Testor.Query do
   alias Testor.{Config, Files, Store}
 
   @statuses ["running", "passed", "failed", "aborted", "cancelled"]
-  @fields ~w(id project kind command status exitCode startedAt endedAt durationMs summary warning error screenshots artifacts artifactsBytes actor attested)
+  @fields ~w(id project kind command status exitCode startedAt endedAt durationMs summary warning error screenshots artifacts artifactsBytes actor attested source)
 
   def statuses, do: @statuses
 
@@ -52,6 +52,56 @@ defmodule Testor.Query do
     Enum.any?(["project", "kind", "command"], fn key ->
       is_binary(run[key]) and String.contains?(String.downcase(run[key]), q)
     end)
+  end
+
+  @doc """
+  Flaky spec files of a project: ones that both passed and failed in runs of the same task on
+  the same commit with no local changes (`source.commit`, `source.dirty: false`, which
+  `remote.yml` records). Most failures first:
+
+      [%{"file", "kind", "commits", "passed", "failed", "lastFailedRun"}]
+
+  Optionally for one `kind` only. Runs without a recorded commit are left out: a failure on a
+  working tree with changes is not evidence of flakiness.
+  """
+  def flaky(project, kind \\ nil) do
+    Store.all()
+    |> Enum.filter(fn run ->
+      run["project"] == project and (kind == nil or run["kind"] == kind) and
+        is_binary(get_in(run, ["source", "commit"])) and get_in(run, ["source", "dirty"]) == false and
+        is_list(run["specs"])
+    end)
+    |> Enum.flat_map(fn run ->
+      for %{"file" => file, "status" => status} when status in ["passed", "failed"] <- run["specs"],
+          do: {{run["kind"], file}, run["source"]["commit"], status, run["id"]}
+    end)
+    |> Enum.group_by(&elem(&1, 0))
+    |> Enum.flat_map(fn {{kind, file}, results} ->
+      flaky_commits =
+        results
+        |> Enum.group_by(&elem(&1, 1), &elem(&1, 2))
+        |> Enum.filter(fn {_commit, statuses} -> "passed" in statuses and "failed" in statuses end)
+        |> Enum.map(&elem(&1, 0))
+
+      if flaky_commits == [] do
+        []
+      else
+        on_them = Enum.filter(results, &(elem(&1, 1) in flaky_commits))
+        failed = for {_, _, "failed", id} <- on_them, do: id
+
+        [
+          %{
+            "file" => file,
+            "kind" => kind,
+            "commits" => Enum.sort(flaky_commits),
+            "passed" => Enum.count(on_them, &(elem(&1, 2) == "passed")),
+            "failed" => length(failed),
+            "lastFailedRun" => Enum.max(failed)
+          }
+        ]
+      end
+    end)
+    |> Enum.sort_by(&{-&1["failed"], &1["file"]})
   end
 
   @doc "The latest run of each project and task, with the statuses of up to 10 runs before it."

@@ -23,7 +23,8 @@ The installer sets the first three for the service; the rest are optional.
 | `TESTOR_ALLOWED_HOSTS` | (none) | host names answered besides IP addresses, `localhost` and the machine's name: `testor.example.com`, `.example.com` (subdomains), `*` (no check). See [network exposure](../reference/security.md#network-exposure) |
 | `TESTOR_TRUSTED_PROXIES` | (none) | addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the client |
 | `TESTOR_ANONYMOUS` | `private` | who is answered while authentication is off: `private` (loopback, private, link-local, Tailscale), `loopback`, or `any` |
-| `TESTOR_SECRETS_DIR` | `<home>` | where `auth.json`, `jwt.key` and `signing.key` live |
+| `TESTOR_SECRETS_DIR` | `<home>` | where `auth.json`, `jwt.key`, `signing.key` and `webhooks.json` live |
+| `TESTOR_TLS_CERT`, `TESTOR_TLS_KEY` | (none) | PEM certificate (with its chain) and key: with both, HTTPS only |
 | `TESTOR_LOG` | `file` | `file` (`<home>/testor.log`) or `stdout` (containers) |
 
 `task testor:deploy` sets `TESTOR_BIND`, `TESTOR_ALLOWED_HOSTS`, `TESTOR_TRUSTED_PROXIES`,

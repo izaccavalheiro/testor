@@ -120,6 +120,28 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  get "/projects/:project/flaky" do
+    conn = fetch_query_params(conn)
+    json(conn, 200, %{"data" => Query.flaky(project, conn.query_params["kind"])})
+  end
+
+  get "/audit" do
+    conn = fetch_query_params(conn)
+    limit = int(conn.query_params["limit"], 100, 1, 1000)
+    # Entries first: reading them waits for those still being written, so the check below
+    # covers the same file.
+    entries = Testor.Audit.tail(limit)
+    {public, _} = Testor.Attestation.keypair()
+
+    verified =
+      case Testor.Audit.verify(public) do
+        {:ok, entries} -> %{"ok" => true, "entries" => entries}
+        {:error, line, reason} -> %{"ok" => false, "line" => line, "reason" => to_string(reason)}
+      end
+
+    json(conn, 200, %{"entries" => entries, "verified" => verified})
+  end
+
   get "/attestation/key" do
     json(conn, 200, Testor.Attestation.public_key())
   end

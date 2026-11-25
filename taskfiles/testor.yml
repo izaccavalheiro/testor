@@ -132,6 +132,8 @@ tasks:
             {{if ne .TRUSTED_PROXIES nil}}-TrustedProxies '{{.TRUSTED_PROXIES | replace "'" "''"}}'{{end}}
             {{if ne .ANONYMOUS nil}}-Anonymous '{{.ANONYMOUS | replace "'" "''"}}'{{end}}
             {{if ne .SECRETS_DIR nil}}-SecretsDir '{{.SECRETS_DIR | replace "'" "''"}}'{{end}}
+            {{if ne .TLS_CERT nil}}-TlsCert '{{.TLS_CERT | replace "'" "''"}}'{{end}}
+            {{if ne .TLS_KEY nil}}-TlsKey '{{.TLS_KEY | replace "'" "''"}}'{{end}}
 
   status:
     desc: Show testor's service and health on the runner
