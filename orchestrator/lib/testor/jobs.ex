@@ -27,6 +27,7 @@ defmodule Testor.Jobs do
   @ref ~r/^[A-Za-z0-9_][A-Za-z0-9_.\/-]{0,199}$/
   @active ["leased", "running"]
   @statuses ["queued", "leased", "running", "passed", "failed", "cancelled", "expired"]
+  @over ["passed", "failed", "cancelled", "expired"]
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   def statuses, do: @statuses
@@ -286,8 +287,12 @@ defmodule Testor.Jobs do
       ref != nil and not (is_binary(ref) and Regex.match?(@ref, ref)) ->
         {:error, "ref is a git branch, tag or commit"}
 
+      params["traceparent"] != nil and Testor.Tracing.parse(params["traceparent"]) == :error ->
+        {:error, "traceparent is a W3C trace context (00-<trace id>-<span id>-<flags>)"}
+
       true ->
-        {:ok, build(params["project"], params["kind"], Enum.uniq(labels), ref, who)}
+        job = build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
+        {:ok, Map.merge(job, Testor.Tracing.job_fields(params["traceparent"]))}
     end
   end
 
@@ -352,6 +357,9 @@ defmodule Testor.Jobs do
   end
 
   defp save(jobs, job) do
+    if job["status"] in @over and get_in(jobs, [job["id"], "status"]) not in @over,
+      do: Testor.Tracing.job_ended(job)
+
     Files.write_json(Path.join(dir(), job["id"] <> ".json"), job)
     Testor.Events.broadcast("global", "job", job)
     Map.put(jobs, job["id"], job)

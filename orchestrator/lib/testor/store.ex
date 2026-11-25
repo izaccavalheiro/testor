@@ -272,6 +272,7 @@ defmodule Testor.Store do
   defp finished(id) do
     Testor.Attestation.attest_later(id)
     Testor.Webhooks.notify("run.finished", id)
+    if run = get(id), do: Testor.Tracing.run_ended(run)
   end
 
   defp keep_annotations(run, nil), do: run

@@ -25,6 +25,10 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   gateway, a hub or another service verifies a testor token without a secret.
   `Testor.Auth.CLI.roll_token_key` adds a new key while the previous one verifies its tokens
   until they expire; `TESTOR_TOKEN_KEY` shares one key across replicas.
+- **OpenTelemetry traces**: with `OTEL_EXPORTER_OTLP_ENDPOINT` (or `_TRACES_ENDPOINT`), testor
+  sends a span per job and per run (its child) as OTLP/HTTP JSON, with no SDK. `POST
+  /api/v1/jobs` takes CI's W3C `traceparent`, so the pipeline, the job and the run are one
+  trace; the run gets `TRACEPARENT`, which `run.ps1` records.
 - The agent image (`ghcr.io/izaccavalheiro/testor-agent`) is built for **linux/arm64** too.
 - **Scheduled jobs**: `schedules` in `config.json` queue a job when their cron expression
   (UTC, five fields or `@daily`...) matches the minute; none while the last one has not ended.

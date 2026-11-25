@@ -184,7 +184,7 @@ defmodule Testor.JobTokensTest do
     )
 
     # Loading the settings makes the key, once job tokens are on.
-    capture_log(fn -> assert %{job_token_keys: %{signing: %{kid: first}}} = Auth.load_settings() end)
+    capture_log(fn -> assert %{job_token_keys: %{signing: %{kid: _}}} = Auth.load_settings() end)
 
     if match?({:unix, _}, :os.type()) do
       assert File.stat!(JobTokens.file()).mode |> Bitwise.band(0o777) == 0o600

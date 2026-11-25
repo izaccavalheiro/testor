@@ -52,7 +52,7 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 - A **hub**: the board and history across several testors, filtered by runner label.
 - [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the run
   index, S3-compatible object storage for logs and artifacts, RabbitMQ, NATS or SQS for jobs.
-- OpenTelemetry traces of runs and jobs.
+- **OpenTelemetry traces** of runs and jobs (done, in the next release), joined to CI's trace.
 - **The agent image for arm64** (done, in the next release).
 - **Scheduled jobs** (done, in the next release): nightly suites from the same allow-lists.
 
