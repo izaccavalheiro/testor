@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-25
+
 ### Added
 
 - **Agents in containers and Kubernetes**: the agent image `ghcr.io/izaccavalheiro/testor-agent`
