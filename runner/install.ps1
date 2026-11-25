@@ -35,7 +35,8 @@
 #
 # The service's environment (saved in <home>/service.json, so later deploys keep it; pass ""
 # to remove one): -Bind (TESTOR_BIND), -AllowedHosts (TESTOR_ALLOWED_HOSTS), -TrustedProxies
-# (TESTOR_TRUSTED_PROXIES), -Anonymous (TESTOR_ANONYMOUS), -SecretsDir (TESTOR_SECRETS_DIR).
+# (TESTOR_TRUSTED_PROXIES), -Anonymous (TESTOR_ANONYMOUS), -SecretsDir (TESTOR_SECRETS_DIR),
+# -TlsCert and -TlsKey (TESTOR_TLS_CERT, TESTOR_TLS_KEY: PEM files; with both, HTTPS only).
 param(
   [switch]$Uninstall,
   [switch]$Test,
@@ -54,6 +55,8 @@ param(
   [string]$TrustedProxies = "",
   [ValidateSet("", "private", "loopback", "any")][string]$Anonymous = "",
   [string]$SecretsDir = "",
+  [string]$TlsCert = "",
+  [string]$TlsKey = "",
   [string[]]$AllowFrom = @("100.64.0.0/10", "LocalSubnet")
 )
 $ErrorActionPreference = "Stop"
@@ -234,7 +237,9 @@ foreach ($pair in @(
     @("TESTOR_ALLOWED_HOSTS", $AllowedHosts, $PSBoundParameters.ContainsKey("AllowedHosts")),
     @("TESTOR_TRUSTED_PROXIES", $TrustedProxies, $PSBoundParameters.ContainsKey("TrustedProxies")),
     @("TESTOR_ANONYMOUS", $Anonymous, $PSBoundParameters.ContainsKey("Anonymous")),
-    @("TESTOR_SECRETS_DIR", $SecretsDir, $PSBoundParameters.ContainsKey("SecretsDir")))) {
+    @("TESTOR_SECRETS_DIR", $SecretsDir, $PSBoundParameters.ContainsKey("SecretsDir")),
+    @("TESTOR_TLS_CERT", $TlsCert, $PSBoundParameters.ContainsKey("TlsCert")),
+    @("TESTOR_TLS_KEY", $TlsKey, $PSBoundParameters.ContainsKey("TlsKey")))) {
   if (-not $pair[2]) { continue }
   if ($pair[1]) { $serviceEnv[$pair[0]] = $pair[1] } else { $serviceEnv.Remove($pair[0]) }
 }
@@ -339,10 +344,12 @@ if ($healthHost -match ":") { $healthHost = "[$healthHost]" }
 $deadline = (Get-Date).AddSeconds(30)
 do {
   Start-Sleep -Milliseconds 500
-  try { $health = Invoke-RestMethod "http://${healthHost}:$Port/api/health" -TimeoutSec 2 } catch { $health = $null }
+  $scheme = if ($serviceEnv["TESTOR_TLS_CERT"] -and $serviceEnv["TESTOR_TLS_KEY"]) { "https" } else { "http" }
+  # The certificate names the public host, not this address: its chain is not what is checked here.
+  try { $health = Invoke-RestMethod "${scheme}://${healthHost}:$Port/api/health" -TimeoutSec 2 -SkipCertificateCheck } catch { $health = $null }
 } until ($health -or (Get-Date) -gt $deadline)
 if (-not $health) { throw "testor did not answer on port $Port; see $(Join-Path $testorHome 'testor.log')" }
 $hostName = [Environment]::MachineName.ToLower()
-"testor $($health.version) (Elixir $($health.elixir), OTP $($health.otp)) on http://${hostName}:$Port"
+"testor $($health.version) (Elixir $($health.elixir), OTP $($health.otp)) on ${scheme}://${hostName}:$Port"
 if (-not $IsWindows) { "No firewall rule was added: allow TCP $Port from your workstation if this machine filters inbound traffic." }
 $global:LASTEXITCODE = 0

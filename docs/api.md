@@ -53,6 +53,43 @@ curl -s -H "authorization: Bearer $TOKEN" 'http://my-runner:6767/api/v1/runs?sta
 curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID/log?grep=FAIL&context=3"
 ```
 
+## Prometheus metrics
+
+`GET /metrics` (scope `read`) is the Prometheus text format: `testor_build_info`,
+`testor_runs{status}`, `testor_last_run_success{project,kind}`,
+`testor_last_run_timestamp_seconds`, `testor_last_run_duration_seconds`,
+`testor_event_streams`, `testor_disk_free_bytes`, `testor_disk_size_bytes`,
+`testor_stored_bytes{area}`, `testor_cpu_ratio`, `testor_memory_available_bytes`,
+`testor_memory_total_bytes`. Scrape it with a Bearer token:
+
+```yaml
+scrape_configs:
+  - job_name: testor
+    authorization: { credentials_file: /etc/prometheus/testor.token }
+    static_configs: [{ targets: ["my-runner:6767"] }]
+```
+
+## Webhooks
+
+When a run ends, testor POSTs `{"event": "run.finished", "id", "sentAt", "run", "links"}` to
+the endpoints in `webhooks.json` in the secrets folder:
+
+```json
+{"endpoints": [{"url": "https://ci.example.com/hooks/testor", "secret": "<32+ random characters>",
+                "events": ["run.finished"], "projects": ["my-app"]}]}
+```
+
+`X-Testor-Signature: sha256=<hex>` is the HMAC-SHA256 of `<X-Testor-Timestamp>.<body>` with the
+endpoint's secret; check it in constant time and refuse old timestamps. Deliveries without a
+2xx answer are tried again after 1, 10 and 60 seconds. Endpoints are set by whoever can write
+the secrets folder, never through the API.
+
+## Audit trail
+
+`GET /api/v1/audit?limit=100` (scope `maintain`): `{"entries": [...], "verified": {"ok": true,
+"entries": N}}`, or `{"ok": false, "line": n, "reason": "chain" | "signature" | "malformed"}`
+when the trail was changed. See [security.md](security.md#audit).
+
 ## The dashboard's routes
 
 Kept as they are for the dashboard; errors are `{"error": "message"}`.

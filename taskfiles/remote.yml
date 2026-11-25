@@ -51,6 +51,13 @@ vars:
   # Who starts the runs, as the runner records it (informative: the SSH account is the proof).
   _ACTOR:
     sh: '{{if .ACTOR}}echo "{{.ACTOR}}"{{else}}echo "${USER:-$USERNAME}@$(hostname)"{{end}}'
+  # The commit the snapshot is of, its branch, and whether it has changes not committed.
+  _COMMIT:
+    sh: 'git -C "{{._ROOT}}" rev-parse HEAD 2>/dev/null || true'
+  _BRANCH:
+    sh: 'git -C "{{._ROOT}}" rev-parse --abbrev-ref HEAD 2>/dev/null || true'
+  _DIRTY:
+    sh: 'if [ -n "$(git -C "{{._ROOT}}" status --porcelain 2>/dev/null)" ]; then echo true; else echo false; fi'
   _KEEP: '{{range $i, $k := splitList " " (.KEEP | default "node_modules .lockhash target .venv")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
@@ -63,6 +70,9 @@ vars:
     $workspace = Join-Path ([IO.Path]::Combine($HOME, "{{._WORKSPACES}}")) "{{._PROJECT}}"
     $testorRun = Join-Path ([IO.Path]::Combine($HOME, "{{._HOME_DIR}}")) "run.ps1"
     $env:TESTOR_ACTOR = '{{._ACTOR | replace "'" "''"}}'
+    $env:TESTOR_COMMIT = '{{._COMMIT}}'
+    $env:TESTOR_BRANCH = '{{._BRANCH | replace "'" "''"}}'
+    $env:TESTOR_DIRTY = '{{._DIRTY}}'
 
 tasks:
   sync:

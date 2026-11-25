@@ -73,6 +73,30 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   runner sees, and `TESTOR_ACTOR`, which `remote.yml` sets to `<user>@<workstation>` or `ACTOR`);
   in the API and on the run page.
 
+- **Prometheus metrics** at `GET /metrics` (scope `read`): runs by status, the latest result,
+  end and duration of every task, event streams, disk, stored bytes, CPU and memory.
+- **Webhooks**: `run.finished` POSTed to the endpoints in `webhooks.json` (secrets folder),
+  signed with HMAC-SHA256 over the timestamp and body, retried after 1, 10 and 60 s, HTTPS
+  checked against the system's roots.
+- **Tamper-evident audit trail**: `audit.jsonl`, an entry per state-changing request and failed
+  sign-in, chained by SHA-256 and signed with the attestation key; `GET /api/v1/audit` (scope
+  `maintain`) verifies it.
+- **Built-in TLS**: `TESTOR_TLS_CERT` and `TESTOR_TLS_KEY` (installer `-TlsCert -TlsKey`,
+  deploy `TLS_CERT TLS_KEY`) serve HTTPS only, with strong ciphers and HSTS.
+- **Secrets masked in stored logs**: `run.ps1` writes `***` for the values of secret-looking
+  environment variables and those named in `TESTOR_MASK`; the terminal is unchanged.
+- **MCP output fenced as untrusted**: `get_run_log` wraps run output in
+  `<untrusted-output>` with any fence inside defused, and the server's instructions tell agents
+  to treat run data as data (prompt injection).
+
+- **Flaky specs**: finished runs keep each spec file's outcome and `remote.yml` records the
+  commit, branch and whether the tree had changes (`source`); `GET /api/v1/projects/:project/flaky`
+  and the MCP tool `find_flaky_specs` list spec files that passed and failed on one clean commit.
+- **Helm chart** (`deploy/helm/testor`): one replica on a persistent volume, hardened pod,
+  NetworkPolicy, optional ingress, built-in TLS, admin user from a Secret, ServiceMonitor;
+  linted and validated against Kubernetes' schemas in CI.
+- Designs for the agent protocol, storage and queue ports, and identity (`docs/design`).
+
 ### Fixed
 
 - `task testor:test` clears the runner's ExUnit `tmp` folder: a junction a failed test left

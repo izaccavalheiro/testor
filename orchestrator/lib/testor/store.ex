@@ -267,8 +267,11 @@ defmodule Testor.Store do
     state
   end
 
-  # Once per run, when it has ended and is in the table: sign it.
-  defp finished(id), do: Testor.Attestation.attest_later(id)
+  # Once per run, when it has ended and is in the table: sign it, tell the webhooks.
+  defp finished(id) do
+    Testor.Attestation.attest_later(id)
+    Testor.Webhooks.notify("run.finished", id)
+  end
 
   defp keep_annotations(run, nil), do: run
 
@@ -335,7 +338,14 @@ defmodule Testor.Store do
   # Adds the spec summary (and the screenshot count, for records without one) and saves it.
   defp finalize(state, run) do
     id = run["id"]
-    run = Map.put(run, "summary", id |> Files.log_specs() |> SpecParser.summary())
+    specs = Files.log_specs(id)
+
+    # Each spec file's outcome is kept with the record: flaky specs are found across runs
+    # (Testor.Query.flaky/2) without reading every log again.
+    run =
+      run
+      |> Map.put("summary", SpecParser.summary(specs))
+      |> Map.put("specs", Enum.map(specs, &%{"file" => &1["file"], "status" => &1["status"]}))
 
     run =
       Map.put_new_lazy(run, "screenshots", fn ->

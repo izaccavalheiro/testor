@@ -308,6 +308,7 @@ defmodule Testor.Auth do
   defp failure(address, why, error) do
     Guard.failed(address)
     Logger.warning("auth: #{why} from #{address}")
+    Testor.Audit.record("auth_failed", %{"from" => address, "why" => why})
     {:error, error}
   end
 

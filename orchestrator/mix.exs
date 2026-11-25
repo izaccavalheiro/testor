@@ -32,7 +32,8 @@ defmodule Testor.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   def application do
-    [extra_applications: [:logger], mod: {Testor.Application, []}]
+    # inets and ssl: webhooks (Testor.Webhooks) are sent with :httpc.
+    [extra_applications: [:logger, :inets, :ssl], mod: {Testor.Application, []}]
   end
 
   defp deps do

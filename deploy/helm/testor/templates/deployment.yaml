@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "testor.fullname" . }}
+  labels: {{- include "testor.labels" . | nindent 4 }}
+spec:
+  # One process owns the files on the volume: never two at once.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "testor.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "testor.selector" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "testor.fullname" . }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      {{- if .Values.auth.existingSecret }}
+      initContainers:
+        # Authentication on from the first request: the admin user, with the Secret's password.
+        - name: admin-user
+          image: {{ include "testor.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["eval", "Testor.Auth.CLI.user ~s[{{ .Values.auth.adminUser }}], ~s[admin]"]
+          env:
+            - name: TESTOR_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ .Values.auth.existingSecret }}, key: password } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+            {{- if .Values.tls.existingSecret }}
+            - { name: tls, mountPath: /tls, readOnly: true }
+            {{- end }}
+      {{- end }}
+      containers:
+        - name: testor
+          image: {{ include "testor.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - { name: http, containerPort: 6767, protocol: TCP }
+          env:
+            - { name: TESTOR_ALLOWED_HOSTS, value: {{ include "testor.allowedHosts" . | quote }} }
+            - { name: TESTOR_TRUSTED_PROXIES, value: {{ join "," .Values.trustedProxies | quote }} }
+            - { name: TESTOR_ANONYMOUS, value: {{ .Values.anonymous | quote }} }
+            {{- if .Values.tls.existingSecret }}
+            - { name: TESTOR_TLS_CERT, value: /tls/tls.crt }
+            - { name: TESTOR_TLS_KEY, value: /tls/tls.key }
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # The probes ask by the pod's IP address, which the Host allow-list always accepts.
+          readinessProbe:
+            httpGet: { path: /api/health, port: http, scheme: {{ include "testor.scheme" . }} }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: http, scheme: {{ include "testor.scheme" . }} }
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: tmp, mountPath: /tmp }
+            {{- if .Values.tls.existingSecret }}
+            - { name: tls, mountPath: /tls, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (include "testor.fullname" .) }}
+        - name: tmp
+          emptyDir: { sizeLimit: 256Mi }
+        {{- if .Values.tls.existingSecret }}
+        - name: tls
+          secret: { secretName: {{ .Values.tls.existingSecret }} }
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}

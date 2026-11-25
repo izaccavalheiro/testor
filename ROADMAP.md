@@ -21,57 +21,34 @@ Two principles hold through every milestone:
 | ------- | ----- | ------ |
 | 0.1.0 | One runner over SSH: live dashboard, history, spec parsing, screenshots, device stats; Windows, Linux, macOS | released |
 | **0.2.0** | Integrations and trust: `/api/v1` with OpenAPI, the MCP server for AI agents, authentication (roles, scopes, JWT, signed links, audit), artifacts, disk maintenance, the documentation site, semantic versioning | released |
+| **0.3.0** | Secure by default, install anywhere: DNS rebinding and exposure defences, symbolic-link safety, verified cancels and cooperative cancel, limits; tests in a separate account; signed run attestations and a signed audit trail; prebuilt and verified installs, the container image, the Helm chart; built-in TLS, Prometheus metrics, webhooks; masked secrets, fenced MCP output, flaky specs | in progress |
 
 ## Next milestones
 
-### 0.3: install anywhere
+Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-Make a runner take minutes, without an Elixir toolchain on it.
+### 0.4: agents and queues (opt-in)
 
-- Prebuilt release archives for Windows, Linux and macOS on every GitHub release (the release
-  workflow builds them from 0.2.0), and `install.ps1 -FromRelease <version>` to install one.
-- An OCI container image of the orchestrator for Linux runners and for hosting the dashboard
-  apart from the runner, reading the testor home from a volume; a Compose example.
-- `task testor:upgrade` with a check that the installed version is older, and a documented
-  rollback.
-- Installer options for the service's environment (`-Bind`, extra variables), kept across
-  redeploys on every OS.
-- The dashboard shows testor's own version and links to the release notes.
-
-### 0.4: many runners
-
-One place to see every machine.
-
-- A **hub** mode: one testor collects runs from several runners (each runner's testor pushes or
-  the hub pulls over `/api/v1`), with runner labels (`os`, `arch`, `gpu`, free-form).
-- The board and history across runners; filters by runner and label.
-- `remote.yml` picks a runner by label (`RUNNER_LABELS: windows gpu`) among the ones the
-  workstation can reach.
-
-### 0.5: queues and scheduling (opt-in)
-
+- The [agent protocol](docs/design/agent-protocol.md): runners that connect out to a
+  controller, take jobs by lease and sign their results; a `process` executor first, SSH kept.
 - A per-project queue, so a second run of a project waits instead of overwriting the snapshot
-  the first one uses (today such overlaps are only flagged).
-- Optional API-triggered runs: a new `execute` scope, commands limited to the ones a project's
-  allow-list declares, off unless `execution.enabled`. SSH stays the default path.
-- Scheduled runs (nightly suites) from the same allow-list.
-- Notifications: webhooks on run end, with a payload in the `/api/v1` run shape.
+  the first one uses; per-run workspaces.
+- API-triggered runs: an `execute` scope, commands limited to a project's allow-list at a
+  commit, off unless `execution.enabled`. Scheduled runs from the same allow-list.
 
-### 0.6: cloud native
+### 0.5: many runners, cloud native
 
-- **Ephemeral runners**: a run in a fresh container or Kubernetes pod (Linux), its artifacts
-  kept by the hub; a Helm chart for the hub.
-- Pluggable storage: the run index in SQLite or PostgreSQL, logs and artifacts in
-  S3-compatible object storage, next to today's files-on-disk default.
-- Observability: Prometheus `/metrics` (runs, durations, failures, device load) and
-  OpenTelemetry traces of runs.
-- Built-in TLS (certificates from files or ACME), so a proxy is optional.
+- A **hub**: the board and history across controllers and agents, filters by runner label.
+- Container and Kubernetes executors (a Job per run), the chart's agent, KEDA on queue depth.
+- [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the index,
+  S3-compatible object storage for files, RabbitMQ, NATS or SQS for jobs.
+- OpenTelemetry traces of runs.
 
-### 0.7: teams
+### 0.6: teams
 
-- OpenID Connect sign-in (GitHub, Google, Microsoft Entra ID, Keycloak, ...), mapped to roles.
-- Projects and teams: who sees and operates which project's runs.
-- Flaky-test detection: specs that fail and pass on the same commit, trends per spec.
+- [Identity](docs/design/identity.md): OpenID Connect sign-in, asymmetric tokens (JWKS),
+  projects and teams, workload identity and a secrets broker.
+- Release gates on signed attestations; check runs on pull requests from webhooks.
 
 ## 1.0: stable
 

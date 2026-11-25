@@ -56,7 +56,10 @@ try {
   if (-not $health) { throw "testor did not start; see $testorHome\testor.log" }
 
   Set-Location $project
+  # A secret in the environment that the run prints: the terminal shows it, the log must not.
+  $env:DEMO_API_TOKEN = "smoke-s3cret-value"
   & "$testorHome/run.ps1" -Project demo -Kind test -Body {
+    "deploying with $env:DEMO_API_TOKEN"
     # Vitest's marks, built here: this file stays ASCII for Windows PowerShell's parser.
     " $([char]0x2713) tests/a.test.ts (2 tests) 3ms"
     " $([char]0x276F) tests/b.test.ts (1 test | 1 failed) 2ms"
@@ -160,6 +163,8 @@ try {
   $openapi = Invoke-RestMethod "$base/api/v1/openapi.json"
   Check "v1: OpenAPI document" ($openapi.openapi -eq "3.1.0" -and $openapi.paths."/runs")
   $grep = Invoke-WebRequest "$base/api/v1/runs/$($test.id)/log?grep=failed"
+  $plain = Invoke-WebRequest "$base/api/v1/runs/$($test.id)/log"
+  Check "secrets are masked in the stored log" ($plain.Content -match "deploying with \*\*\*" -and $plain.Content -notmatch "s3cret") "($($plain.Content))"
   Check "v1: log filtered" ($grep.Content -match "tests/b.test.ts" -and "$($grep.Headers["X-Log-Matches"])" -eq "1") "($($grep.Content))"
   # DNS rebinding: a name that is not this machine's is refused; IP addresses and localhost are not.
   $rebound = Invoke-WebRequest "$base/api/health" -Headers @{ Host = "rebind.attacker.example" } -SkipHttpErrorCheck

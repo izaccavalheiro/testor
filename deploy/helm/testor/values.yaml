@@ -1,0 +1,69 @@
+# testor's state is files on one volume: one replica, replaced (not rolled) on upgrade.
+image:
+  repository: ghcr.io/izaccavalheiro/testor
+  # Defaults to the chart's appVersion. Prefer a digest in production: digest: sha256:...
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+
+# Host names browsers and clients use (DNS rebinding protection). The ingress host and the
+# service's cluster names are added; IP addresses always work.
+allowedHosts: []
+# Addresses or CIDR ranges of the ingress controller, so testor sees the client's address.
+trustedProxies: []
+# Who is answered while no user exists: loopback (default here: nothing outside the pod),
+# private, or any.
+anonymous: loopback
+extraEnv: []
+
+auth:
+  # A Secret with a key "password" (12 characters or more): the admin user below is created or
+  # its password reset at every start, so authentication is on from the first request.
+  existingSecret: ""
+  adminUser: admin
+
+# Built-in TLS: a kubernetes.io/tls Secret (tls.crt, tls.key), e.g. from cert-manager.
+tls:
+  existingSecret: ""
+
+persistence:
+  size: 10Gi
+  storageClass: ""
+  accessModes: [ReadWriteOnce]
+  existingClaim: ""
+
+service:
+  type: ClusterIP
+  port: 6767
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: testor.example.com
+  tlsSecret: ""
+
+networkPolicy:
+  enabled: true
+  # Who may reach the pod; the default is the ingress controller's namespace label.
+  ingressFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+  # Egress: DNS, plus webhook endpoints (allow them here; none by default).
+  egressTo: []
+
+serviceMonitor:
+  enabled: false
+  # A Secret with a key "token": a Bearer token with the read scope (task testor:token).
+  tokenSecret: ""
+  interval: 30s
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 1Gi }
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

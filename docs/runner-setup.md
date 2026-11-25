@@ -145,7 +145,8 @@ workflow (`-RequireAttestation` makes that check mandatory). It installs the sam
 
 `orchestrator/Dockerfile` builds an image that runs as an unprivileged user on a read-only
 root file system; tagged releases publish it as `ghcr.io/izaccavalheiro/testor`. See
-[examples/compose](../examples/compose/README.md).
+[examples/compose](../examples/compose/README.md), and for Kubernetes the Helm chart in
+[deploy/helm/testor](../deploy/helm/testor/README.md).
 
 ## Troubleshooting
 

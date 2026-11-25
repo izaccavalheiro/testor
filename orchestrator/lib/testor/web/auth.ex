@@ -12,7 +12,8 @@ defmodule Testor.Web.Auth do
 
   Scopes required:
 
-    * `maintain`: `POST /api/maintenance/clean`, `POST /api/v1/maintenance/clean`
+    * `maintain`: `POST /api/maintenance/clean`, `POST /api/v1/maintenance/clean`,
+      `GET /api/v1/audit`
     * `read`: `POST /api/v1/auth/token` (which also requires Basic credentials) and `POST /mcp`
       (each tool requires its own scope)
     * `operate`: any other `POST`, `PUT`, `PATCH` or `DELETE`
@@ -155,6 +156,7 @@ defmodule Testor.Web.Auth do
     case {method, path} do
       {"POST", ["api", "maintenance", "clean"]} -> "maintain"
       {"POST", ["api", "v1", "maintenance", "clean"]} -> "maintain"
+      {"GET", ["api", "v1", "audit"]} -> "maintain"
       {"POST", ["api", "v1", "auth", "token"]} -> "read"
       {"POST", ["mcp"]} -> "read"
       {method, _} when method in @unsafe -> "operate"
@@ -256,6 +258,16 @@ defmodule Testor.Web.Auth do
       who = conn.assigns |> Map.get(:principal, %{sub: nil, via: :unknown}) |> Auth.who()
       address = conn.remote_ip |> :inet.ntoa() |> to_string()
       Logger.info("audit: #{who} from #{address}: #{conn.method} #{conn.request_path} -> #{conn.status}")
+
+      Testor.Audit.record("request", %{
+        "who" => who,
+        "from" => address,
+        "method" => conn.method,
+        "path" => conn.request_path,
+        "status" => conn.status,
+        "requestId" => conn |> get_resp_header("x-request-id") |> List.first()
+      })
+
       conn
     end)
   end

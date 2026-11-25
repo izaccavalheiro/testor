@@ -109,6 +109,33 @@ defmodule Testor.Web.OpenAPI do
             %{"type" => "object"}
           )
       },
+      "/projects/{project}/flaky" => %{
+        "parameters" => [
+          %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}}
+        ],
+        "get" =>
+          op(
+            "runs",
+            "Spec files that both passed and failed on the same clean commit",
+            %{"type" => "object"},
+            params: [query("kind", %{"type" => "string"}, "only runs of this task")]
+          )
+      },
+      "/audit" => %{
+        "get" =>
+          op(
+            "runner",
+            "The audit trail's last entries and whether the whole chain verifies (scope maintain)",
+            %{"type" => "object"},
+            params: [
+              query(
+                "limit",
+                %{"type" => "integer", "minimum" => 1, "maximum" => 1000, "default" => 100},
+                "entries"
+              )
+            ]
+          )
+      },
       "/attestation/key" => %{
         "get" =>
           op("runs", "The public key attestations are signed with (PEM) and its id", %{

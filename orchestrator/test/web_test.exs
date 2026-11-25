@@ -443,6 +443,11 @@ defmodule Testor.WebTest do
       assert call(two).status == 401
     end
 
+    test "reading the audit trail needs the maintain scope" do
+      token = token("ada", %{"scope" => "read operate"})
+      assert conn(:get, "/api/v1/audit") |> bearer(token) |> call() |> Map.get(:status) == 403
+    end
+
     test "cleaning maintenance targets needs the maintain scope" do
       token = token("ada", %{"scope" => "read operate"})
 
