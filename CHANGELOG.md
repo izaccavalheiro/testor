@@ -13,6 +13,9 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   optional agent signature and age); `GET /api/v1/gates/<name>?commit=<sha>` answers whether
   the commit passes from each kind's latest run of it from a clean tree, checking testor's
   attestation again with its key, for a pipeline or an OPA policy. `GET /api/v1/gates`.
+- **Status badges**: `GET /api/v1/projects/<p>/badge.svg?kind=` (public for `config.json`'s
+  `publicBadges`), and a Backstage guide with a catalog annotation (`testor.io/project`) and a
+  proxy configuration (`deploy/backstage`).
 - **DORA metrics**: `GET /api/v1/projects/<p>/dora?kind=deploy&days=30` gives deployment
   frequency, change failure rate, time to restore and lead time for changes from the runs of
   the task that delivers a project. Runs record when their commit was made

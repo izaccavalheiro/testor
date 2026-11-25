@@ -203,6 +203,7 @@ defmodule Testor.Web.Auth do
       [".well-known", "openid-configuration"] -> true
       ["auth", page] when page in ["login", "callback", "signed-out"] -> true
       ["s", _cap, area | _] when area in ["shots", "artifacts"] -> true
+      ["api", "v1", "projects", project, "badge.svg"] -> Testor.Badge.public?(project)
       _ -> false
     end
   end

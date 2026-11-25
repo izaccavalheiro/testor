@@ -1,0 +1,10 @@
+# Backstage's proxy to testor's API, so its frontend reads runs, gates and DORA metrics without
+# holding a token: merge into app-config.yaml. The token is a read token of a user limited to
+# the projects Backstage shows (task testor:token USER=backstage DAYS=30 SCOPE=read).
+proxy:
+  endpoints:
+    /testor:
+      target: https://testor.example.com/api/v1
+      headers:
+        Authorization: Bearer ${TESTOR_TOKEN}
+      allowedMethods: [GET]
