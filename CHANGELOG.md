@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.4.0 - 2026-11-25
+
 ### Added
 
 - **Jobs and agents** (opt-in, the first step of the agent protocol): `POST /api/v1/jobs`
