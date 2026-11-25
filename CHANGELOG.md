@@ -16,6 +16,18 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   them out; what spans every project (maintenance, audit, metrics, sessions, agents' keys)
   answers `403`; jobs are queued and taken only for one's projects. A list that cannot be read
   fails closed. `/api/v1/auth/me` shows `projects`.
+- **Tokens anyone can verify**: tokens are signed with Ed25519 (`EdDSA`, `kid` the key's
+  JWK thumbprint) and the public keys are published at `GET /.well-known/jwks.json`, so a
+  gateway, a hub or another service verifies a testor token without a secret.
+  `Testor.Auth.CLI.roll_token_key` adds a new key while the previous one verifies its tokens
+  until they expire; `TESTOR_TOKEN_KEY` shares one key across replicas.
+
+### Changed
+
+- New tokens are EdDSA. HS256 tokens (all of those issued before) are still accepted until
+  the next major version; `"tokens": {"acceptHs256": false}` refuses them,
+  `"tokens": {"algorithm": "HS256"}` keeps issuing them. `rotate_key` now replaces the token
+  keys too. Back up `token-keys.json` with `jwt.key`.
 
 ## 0.7.0 - 2026-11-25
 

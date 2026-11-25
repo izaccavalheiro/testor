@@ -14,7 +14,7 @@ defmodule Testor.Config do
 
   def data_dir, do: Application.fetch_env!(:testor, :data_dir)
 
-  @doc "Where auth.json and jwt.key live: `TESTOR_SECRETS_DIR`, else the data folder."
+  @doc "Where auth.json and the keys live: `TESTOR_SECRETS_DIR`, else the data folder."
   def secrets_dir, do: Application.get_env(:testor, :secrets_dir) || data_dir()
 
   @doc "Host names answered besides IP literals, localhost and this machine's names."

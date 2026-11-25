@@ -20,6 +20,7 @@ defmodule Testor.Integration.AuthFilesTest do
       System.delete_env("TESTOR_JWT_SECRET")
       File.rm_rf(Auth.auth_file())
       File.rm_rf(Auth.key_file())
+      File.rm_rf(Testor.Auth.TokenKeys.file())
       File.rm(Auth.auth_file() <> ".tmp")
       :persistent_term.erase({Auth, :settings})
     end)

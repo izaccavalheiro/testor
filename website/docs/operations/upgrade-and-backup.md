@@ -51,11 +51,11 @@ Everything worth keeping is in the testor home (`~/test-run/.testor`):
 | ---- | ---- |
 | `runs/`, `logs/`, `screenshots/`, `artifacts/` | `app/`, `app.new/` (the release: rebuilt by deploy) |
 | `config.json`, `auth.json` | `src/` (uploaded sources and build caches) |
-| `jwt.key` (secret: tokens and signed links depend on it) | `testor.log*` |
+| `jwt.key`, `token-keys.json`, `signing.key` (secrets: tokens, signed links and attestations depend on them) | `testor.log*` |
 
 ```sh
 # on a Linux or macOS runner
-tar -czf testor-backup.tgz -C ~/test-run/.testor runs logs screenshots artifacts config.json auth.json jwt.key
+tar -czf testor-backup.tgz -C ~/test-run/.testor runs logs screenshots artifacts config.json auth.json jwt.key token-keys.json signing.key
 ```
 
 Restoring is copying them back and restarting the service. Project snapshots
@@ -64,8 +64,8 @@ Restoring is copying them back and restarting the service. Project snapshots
 ## Move to another machine
 
 Prepare the new runner, `task testor:deploy` with the new `RUNNER`, stop its service, copy the
-backup into its testor home, start it again. Tokens and signed links stay valid if `jwt.key`
-came along.
+backup into its testor home, start it again. Tokens and signed links stay valid if `jwt.key` and
+`token-keys.json` came along.
 
 ## Uninstall
 

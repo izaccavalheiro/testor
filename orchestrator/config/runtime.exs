@@ -26,7 +26,7 @@ anonymous =
 
 config :testor,
   data_dir: data_dir,
-  # TESTOR_SECRETS_DIR: where auth.json and jwt.key live (unset: the data folder). Point it at
+  # TESTOR_SECRETS_DIR: where auth.json and the keys live (unset: the data folder). Point it at
   # a folder the account that runs the tests cannot read.
   secrets_dir: System.get_env("TESTOR_SECRETS_DIR"),
   workspaces: workspaces,

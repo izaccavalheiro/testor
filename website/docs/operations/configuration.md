@@ -19,11 +19,12 @@ The installer sets the first three for the service; the rest are optional.
 | `TESTOR_HOME` | `<workspaces>/.testor` | testor's data: runs, logs, screenshots, artifacts, `config.json`, `auth.json`, the release |
 | `TESTOR_PORT` | `6767` | the HTTP port |
 | `TESTOR_BIND` | `0.0.0.0` | the address to listen on; `127.0.0.1` behind a proxy ([how to set it](reverse-proxy-tls.md#listen-on-localhost-only)) |
-| `TESTOR_JWT_SECRET` | `<home>/jwt.key` | the token and signed-link key, 32 bytes or more, instead of the key file |
+| `TESTOR_TOKEN_KEY` | `<home>/token-keys.json` | the tokens' Ed25519 key (a base64 seed of 32 bytes) instead of the key file, for replicas that share one |
+| `TESTOR_JWT_SECRET` | `<home>/jwt.key` | the signed-link key (and that of HS256 tokens), 32 bytes or more, instead of the key file |
 | `TESTOR_ALLOWED_HOSTS` | (none) | host names answered besides IP addresses, `localhost` and the machine's name: `testor.example.com`, `.example.com` (subdomains), `*` (no check). See [network exposure](../reference/security.md#network-exposure) |
 | `TESTOR_TRUSTED_PROXIES` | (none) | addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the client |
 | `TESTOR_ANONYMOUS` | `private` | who is answered while authentication is off: `private` (loopback, private, link-local, Tailscale), `loopback`, or `any` |
-| `TESTOR_SECRETS_DIR` | `<home>` | where `auth.json`, `jwt.key`, `signing.key` and `webhooks.json` live |
+| `TESTOR_SECRETS_DIR` | `<home>` | where `auth.json`, `jwt.key`, `token-keys.json`, `signing.key` and `webhooks.json` live |
 | `TESTOR_TLS_CERT`, `TESTOR_TLS_KEY` | (none) | PEM certificate (with its chain) and key: with both, HTTPS only |
 | `TESTOR_LOG` | `file` | `file` (`<home>/testor.log`) or `stdout` (containers) |
 
@@ -130,4 +131,5 @@ folders to keep).
 | `<home>/app/` | the installed release |
 | `<home>/src/` | the uploaded sources, with `deps` and `_build` kept between deploys |
 | `<home>/testor.log` | the orchestrator's log (rotated at 1 MB, two files) |
-| `<home>/jwt.key` | the signing key, readable by its owner only |
+| `<home>/jwt.key` | the signed-link key, readable by its owner only |
+| `<home>/token-keys.json` | the tokens' signing keys, readable by its owner only |

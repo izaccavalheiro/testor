@@ -1,13 +1,15 @@
 # Identity
 
-Status: proposed. Builds on: users, roles and scopes; HS256 tokens; signed links (0.2).
+Status: in progress (asymmetric tokens and per-project access done). Builds on: users, roles
+and scopes; HS256 tokens; signed links (0.2).
 
 - **OpenID Connect sign-in** for the dashboard (authorization code with PKCE, a session
   cookie: `HttpOnly`, `Secure`, `SameSite=Lax`), groups or claims mapped to roles; Basic stays
   for scripts and as a break-glass account.
-- **Asymmetric tokens**: testor's own tokens signed with EdDSA or ES256 and published as JWKS,
-  so a verifier (a hub, an agent) needs no secret; HS256 accepted until the next major version.
-- **Projects and teams**: a role per project (`viewer`, `operator`, `admin`), filtering every
+- **Asymmetric tokens** (done, 0.8): testor's own tokens signed with EdDSA and published as
+  JWKS, so a verifier (a hub, an agent) needs no secret; HS256 accepted until the next major
+  version.
+- **Projects and teams** (users limited to projects: done, 0.8): a role per project (`viewer`, `operator`, `admin`), filtering every
   list, event stream and MCP tool; signed links bound to the viewer and minutes long.
 - **Workload identity**: jobs ([agent-protocol.md](agent-protocol.md)) get a short OIDC token
   from testor (issuer, audience, `sub` = project, kind and commit) to exchange for cloud

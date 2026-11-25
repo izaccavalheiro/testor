@@ -33,6 +33,7 @@ bin/testor eval 'Testor.Auth.CLI.list'
 bin/testor eval 'Testor.Auth.CLI.token ~s[ada], 7, ~s[read]'
 bin/testor eval 'Testor.Auth.CLI.revoke ~s[ada]'     # her tokens issued until now stop working
 bin/testor eval 'Testor.Auth.CLI.remove ~s[ada]'
+bin/testor eval 'Testor.Auth.CLI.roll_token_key'      # a new token key; tokens of the old one live out their time
 bin/testor eval 'Testor.Auth.CLI.rotate_key'          # every token and signed link stops working
 bin/testor eval 'Testor.Auth.CLI.enable false'        # off again, users kept
 ```
@@ -73,14 +74,33 @@ list, a user sees every project, as before. Their tokens follow the user at once
 
 ### Tokens
 
-HS256 JSON Web Tokens with `iss` and `aud` `testor`, `sub` (the user), `iat`, `nbf`, `exp`,
-`jti` and `scope`. Only `HS256` is accepted (a token naming `none` or any other algorithm is
-refused before its signature is checked), signatures are compared in constant time, and 30
-seconds of clock skew are allowed. Lifetimes: 60 minutes by default, 30 days at most
-(`tokens.defaultTtlMinutes`, `tokens.maxTtlDays` in `auth.json`; `expires_in` in the request).
+JSON Web Tokens with `iss` and `aud` `testor`, `sub` (the user), `iat`, `nbf`, `exp`, `jti`
+and `scope`, signed with Ed25519 (`EdDSA`, RFC 8037). The header's `kid` names the key: its
+JWK thumbprint (RFC 7638). 30 seconds of clock skew are allowed. Lifetimes: 60 minutes by
+default, 30 days at most (`tokens.defaultTtlMinutes`, `tokens.maxTtlDays` in `auth.json`;
+`expires_in` in the request).
 
-The signing key is `<home>/jwt.key` (32 random bytes, created on first use, readable by its
-owner only), or `TESTOR_JWT_SECRET` (32 bytes or more) when set.
+The public keys are at `GET /.well-known/jwks.json` (a JSON Web Key Set, no credentials
+needed, cacheable for 5 minutes), so a gateway, a hub or any other service verifies a testor
+token without a secret that could also mint one. A verifier must also check `iss`, `aud` and
+`exp`; whether the user still exists and still has the scope only testor knows
+(`/api/v1/auth/me` answers it).
+
+The private keys are `<home>/token-keys.json` (created on first use, readable by its owner
+only), or `TESTOR_TOKEN_KEY` (a base64 Ed25519 seed of 32 bytes) for replicas that share one
+key from a secret store. `roll_token_key` puts a new key first: the previous ones stay in the
+set and verify the tokens they signed before, until those expire, then are dropped; a token a
+retired key signed afterwards is refused. Roll on a schedule, and well after verifiers that
+cache the set have fetched it. `rotate_key` replaces every key at once, for a key that leaked.
+
+Each algorithm is checked with its own kind of key only, and a token naming any other (`none`,
+`RS256`, ...) is refused before its signature is looked at.
+
+**HS256**: tokens issued before 0.8 are HMAC-SHA256, keyed with `<home>/jwt.key` (32 random
+bytes) or `TESTOR_JWT_SECRET` (32 bytes or more). They are accepted until the next major
+version, `"tokens": {"acceptHs256": false}` refuses them at once, and
+`"tokens": {"algorithm": "HS256"}` keeps issuing them. The HMAC is compared in constant time.
+The same key signs screenshot and artifact links.
 
 ### Passwords
 
@@ -275,7 +295,7 @@ what the runner observed; the third is informative only.
 
 ## Secrets
 
-`auth.json`, `jwt.key` and `signing.key` live in the data folder unless `TESTOR_SECRETS_DIR`
+`auth.json`, `jwt.key`, `token-keys.json` and `signing.key` live in the data folder unless `TESTOR_SECRETS_DIR`
 names another.
 Test commands run as the same account as testor (see below), so they can read either file
 wherever it is: moving them protects them only once the tests run as an account that cannot

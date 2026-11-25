@@ -7,9 +7,11 @@ defmodule Testor.Auth do
 
     * HTTP Basic (RFC 7617): a user's name and password. Browsers prompt for it and send it
       with every request of the dashboard, its event streams included.
-    * Bearer (RFC 6750): a JSON Web Token from `POST /api/v1/auth/token` (HS256, signed with
-      `jwt.key` or `TESTOR_JWT_SECRET`), for scripts, CI and MCP clients. Only Basic
-      credentials can obtain one, so a token can never be used to extend itself.
+    * Bearer (RFC 6750): a JSON Web Token from `POST /api/v1/auth/token`, for scripts, CI and
+      MCP clients. Only Basic credentials can obtain one, so a token can never be used to
+      extend itself. Signed with Ed25519 (`EdDSA`, `Testor.Auth.TokenKeys`), whose public
+      keys are at `/.well-known/jwks.json` for other services to verify a token with; tokens
+      signed with `jwt.key` or `TESTOR_JWT_SECRET` (`HS256`, before 0.8) are still accepted.
 
   A user has a role, and a role grants scopes:
 
@@ -21,7 +23,7 @@ defmodule Testor.Auth do
 
   A token carries a subset of its user's scopes and is checked against the user on every
   request: removing the user, lowering the role or setting `tokensValidAfter` (see
-  `Testor.Auth.CLI.revoke/1`) takes effect at once. Rotating the key revokes every token.
+  `Testor.Auth.CLI.revoke/1`) takes effect at once. Rotating the keys revokes every token.
 
   Screenshots and artifacts are linked with a signed prefix (`/s/<expiry>.<mac>/...`) bound to
   their run, valid for one to two days: images, videos and sandboxed HTML reports (which have
@@ -31,13 +33,16 @@ defmodule Testor.Auth do
   `auth.json`:
 
       {"users": {"ada": {"password": "$pbkdf2-sha256$600000$...", "role": "admin"}},
-       "tokens": {"defaultTtlMinutes": 60, "maxTtlDays": 30}}
+       "tokens": {"defaultTtlMinutes": 60, "maxTtlDays": 30, "algorithm": "EdDSA", "acceptHs256": true}}
+
+  `tokens.algorithm` is what new tokens are signed with: `EdDSA` (the default) or `HS256`;
+  `tokens.acceptHs256: false` refuses HS256 tokens while `EdDSA` signs.
 
   A file that cannot be read or parsed locks everything but the health check (fail closed).
   """
   require Logger
   alias Testor.Config
-  alias Testor.Auth.{Guard, JWT, Password}
+  alias Testor.Auth.{Guard, JWT, Password, TokenKeys}
 
   @roles %{
     "viewer" => ["read"],
@@ -51,6 +56,7 @@ defmodule Testor.Auth do
   @default_ttl 3600
   @max_ttl 30 * 86_400
   @reload_ms 1000
+  @algorithms ["EdDSA", "HS256"]
 
   def roles, do: @roles |> Map.keys() |> Enum.sort()
   def role_scopes(role), do: Map.get(@roles, role)
@@ -64,14 +70,22 @@ defmodule Testor.Auth do
   # --- settings ------------------------------------------------------------------------------
 
   @doc """
-  The settings in force: `%{enabled, users, key, default_ttl, max_ttl}`. `auth.json` and the
-  key are read again at most once a second, so changes apply without a restart. Tests set
-  them with `Application.put_env(:testor, :auth, raw)` (and `:auth_key`).
+  The settings in force: `%{enabled, users, key, token_keys, algorithm, accept_hs256,
+  default_ttl, max_ttl}`. `auth.json` and the keys are read again at most once a second, so
+  changes apply without a restart. Tests set them with `Application.put_env(:testor, :auth,
+  raw)` (and `:auth_key`, `:auth_token_keys`).
   """
   def settings do
     case Application.get_env(:testor, :auth) do
-      nil -> cached()
-      raw -> build(raw, Application.get_env(:testor, :auth_key, String.duplicate("k", 32)))
+      nil ->
+        cached()
+
+      raw ->
+        build(
+          raw,
+          Application.get_env(:testor, :auth_key, String.duplicate("k", 32)),
+          Application.get_env(:testor, :auth_token_keys) || TokenKeys.from_seeds([<<1::256>>])
+        )
     end
   end
 
@@ -106,14 +120,17 @@ defmodule Testor.Auth do
       end
     end
 
-    {read.(auth_file()), read.(key_file()), :erlang.phash2(System.get_env("TESTOR_JWT_SECRET"))}
+    {read.(auth_file()), read.(key_file()), read.(TokenKeys.file()),
+     :erlang.phash2({System.get_env("TESTOR_JWT_SECRET"), System.get_env(TokenKeys.env())})}
   end
 
-  @doc "Reads `auth.json` and the key now (no cache)."
+  @doc "Reads `auth.json` and the keys now (no cache)."
   def load_settings do
     raw = read_raw()
-    enabled = enabled_in?(raw)
-    build(raw, if(enabled, do: key!()))
+
+    if enabled_in?(raw),
+      do: build(raw, key!(), TokenKeys.load!()),
+      else: build(raw, nil, nil)
   rescue
     error ->
       Logger.error("auth: #{Exception.message(error)}; refusing every request until it is fixed")
@@ -151,9 +168,20 @@ defmodule Testor.Auth do
     end
   end
 
-  defp locked, do: %{enabled: true, users: %{}, key: nil, default_ttl: @default_ttl, max_ttl: @max_ttl}
+  defp locked do
+    %{
+      enabled: true,
+      users: %{},
+      key: nil,
+      token_keys: nil,
+      algorithm: "EdDSA",
+      accept_hs256: false,
+      default_ttl: @default_ttl,
+      max_ttl: @max_ttl
+    }
+  end
 
-  defp build(raw, key) do
+  defp build(raw, key, token_keys) do
     users =
       for {name, %{"password" => hash} = user} <- users_in(raw),
           valid_name?(name),
@@ -186,10 +214,30 @@ defmodule Testor.Auth do
     tokens = if is_map(raw["tokens"]), do: raw["tokens"], else: %{}
     max_ttl = seconds(tokens["maxTtlDays"], 86_400, @max_ttl)
 
+    algorithm =
+      case tokens["algorithm"] do
+        nil ->
+          "EdDSA"
+
+        algorithm when algorithm in @algorithms ->
+          algorithm
+
+        other ->
+          Logger.warning(
+            "auth: tokens.algorithm #{inspect(other)} is not one of #{Enum.join(@algorithms, ", ")}: EdDSA"
+          )
+
+          "EdDSA"
+      end
+
     %{
       enabled: enabled_in?(raw),
       users: users,
       key: key,
+      token_keys: token_keys,
+      algorithm: algorithm,
+      # Tokens issued before 0.8 are HS256: accepted until the next major version unless refused.
+      accept_hs256: algorithm == "HS256" or tokens["acceptHs256"] != false,
       max_ttl: max_ttl,
       default_ttl: min(seconds(tokens["defaultTtlMinutes"], 60, @default_ttl), max_ttl)
     }
@@ -304,7 +352,7 @@ defmodule Testor.Auth do
 
   def bearer(settings, token, address) do
     with :ok <- unblocked(address) do
-      case JWT.verify(token, settings.key) do
+      case JWT.verify(token, verification_keys(settings)) do
         {:ok, %{"iat" => issued} = claims} ->
           case settings.users[claims["sub"]] do
             %{valid_after: valid_after} = user when issued >= valid_after ->
@@ -332,6 +380,13 @@ defmodule Testor.Auth do
           failure(address, "invalid token (#{reason})", :invalid_token)
       end
     end
+  end
+
+  defp verification_keys(settings) do
+    %{
+      hs256: if(settings.accept_hs256, do: settings.key),
+      eddsa: if(settings.token_keys, do: settings.token_keys.verify, else: %{})
+    }
   end
 
   defp unblocked(key) do
@@ -409,12 +464,15 @@ defmodule Testor.Auth do
     }
 
     %{
-      "access_token" => JWT.sign(claims, settings.key),
+      "access_token" => JWT.sign(claims, signing_key(settings)),
       "token_type" => "Bearer",
       "expires_in" => ttl,
       "scope" => claims["scope"]
     }
   end
+
+  defp signing_key(%{algorithm: "HS256", key: key}), do: key
+  defp signing_key(%{token_keys: %{signing: signing}}), do: signing
 
   defp split_scopes(scope), do: scope |> String.split(" ", trim: true) |> Enum.uniq()
 

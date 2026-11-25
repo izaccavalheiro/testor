@@ -12,6 +12,7 @@ defmodule Testor.Auth.CLI do
       bin/testor eval 'Testor.Auth.CLI.revoke("ada")'          # her tokens issued until now stop working
       bin/testor eval 'Testor.Auth.CLI.token("ada", 30)'       # prints a token valid 30 days
       bin/testor eval 'Testor.Auth.CLI.token("ada", 30, "read")'
+      bin/testor eval 'Testor.Auth.CLI.roll_token_key()'       # new token key, the old one verifies its tokens
       bin/testor eval 'Testor.Auth.CLI.rotate_key()'           # revokes every token and file link
       bin/testor eval 'Testor.Auth.CLI.list()'
 
@@ -21,7 +22,7 @@ defmodule Testor.Auth.CLI do
   exits with a non-zero status.
   """
   alias Testor.Auth
-  alias Testor.Auth.Password
+  alias Testor.Auth.{Password, TokenKeys}
 
   @min_password 12
 
@@ -50,6 +51,7 @@ defmodule Testor.Auth.CLI do
           end)
 
           Auth.key!()
+          TokenKeys.load!()
           IO.puts("#{name} (#{role}) saved in #{Auth.auth_file()}; authentication is on")
         end
     end
@@ -118,7 +120,7 @@ defmodule Testor.Auth.CLI do
 
   @doc "Prints a Bearer token for `name`, valid `days`, with `scope` (the role's by default)."
   def token(name, days \\ 30, scope \\ nil) do
-    settings = %{Auth.load_settings() | key: Auth.key!()}
+    settings = %{Auth.load_settings() | key: Auth.key!(), token_keys: TokenKeys.load!()}
 
     case settings.users[name] do
       nil ->
@@ -141,12 +143,31 @@ defmodule Testor.Auth.CLI do
     end
   end
 
-  @doc "Replaces the signing key: every token and every file link stops working."
+  @doc "Replaces every key: every token and every file link stops working (a key leaked)."
   def rotate_key do
+    token_keys = token_keys_file!()
     path = Auth.key_file()
     _ = File.rm(path)
     Auth.key!()
-    IO.puts("new key in #{path}; every token is revoked")
+    TokenKeys.reset!()
+    IO.puts("new keys in #{path} and #{token_keys}; every token is revoked")
+  end
+
+  @doc """
+  A new token signing key, published at `/.well-known/jwks.json`; tokens signed with the
+  previous one keep working until they expire. Roll it on a schedule, a day or more after
+  verifiers that cache the key set have seen the new key.
+  """
+  def roll_token_key do
+    path = token_keys_file!()
+    kid = TokenKeys.roll!(Auth.load_settings().max_ttl)
+    IO.puts("new token signing key #{kid} in #{path}; the previous ones verify until their tokens expire")
+  end
+
+  defp token_keys_file! do
+    if System.get_env(TokenKeys.env()) not in [nil, ""],
+      do: fail("#{TokenKeys.env()} holds the token key: replace it in your secret store"),
+      else: TokenKeys.file()
   end
 
   @doc "Lists the users and whether authentication is on."

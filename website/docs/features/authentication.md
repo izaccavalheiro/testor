@@ -36,6 +36,11 @@ A token carries a subset of its user's scopes, and is checked against the user o
 request: removing a user, lowering a role or revoking takes effect at once. Only a password can
 obtain a token, so a leaked token cannot renew itself.
 
+Tokens are signed with Ed25519, and the public keys are published at
+`/.well-known/jwks.json`: a gateway, a hub or another service checks a testor token with any
+JWT library, without holding a secret. Tokens from before 0.8 (HS256) keep working. See
+[tokens](../reference/security.md#tokens) for rolling the key.
+
 ## Manage users and tokens
 
 On the runner, through the installed release (`bin\testor.bat` on Windows):
@@ -44,6 +49,7 @@ On the runner, through the installed release (`bin\testor.bat` on Windows):
 bin/testor eval 'Testor.Auth.CLI.list'
 bin/testor eval 'Testor.Auth.CLI.revoke ~s[ada]'     # tokens issued until now stop working
 bin/testor eval 'Testor.Auth.CLI.remove ~s[ada]'
+bin/testor eval 'Testor.Auth.CLI.roll_token_key'      # a new token key; tokens of the old one live out their time
 bin/testor eval 'Testor.Auth.CLI.rotate_key'          # every token and signed link stops working
 bin/testor eval 'Testor.Auth.CLI.enable false'        # off again, users kept
 ```

@@ -58,7 +58,17 @@ defmodule Testor.UnitsTest do
     test "a token with no key to check it, expired or for nobody" do
       assert Auth.bearer(%{key: nil}, "x.y.z", "test") == {:error, :invalid_token}
 
-      settings = %{enabled: true, key: @key, default_ttl: 60, max_ttl: 600, users: %{}}
+      settings = %{
+        enabled: true,
+        key: @key,
+        token_keys: nil,
+        algorithm: "HS256",
+        accept_hs256: true,
+        default_ttl: 60,
+        max_ttl: 600,
+        users: %{}
+      }
+
       %{"access_token" => expired} = Auth.mint("ada", ["read"], -120, settings)
       assert Auth.bearer(settings, expired, "test") == {:error, :expired}
       assert JWT.verify(nil, @key) == {:error, :malformed}

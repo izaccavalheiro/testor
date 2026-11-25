@@ -22,8 +22,8 @@ change, and it is announced under **Breaking** in the [changelog](CHANGELOG.md) 
 | Run records | the fields of `runs/<id>.json` and the layout of `runs/`, `logs/`, `screenshots/`, `artifacts/` under the testor home ([architecture](docs/architecture.md#the-run-record)) |
 | `run.ps1` | its parameters (`-Project`, `-Kind`, `-Body`, `-Artifacts`), the environment it gives the command (`TESTOR_RUN_ID`, `SCREENSHOT_DIR`, `TESTOR_ARTIFACT_DIR`), and the promise that output, stderr and exit code pass through unchanged |
 | Taskfiles | the tasks and variables of `taskfiles/remote.yml` and `taskfiles/testor.yml` that are documented |
-| Configuration | keys of `config.json` and `auth.json`, their defaults' meaning, the environment variables `TESTOR_HOME`, `TESTOR_WORKSPACES`, `TESTOR_PORT`, `TESTOR_BIND`, `TESTOR_JWT_SECRET` |
-| Auth | roles, scopes and what each allows; the token claims; `Testor.Auth.CLI` functions |
+| Configuration | keys of `config.json` and `auth.json`, their defaults' meaning, the environment variables `TESTOR_HOME`, `TESTOR_WORKSPACES`, `TESTOR_PORT`, `TESTOR_BIND`, `TESTOR_JWT_SECRET`, `TESTOR_TOKEN_KEY` |
+| Auth | roles, scopes and what each allows; the token claims; the JWKS at `/.well-known/jwks.json`; `Testor.Auth.CLI` functions |
 | Platforms | the runner and workstation OSes and the minimum Erlang/OTP, Elixir, PowerShell and Task versions in the README. Raising a minimum is breaking |
 
 **Not covered**, and free to change in any release (the changelog still says so when it

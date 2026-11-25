@@ -35,8 +35,10 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
 - **Per-project access** (done, in the next release): a user, a token or an agent limited to
   some projects, on every run, job, list, stream and MCP tool.
+- **Asymmetric tokens** (done, in the next release): EdDSA, the public keys at
+  `/.well-known/jwks.json`, so other services verify them without a secret.
 - [Identity](docs/design/identity.md): OpenID Connect sign-in for the dashboard, groups mapped
-  to roles and projects; asymmetric tokens (JWKS) so other services verify them without a secret.
+  to roles and projects.
 - Secrets for jobs: a broker (Vault, cloud secret managers, SOPS files) handing secrets to a
   job by name, masked in its logs.
 
