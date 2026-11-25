@@ -52,6 +52,25 @@ A token carries a subset of its user's scopes (`scope` when it is requested) and
 against the user on every request: removing a user, lowering a role or revoking takes effect
 at once. Only Basic credentials can obtain a token, so a token cannot renew itself.
 
+### Projects
+
+A user can be limited to some projects, so teams share one testor without seeing each other's
+work: `"projects": ["web", "lib-*"]` in `auth.json` (`*` matches anything), or
+`task testor:projects USER=ci PROJECTS="web lib-*"` (`PROJECTS=all` lifts it). Without the
+list, a user sees every project, as before. Their tokens follow the user at once.
+
+- A run, job or project of another project, named in a path (`/api/v1/runs/<id>/...`, logs,
+  files, `/events/runs/<id>`, attestations, cancel and delete), answers `404`, as if it did
+  not exist.
+- Lists leave the others out before paging: runs, projects, jobs, the galleries, the
+  dashboard's state, MCP's tools; live event streams drop their events.
+- What spans every project needs access to every project (`403` otherwise): maintenance,
+  cleanup, the audit trail, `/metrics`, PowerShell sessions, the agents' keys.
+- Jobs are queued only for one's projects; an agent user limited to projects only takes their
+  jobs.
+- A list that cannot be read (not a list, or names that are not names) fails closed: the user
+  sees no project, and `testor.log` says why.
+
 ### Tokens
 
 HS256 JSON Web Tokens with `iss` and `aud` `testor`, `sub` (the user), `iat`, `nbf`, `exp`,
@@ -83,7 +102,8 @@ address is answered `429` with `Retry-After` until the window ends. Expired toke
 {
   "users": {
     "ada": { "password": "$pbkdf2-sha256$600000$<salt>$<hash>", "role": "admin" },
-    "ci":  { "password": "$pbkdf2-sha256$600000$<salt>$<hash>", "role": "operator", "tokensValidAfter": 1795000000 }
+    "ci":  { "password": "$pbkdf2-sha256$600000$<salt>$<hash>", "role": "operator", "tokensValidAfter": 1795000000,
+             "projects": ["web", "lib-*"] }
   },
   "tokens": { "defaultTtlMinutes": 60, "maxTtlDays": 30 },
   "enabled": true

@@ -22,7 +22,7 @@ defmodule Testor.Web.SSE do
       Events.subscribe("global")
       Sessions.poke()
       Device.poke()
-      conn |> open() |> send_then_loop(Views.state(), nil)
+      conn |> open() |> send_then_loop(Testor.Access.state(Views.state(), conn.assigns[:principal]), nil)
     end)
   end
 
@@ -98,7 +98,10 @@ defmodule Testor.Web.SSE do
         loop(conn, offset)
 
       {:event, name, data} ->
-        conn |> chunk(event(name, data)) |> continue(conn, offset)
+        # Events of projects this stream's principal may not see are left out (Testor.Access).
+        if Testor.Access.event?(conn.assigns[:principal], name, data),
+          do: conn |> chunk(event(name, data)) |> continue(conn, offset),
+          else: loop(conn, offset)
     after
       Application.get_env(:testor, :sse_heartbeat_ms, @heartbeat) ->
         conn |> chunk(": ping\n\n") |> continue(conn, offset)

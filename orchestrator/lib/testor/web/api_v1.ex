@@ -71,6 +71,8 @@ defmodule Testor.Web.ApiV1 do
       "user" => principal.sub,
       "via" => to_string(principal.via),
       "scopes" => principal.scopes,
+      # The projects this principal may see; null for every project.
+      "projects" => Testor.Access.projects(principal),
       "expiresAt" => principal[:exp]
     })
   end
@@ -82,7 +84,8 @@ defmodule Testor.Web.ApiV1 do
 
     case run_filters(conn.query_params) do
       {:ok, opts} ->
-        {runs, next} = Query.runs(opts)
+        principal = conn.assigns.principal
+        {runs, next} = Query.runs(Map.put(opts, :allow, &Testor.Access.allowed?(principal, &1)))
         json(conn, 200, %{"data" => runs, "next" => next})
 
       {:error, message} ->
@@ -204,7 +207,7 @@ defmodule Testor.Web.ApiV1 do
   end
 
   get "/projects" do
-    json(conn, 200, %{"data" => Query.projects()})
+    json(conn, 200, %{"data" => Testor.Access.filter(Query.projects(), conn.assigns.principal)})
   end
 
   get "/sessions" do
@@ -220,11 +223,11 @@ defmodule Testor.Web.ApiV1 do
   end
 
   get "/screenshots" do
-    json(conn, 200, %{"data" => Views.screenshots_all()})
+    json(conn, 200, %{"data" => Testor.Access.filter(Views.screenshots_all(), conn.assigns.principal)})
   end
 
   get "/artifacts" do
-    json(conn, 200, %{"data" => Views.artifacts_all()})
+    json(conn, 200, %{"data" => Testor.Access.filter(Views.artifacts_all(), conn.assigns.principal)})
   end
 
   post "/cleanup" do
@@ -253,7 +256,7 @@ defmodule Testor.Web.ApiV1 do
     status = conn.query_params["status"]
 
     if status in [nil | Jobs.statuses()],
-      do: json(conn, 200, %{"data" => Jobs.list(status)}),
+      do: json(conn, 200, %{"data" => Testor.Access.filter(Jobs.list(status), conn.assigns.principal)}),
       else: error(conn, 400, "bad_request", "status is one of #{Enum.join(Jobs.statuses(), ", ")}")
   end
 
@@ -269,7 +272,13 @@ defmodule Testor.Web.ApiV1 do
   post "/jobs" do
     with {:ok, who} <- signed_in(conn),
          {:ok, params, conn} <- body_params(conn) do
-      case Jobs.enqueue(params, who) do
+      case if(Testor.Access.allowed?(conn.assigns.principal, params["project"]),
+             do: Jobs.enqueue(params, who),
+             else: {:error, :not_allowed}
+           ) do
+        {:error, :not_allowed} ->
+          error(conn, 403, "forbidden", "#{who} has no access to that project")
+
         {:ok, job} ->
           json(conn, 201, job)
 
@@ -304,7 +313,7 @@ defmodule Testor.Web.ApiV1 do
       wait = if is_integer(params["wait"]), do: params["wait"] |> max(0) |> min(25), else: 0
       deadline = System.monotonic_time(:millisecond) + wait * 1000
 
-      case wait_for_job(agent, labels, deadline) do
+      case wait_for_job(agent, labels, deadline, conn.assigns.principal) do
         {:ok, job} -> json(conn, 200, job)
         :none -> send_resp(conn, 204, "")
       end
@@ -434,8 +443,8 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
-  defp wait_for_job(agent, labels, deadline) do
-    case Jobs.lease(agent, labels) do
+  defp wait_for_job(agent, labels, deadline, principal) do
+    case Jobs.lease(agent, labels, &Testor.Access.allowed?(principal, &1)) do
       {:ok, job} ->
         {:ok, job}
 
@@ -444,7 +453,7 @@ defmodule Testor.Web.ApiV1 do
           :none
         else
           Process.sleep(Application.get_env(:testor, :lease_poll_ms, 500))
-          wait_for_job(agent, labels, deadline)
+          wait_for_job(agent, labels, deadline, principal)
         end
     end
   end

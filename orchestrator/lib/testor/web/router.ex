@@ -49,6 +49,8 @@ defmodule Testor.Web.Router do
   plug(Testor.Web.Auth)
   plug(:csrf)
   plug(:audit)
+  # Runs, jobs and projects of projects the principal may not see (Testor.Access).
+  plug(Testor.Access)
   plug(:match)
   plug(:dispatch)
 
@@ -84,7 +86,7 @@ defmodule Testor.Web.Router do
   end
 
   get "/api/state" do
-    json(conn, 200, Views.state())
+    json(conn, 200, Testor.Access.state(Views.state(), conn.assigns.principal))
   end
 
   get "/api/device" do
@@ -92,11 +94,11 @@ defmodule Testor.Web.Router do
   end
 
   get "/api/screenshots" do
-    json(conn, 200, Views.screenshots_all())
+    json(conn, 200, Testor.Access.filter(Views.screenshots_all(), conn.assigns.principal))
   end
 
   get "/api/artifacts" do
-    json(conn, 200, Views.artifacts_all())
+    json(conn, 200, Testor.Access.filter(Views.artifacts_all(), conn.assigns.principal))
   end
 
   post "/api/cleanup" do

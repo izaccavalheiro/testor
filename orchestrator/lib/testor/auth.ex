@@ -172,7 +172,15 @@ defmodule Testor.Auth do
           end
 
         valid_after = if is_integer(user["tokensValidAfter"]), do: user["tokensValidAfter"], else: 0
-        {name, %{hash: hash, role: role, scopes: scopes, valid_after: valid_after}}
+
+        {name,
+         %{
+           hash: hash,
+           role: role,
+           scopes: scopes,
+           valid_after: valid_after,
+           projects: projects_of(name, user)
+         }}
       end
 
     tokens = if is_map(raw["tokens"]), do: raw["tokens"], else: %{}
@@ -235,7 +243,25 @@ defmodule Testor.Auth do
   def who(%{sub: nil, via: via}), do: to_string(via)
   def who(%{sub: sub}), do: sub
 
-  defp principal(name, user, via), do: %{sub: name, scopes: user.scopes, via: via}
+  defp principal(name, user, via),
+    do: %{sub: name, scopes: user.scopes, via: via, projects: Map.get(user, :projects)}
+
+  # The projects a user may see (Testor.Access): nil for all; a list that cannot be read
+  # fails closed, to no project at all.
+  defp projects_of(_name, %{"projects" => nil}), do: nil
+  defp projects_of(_name, user) when not is_map_key(user, "projects"), do: nil
+
+  defp projects_of(name, %{"projects" => list}) do
+    valid = if is_list(list), do: Enum.filter(list, &Testor.Access.valid_pattern?/1), else: []
+
+    if not is_list(list) or length(valid) != length(list),
+      do:
+        Logger.warning(
+          "auth: #{name} has projects that are not names or patterns: #{inspect(list)}; only #{inspect(valid)} kept"
+        )
+
+    valid
+  end
 
   # --- authentication ------------------------------------------------------------------------
 
@@ -284,7 +310,15 @@ defmodule Testor.Auth do
             %{valid_after: valid_after} = user when issued >= valid_after ->
               scope = if is_binary(claims["scope"]), do: claims["scope"], else: ""
               granted = scope |> split_scopes() |> Enum.filter(&(&1 in user.scopes))
-              {:ok, %{sub: claims["sub"], scopes: granted, via: :bearer, exp: claims["exp"]}}
+
+              {:ok,
+               %{
+                 sub: claims["sub"],
+                 scopes: granted,
+                 via: :bearer,
+                 exp: claims["exp"],
+                 projects: Map.get(user, :projects)
+               }}
 
             _ ->
               {:error, :revoked}

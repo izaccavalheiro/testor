@@ -14,6 +14,7 @@
 #   task testor:format    mix format on the runner, the formatted sources copied back
 #   task testor:deploy    build and (re)start it; the dashboard is http://<runner>:6767
 #   task testor:user      add a user (USER=ada ROLE=admin, password from TESTOR_PASSWORD): auth on
+#   task testor:projects  limit a user to some projects (USER=ci PROJECTS="web lib-*", or all)
 #   task testor:token     print a Bearer token (USER=ada DAYS=30 SCOPE=read) for MCP clients, CI
 #   task testor:status / testor:logs / testor:uninstall
 #
@@ -174,6 +175,17 @@ tasks:
           LABEL: token for {{.USER}}
           SCRIPT: |
             {{._EVAL}} "Testor.Auth.CLI.token ~s[{{.USER}}], {{.DAYS | default "30"}}{{if .SCOPE}}, ~s[{{.SCOPE}}]{{end}}"
+
+  projects:
+    desc: Limit a user to some projects (USER=, PROJECTS="web lib-*", or PROJECTS=all for every project)
+    requires:
+      vars: [USER, PROJECTS]
+    cmds:
+      - task: ps
+        vars:
+          LABEL: projects of {{.USER}}
+          SCRIPT: |
+            {{._EVAL}} "Testor.Auth.CLI.projects ~s[{{.USER}}], ~s[{{.PROJECTS}}]"
 
   logs:
     desc: Print the end of testor's log on the runner

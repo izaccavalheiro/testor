@@ -4,7 +4,7 @@ defmodule Testor.MCP.Tools do
   its scopes allow, and `call/4` checks again. Results carry the data twice, as the protocol
   suggests: as JSON text (`content`) for any client and as `structuredContent`.
   """
-  alias Testor.{Device, Query, Sessions, Stats, Store, Views}
+  alias Testor.{Access, Device, Query, Sessions, Stats, Store, Views}
   alias Testor.Web.{Actions, Reply}
 
   @id %{"type" => "string", "description" => "the run's id, e.g. 20261124-142233-a1b2c3"}
@@ -157,7 +157,7 @@ defmodule Testor.MCP.Tools do
 
       %{"scope" => scope} ->
         if scope in principal.scopes do
-          {:ok, args |> run(name, base) |> result()}
+          {:ok, args |> gated(name, base, principal) |> result()}
         else
           {:ok, failure("#{Testor.Auth.who(principal)} lacks the #{scope} scope this tool needs")}
         end
@@ -166,20 +166,37 @@ defmodule Testor.MCP.Tools do
     kind, reason -> {:ok, failure("the tool failed: " <> Exception.format_banner(kind, reason))}
   end
 
-  defp run(_args, "get_status", _base) do
-    {running, _} = Query.runs(%{status: "running", limit: 50})
+  # A run, or a project, the principal may not see is one that does not exist (Testor.Access).
+  defp gated(args, name, base, principal) do
+    run_id = args["id"]
+    run = is_binary(run_id) && Store.get(run_id)
+
+    cond do
+      run && not Access.allowed?(principal, run["project"]) ->
+        {:error, "no run #{run_id}"}
+
+      name == "find_flaky_specs" and not Access.allowed?(principal, args["project"]) ->
+        {:ok, %{"flaky" => []}}
+
+      true ->
+        run(args, name, base, principal)
+    end
+  end
+
+  defp run(_args, "get_status", _base, principal) do
+    {running, _} = Query.runs(%{status: "running", limit: 50, allow: &Access.allowed?(principal, &1)})
 
     {:ok,
      %{
        "host" => Views.host(),
        "running" => running,
-       "sessions" => Sessions.list(),
+       "sessions" => if(Access.restricted?(principal), do: [], else: Sessions.list()),
        "stats" => Stats.get(),
-       "projects" => Query.projects()
+       "projects" => Access.filter(Query.projects(), principal)
      }}
   end
 
-  defp run(args, "list_runs", _base) do
+  defp run(args, "list_runs", _base, principal) do
     with {:ok, status} <- optional(args, "status", &(&1 in Query.statuses())),
          {:ok, project} <- optional(args, "project", &is_binary/1),
          {:ok, kind} <- optional(args, "kind", &is_binary/1),
@@ -192,14 +209,15 @@ defmodule Testor.MCP.Tools do
           kind: kind,
           q: if(q == "", do: nil, else: q),
           before: before,
-          limit: int(args["limit"], 20, 1, 100)
+          limit: int(args["limit"], 20, 1, 100),
+          allow: &Access.allowed?(principal, &1)
         })
 
       {:ok, %{"runs" => runs, "next" => next}}
     end
   end
 
-  defp run(args, "get_run", base) do
+  defp run(args, "get_run", base, _principal) do
     with {:ok, id} <- id(args) do
       case Views.run_snapshot(id) do
         nil ->
@@ -221,7 +239,7 @@ defmodule Testor.MCP.Tools do
     end
   end
 
-  defp run(args, "get_run_log", _base) do
+  defp run(args, "get_run_log", _base, _principal) do
     with {:ok, id} <- id(args),
          {:ok, grep} <- optional(args, "grep", &is_binary/1) do
       if Store.get(id) == nil do
@@ -247,7 +265,7 @@ defmodule Testor.MCP.Tools do
     end
   end
 
-  defp run(args, "wait_for_run", _base) do
+  defp run(args, "wait_for_run", _base, _principal) do
     with {:ok, id} <- id(args) do
       timeout = int(args["timeout_seconds"], 120, 1, 600)
 
@@ -258,9 +276,10 @@ defmodule Testor.MCP.Tools do
     end
   end
 
-  defp run(_args, "list_projects", _base), do: {:ok, %{"projects" => Query.projects()}}
+  defp run(_args, "list_projects", _base, principal),
+    do: {:ok, %{"projects" => Access.filter(Query.projects(), principal)}}
 
-  defp run(args, "find_flaky_specs", _base) do
+  defp run(args, "find_flaky_specs", _base, _principal) do
     case {args["project"], optional(args, "kind", &is_binary/1)} do
       {project, {:ok, kind}} when is_binary(project) -> {:ok, %{"flaky" => Query.flaky(project, kind)}}
       {project, _} when not is_binary(project) -> {:error, "project is required"}
@@ -268,11 +287,11 @@ defmodule Testor.MCP.Tools do
     end
   end
 
-  defp run(_args, "get_device", _base) do
+  defp run(_args, "get_device", _base, _principal) do
     {:ok, Device.snapshot() |> Map.take(["static", "sample"])}
   end
 
-  defp run(args, "cancel_run", _base) do
+  defp run(args, "cancel_run", _base, _principal) do
     with {:ok, id} <- id(args) do
       case Actions.cancel(id) do
         {:ok, run} -> {:ok, %{"run" => Query.compact(run)}}
@@ -281,7 +300,7 @@ defmodule Testor.MCP.Tools do
     end
   end
 
-  defp run(args, "delete_run", _base) do
+  defp run(args, "delete_run", _base, _principal) do
     with {:ok, id} <- id(args) do
       case Actions.delete(id) do
         {:ok, data} -> {:ok, data}
