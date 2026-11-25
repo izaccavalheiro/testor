@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.7.0 - 2026-11-25
+
 ### Added
 
 - **Runs signed by their agent** (the agent protocol's third step): an agent makes an ECDSA
