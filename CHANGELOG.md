@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.3.1 - 2026-11-25
+
 ### Fixed
 
 - `run.ps1` printed `testor: cancel watcher: The pipeline has been stopped.` on stderr at the end
