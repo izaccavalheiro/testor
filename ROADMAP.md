@@ -23,6 +23,7 @@ Two principles hold through every milestone:
 | **0.2.0** | Integrations and trust: `/api/v1` with OpenAPI, the MCP server for AI agents, authentication (roles, scopes, JWT, signed links, audit), artifacts, disk maintenance, the documentation site, semantic versioning | released |
 | **0.3.0** | Secure by default, install anywhere: DNS rebinding and exposure defences, symbolic-link safety, verified cancels and cooperative cancel, limits; tests in a separate account; signed run attestations and a signed audit trail; prebuilt and verified installs, the container image, the Helm chart; built-in TLS, Prometheus metrics, webhooks; masked secrets, fenced MCP output, flaky specs | released |
 | **0.4.0** | Jobs: runs queued through the API (scope `execute`, opt-in) and taken by an agent on the runner (`runner/agent.ps1`) by lease, with labels, a git ref, one job per project at a time, retries and cancelling; the first step of the agent protocol | released |
+| **0.5.0** | Agents on other machines: an agent with `"upload": true` keeps its own home and sends each run to testor over HTTPS (record, log chunks at offsets, screenshots and artifacts); remote runs are live, parsed, signed and cancellable like local ones | released |
 
 ## Next milestones
 

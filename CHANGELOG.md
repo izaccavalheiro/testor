@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.5.0 - 2026-11-25
+
 ### Added
 
 - **Agents on other machines** (the agent protocol's second step): with `"upload": true`, an
