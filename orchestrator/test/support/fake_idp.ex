@@ -26,6 +26,10 @@ defmodule Testor.Test.FakeIdP do
         {Bandit, plug: __MODULE__, ip: :loopback, port: 0, startup_log: false}
       )
 
+    {:ok, {_ip, port}} = ThousandIsland.listener_info(pid)
+    issuer = "http://127.0.0.1:#{port}"
+
+    Agent.update(__MODULE__.State, fn _ ->
       %{
         issuer: issuer,
         keys: keys,
@@ -48,9 +52,11 @@ defmodule Testor.Test.FakeIdP do
       "RS256" ->
         {:RSAPrivateKey, _, n, e, _, _, _, _, _, _, _} =
           private = :public_key.generate_key({:rsa, 2048, 65_537})
+
         {kid, private,
          %{"kty" => "RSA", "n" => b64(:binary.encode_unsigned(n)), "e" => b64(:binary.encode_unsigned(e))}}
 
+      "ES256" ->
         {:ECPrivateKey, _, _, _, <<4, x::binary-32, y::binary-32>>, _} =
           private = :public_key.generate_key({:namedCurve, @p256})
 
