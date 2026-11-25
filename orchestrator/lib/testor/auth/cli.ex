@@ -61,6 +61,37 @@ defmodule Testor.Auth.CLI do
     IO.puts("#{name} removed")
   end
 
+  @doc """
+  Limits `name` to `projects` (space-separated names, `*` as a wildcard: `"web lib-*"`), or,
+  with `"all"`, lets them see every project again. Their tokens follow at once.
+  """
+  def projects(name, projects) do
+    list = String.split(projects, " ", trim: true)
+
+    cond do
+      list != ["all"] and (list == [] or not Enum.all?(list, &Testor.Access.valid_pattern?/1)) ->
+        fail("projects are names or patterns (letters, digits, _ . - and *), or all")
+
+      true ->
+        update(fn raw ->
+          case raw do
+            %{"users" => %{^name => user} = users} ->
+              user =
+                if list == ["all"], do: Map.delete(user, "projects"), else: Map.put(user, "projects", list)
+
+              Map.put(raw, "users", Map.put(users, name, user))
+
+            _ ->
+              fail("no user #{name}")
+          end
+        end)
+
+        IO.puts(
+          if list == ["all"], do: "#{name} sees every project", else: "#{name} sees #{Enum.join(list, ", ")}"
+        )
+    end
+  end
+
   @doc "Forgets the signing key pinned to agent `name`: its next lease pins the key it presents."
   def forget_agent_key(name) do
     if Testor.AgentKeys.forget(name),

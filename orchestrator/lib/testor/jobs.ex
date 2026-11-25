@@ -50,8 +50,12 @@ defmodule Testor.Jobs do
   """
   def enqueue(params, who), do: GenServer.call(__MODULE__, {:enqueue, params, who})
 
-  @doc "The oldest queued job `agent` (with `labels`) can take, leased to it: `{:ok, job}` or `:none`."
-  def lease(agent, labels), do: GenServer.call(__MODULE__, {:lease, agent, labels})
+  @doc """
+  The oldest queued job `agent` (with `labels`) can take, leased to it: `{:ok, job}` or `:none`.
+  `allow` says which projects the agent may take (an agent user restricted to projects).
+  """
+  def lease(agent, labels, allow \\ fn _project -> true end),
+    do: GenServer.call(__MODULE__, {:lease, agent, labels, allow})
 
   @doc "Renews `agent`'s lease on job `id`: `{:ok, %{\"cancel\" => bool}}` or `{:error, reason}`."
   def heartbeat(id, agent), do: GenServer.call(__MODULE__, {:heartbeat, id, agent})
@@ -130,13 +134,15 @@ defmodule Testor.Jobs do
     end
   end
 
-  def handle_call({:lease, agent, labels}, _from, jobs) do
+  def handle_call({:lease, agent, labels, allow}, _from, jobs) do
     busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
 
     candidate =
       jobs
       |> Map.values()
-      |> Enum.filter(&(&1["status"] == "queued" and not MapSet.member?(busy, &1["project"])))
+      |> Enum.filter(
+        &(&1["status"] == "queued" and not MapSet.member?(busy, &1["project"]) and allow.(&1["project"]))
+      )
       |> Enum.filter(&Enum.all?(&1["labels"], fn label -> label in labels end))
       |> Enum.min_by(&order/1, fn -> nil end)
 

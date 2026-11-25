@@ -39,7 +39,8 @@ defmodule Testor.Query do
           (opts[:status] == nil or run["status"] == opts[:status]) and
           (opts[:project] == nil or run["project"] == opts[:project]) and
           (opts[:kind] == nil or run["kind"] == opts[:kind]) and
-          (q == nil or matches?(run, q))
+          (q == nil or matches?(run, q)) and
+          (opts[:allow] == nil or opts[:allow].(run["project"]))
       end)
       |> Enum.take(limit + 1)
 

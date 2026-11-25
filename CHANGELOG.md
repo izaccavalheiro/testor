@@ -7,6 +7,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Per-project access**: a user (and their tokens) can be limited to projects
+  (`"projects": ["web", "lib-*"]` in `auth.json`, `task testor:projects`, or
+  `Testor.Auth.CLI.projects`). Another project's runs, jobs, logs, files, attestations and
+  event streams answer `404`; lists, the dashboard's state, live streams and MCP's tools leave
+  them out; what spans every project (maintenance, audit, metrics, sessions, agents' keys)
+  answers `403`; jobs are queued and taken only for one's projects. A list that cannot be read
+  fails closed. `/api/v1/auth/me` shows `projects`.
+
 ## 0.7.0 - 2026-11-25
 
 ### Added
