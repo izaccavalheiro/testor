@@ -42,8 +42,8 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
 ### Later
 
-- **Release gates** on signed attestations (done, in the next release); commit statuses on
-  pull requests.
+- **Release gates** on signed attestations and **commit statuses** on pull requests (done, in
+  the next release).
 - A per-project queue for SSH runs too, and per-run workspaces for them.
 
 ## 1.0: stable

@@ -381,11 +381,11 @@ what the runner observed; the third is informative only.
 
 ## Secrets
 
-`auth.json`, `jwt.key`, `token-keys.json`, `job-token-keys.json`, `signing.key` and
-`webhooks.json` live in the data folder unless `TESTOR_SECRETS_DIR` names another; testor
-creates its keys readable by their owner only. Test commands run as the same account as testor
-(see below), so they can read these files wherever they are: moving them protects them only once
-the tests run as an account that cannot read that folder. Replicas, or keys kept in a secret
+`auth.json`, `jwt.key`, `token-keys.json`, `job-token-keys.json`, `signing.key`,
+`webhooks.json` and `statuses.json` live in the data folder unless `TESTOR_SECRETS_DIR` names
+another; testor creates its keys readable by their owner only. Test commands run as the same
+account as testor (see below), so they can read these files wherever they are: moving them
+protects them only once the tests run as an account that cannot read that folder. Replicas, or keys kept in a secret
 store, take `TESTOR_JWT_SECRET` and `TESTOR_TOKEN_KEY` from the environment instead of files.
 
 ## Encryption at rest
