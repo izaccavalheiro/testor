@@ -37,8 +37,8 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
   some projects, on every run, job, list, stream and MCP tool.
 - **Asymmetric tokens** (done, in the next release): EdDSA, the public keys at
   `/.well-known/jwks.json`, so other services verify them without a secret.
-- [Identity](docs/design/identity.md): OpenID Connect sign-in for the dashboard, groups mapped
-  to roles and projects.
+- **Single sign-on** (done, in the next release): OpenID Connect sign-in for the dashboard,
+  groups mapped to roles and projects ([identity](docs/design/identity.md)).
 - Secrets for jobs: a broker (Vault, cloud secret managers, SOPS files) handing secrets to a
   job by name, masked in its logs.
 

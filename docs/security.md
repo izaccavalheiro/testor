@@ -5,14 +5,16 @@ clean the runner's disk. This page describes who can do what, and how to set it 
 
 ## Authentication
 
-Authentication is **off until you add a user**, so an existing install keeps working. Once
-`<home>/auth.json` lists a user, every request needs credentials except the health checks
-(`GET /api/health`, `GET /api/v1/health`), the OpenAPI document and signed file links.
+Authentication is **off until you add a user** (or an identity provider), so an existing
+install keeps working. Once `<home>/auth.json` lists one, every request needs credentials
+except the health checks (`GET /api/health`, `GET /api/v1/health`), the OpenAPI document, the
+token keys (`/.well-known/jwks.json`), the sign-in pages and signed file links.
 
 | Scheme | For | How |
 | ------ | --- | --- |
 | HTTP Basic (RFC 7617) | the dashboard, `curl -u` | browsers ask for the user name and password once and send them with every request, the event streams included |
 | Bearer JWT (RFC 6750, RFC 7519) | scripts, CI, MCP clients | `POST /api/v1/auth/token` with Basic credentials, or `task testor:token` |
+| OpenID Connect | people, through the dashboard | sign in with the company's identity provider ([below](#single-sign-on-openid-connect)) |
 
 Add users from the workstation (the password travels on the SSH session's stdin, never on a
 command line):
@@ -102,6 +104,57 @@ version, `"tokens": {"acceptHs256": false}` refuses them at once, and
 `"tokens": {"algorithm": "HS256"}` keeps issuing them. The HMAC is compared in constant time.
 The same key signs screenshot and artifact links.
 
+### Single sign-on (OpenID Connect)
+
+People sign in to the dashboard with the identity provider they already use (Entra ID,
+Google, Okta, Keycloak, Authentik, Dex, GitLab, ...), and their groups decide their role and
+projects. Register testor with the provider as a web application whose redirect URI is
+`https://<testor>/auth/callback`, then add to `auth.json`:
+
+```json
+"oidc": {
+  "issuer": "https://login.example.com/realms/eng",
+  "clientId": "testor",
+  "clientSecret": "...",
+  "redirectUri": "https://testor.example.com/auth/callback",
+  "roles": { "admin": ["platform"], "operator": ["qa"], "viewer": ["*"] },
+  "projects": { "web-team": ["web", "web-*"], "platform": ["*"] }
+}
+```
+
+| Key | Meaning |
+| --- | ------- |
+| `issuer` | the provider's issuer URL: `https` (`http` on loopback only); its discovery document must name the same issuer |
+| `clientId`, `clientSecret` | the client testor is; the secret can come from `TESTOR_OIDC_CLIENT_SECRET` instead, and without one testor is a public client (PKCE only) |
+| `redirectUri` | testor's `/auth/callback` as the provider knows it; `https` makes the cookies `Secure` |
+| `roles` | the groups of each role (`admin`, `operator`, `viewer`); `*` is anyone the provider signs in. The highest that matches wins; someone in none is refused |
+| `projects` | the projects of each group (`*` as a group: everyone; `*` as a project: all). A user sees their groups' union; someone in no listed group sees none. Without `projects`, every project |
+| `usernameClaim`, `groupsClaim` | the claims with the user's name (`email`, which must not be unverified) and groups (`groups`) |
+| `scopes` | more scopes to ask for (`openid email profile` always): `groups` for providers that need it |
+| `sessionHours` | how long a session lasts: 8 hours by default, a week at most |
+| `sessionsValidAfter` | a Unix time: every session started before it ends |
+
+How it holds:
+
+- The authorization code flow with PKCE (`S256`), `state` and `nonce`. They travel in an
+  encrypted cookie that lives ten minutes (`HttpOnly`, `SameSite=Lax`, path `/auth`), so any
+  replica can finish a sign-in, and a callback of a sign-in another browser started fails.
+- The ID token is checked like any token testor trusts: signed (RS256, ES256 or EdDSA) with a
+  key of the provider's JWKS, which is fetched again when an unknown key appears (at most once
+  a minute); issued by the issuer for this client (`azp` when there are several audiences);
+  unexpired; with the login's nonce. Discovery and keys are kept an hour.
+- A session is a token signed with testor's token keys for the audience `testor-session`, in a
+  cookie (`HttpOnly`, `SameSite=Lax`, `Secure` with an `https` redirect URI). It is not a
+  Bearer token, and a Bearer token is not a session. It carries the role and projects of the
+  sign-in: a change of groups applies at the next sign-in, and `sessionsValidAfter` ends the
+  sessions at once.
+- A visitor without credentials is sent to the provider; API requests get `401`. Only
+  `/?basic` asks the browser for a password: users of `auth.json` keep working, for scripts
+  and as a break-glass account when the provider is down.
+- A refused sign-in is logged, audited and counts as a failed attempt of the address (see
+  [brute force](#brute-force)); a sign-in is audited with the role it got.
+- The dashboard shows who is signed in and signs out (`POST /auth/logout`).
+
 ### Passwords
 
 PBKDF2-HMAC-SHA256 with a random 16-byte salt and 600,000 iterations (OWASP's recommendation),
@@ -125,7 +178,9 @@ address is answered `429` with `Retry-After` until the window ends. Expired toke
     "ci":  { "password": "$pbkdf2-sha256$600000$<salt>$<hash>", "role": "operator", "tokensValidAfter": 1795000000,
              "projects": ["web", "lib-*"] }
   },
-  "tokens": { "defaultTtlMinutes": 60, "maxTtlDays": 30 },
+  "tokens": { "defaultTtlMinutes": 60, "maxTtlDays": 30, "algorithm": "EdDSA", "acceptHs256": true },
+  "oidc": { "issuer": "https://login.example.com", "clientId": "testor", "redirectUri": "https://testor.example.com/auth/callback",
+            "roles": { "viewer": ["*"] } },
   "enabled": true
 }
 ```
@@ -181,7 +236,8 @@ A state-changing request (`POST`, `DELETE`) is refused (`403`) when its `Origin`
 server (including the `null` origin of a sandboxed report), and when it carries none of a
 Bearer token, the header `X-Testor: 1` or a JSON body. Cross-site forms cannot send the last
 two without a CORS preflight, which testor never grants. Since browsers send Basic credentials
-on their own, this is what stops another site from acting with them. The token endpoint needs
+and session cookies on their own, this is what stops another site from acting with them (the
+session cookie is also `SameSite=Lax`). The token endpoint needs
 only the origin check: its answer cannot be read cross-site. MCP requests must be JSON, and a
 foreign `Origin` is refused there too; DNS rebinding is stopped by the `Host` allow-list
 ([network exposure](#network-exposure)).

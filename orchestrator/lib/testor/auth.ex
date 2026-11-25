@@ -2,8 +2,8 @@ defmodule Testor.Auth do
   @moduledoc """
   Authentication and authorization.
 
-  Off until `<home>/auth.json` lists a user, so an existing install keeps working until its
-  owner adds one. Once on, every request but the health check needs credentials:
+  Off until `<home>/auth.json` lists a user or an `oidc` provider, so an existing install
+  keeps working until its owner adds one. Once on, every request but the health check needs credentials:
 
     * HTTP Basic (RFC 7617): a user's name and password. Browsers prompt for it and send it
       with every request of the dashboard, its event streams included.
@@ -12,6 +12,8 @@ defmodule Testor.Auth do
       extend itself. Signed with Ed25519 (`EdDSA`, `Testor.Auth.TokenKeys`), whose public
       keys are at `/.well-known/jwks.json` for other services to verify a token with; tokens
       signed with `jwt.key` or `TESTOR_JWT_SECRET` (`HS256`, before 0.8) are still accepted.
+    * A session cookie, once signed in with an OpenID Connect provider (`Testor.Auth.OIDC`):
+      the dashboard sends users without credentials there when one is set up.
 
   A user has a role, and a role grants scopes:
 
@@ -42,7 +44,7 @@ defmodule Testor.Auth do
   """
   require Logger
   alias Testor.Config
-  alias Testor.Auth.{Guard, JWT, Password, TokenKeys}
+  alias Testor.Auth.{Guard, JWT, OIDC, Password, TokenKeys}
 
   @roles %{
     "viewer" => ["read"],
@@ -121,7 +123,11 @@ defmodule Testor.Auth do
     end
 
     {read.(auth_file()), read.(key_file()), read.(TokenKeys.file()),
-     :erlang.phash2({System.get_env("TESTOR_JWT_SECRET"), System.get_env(TokenKeys.env())})}
+     :erlang.phash2({
+       System.get_env("TESTOR_JWT_SECRET"),
+       System.get_env(TokenKeys.env()),
+       System.get_env("TESTOR_OIDC_CLIENT_SECRET")
+     })}
   end
 
   @doc "Reads `auth.json` and the keys now (no cache)."
@@ -157,7 +163,7 @@ defmodule Testor.Auth do
   defp enabled_in?(raw) do
     case raw["enabled"] do
       value when is_boolean(value) -> value
-      _ -> map_size(users_in(raw)) > 0
+      _ -> map_size(users_in(raw)) > 0 or Map.has_key?(raw, "oidc")
     end
   end
 
@@ -174,6 +180,7 @@ defmodule Testor.Auth do
       users: %{},
       key: nil,
       token_keys: nil,
+      oidc: nil,
       algorithm: "EdDSA",
       accept_hs256: false,
       default_ttl: @default_ttl,
@@ -235,6 +242,7 @@ defmodule Testor.Auth do
       users: users,
       key: key,
       token_keys: token_keys,
+      oidc: OIDC.config(raw["oidc"]),
       algorithm: algorithm,
       # Tokens issued before 0.8 are HS256: accepted until the next major version unless refused.
       accept_hs256: algorithm == "HS256" or tokens["acceptHs256"] != false,

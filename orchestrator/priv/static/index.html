@@ -145,7 +145,7 @@ td.path { word-break: break-all; color: var(--muted); }
     <a href="#/device" data-nav="device">Device</a>
     <a href="#/maintenance" data-nav="maintenance">Maintenance</a>
   </nav>
-  <div class="right"><span id="usage"></span><span id="disk"></span><span><span class="dot" id="conn"></span> <span id="conn-text">connecting…</span></span></div>
+  <div class="right"><span id="who"></span><span id="usage"></span><span id="disk"></span><span><span class="dot" id="conn"></span> <span id="conn-text">connecting…</span></span></div>
 </header>
 <main id="app"></main>
 <div class="lightbox" id="lightbox"><img alt=""><div class="cap"></div></div>
@@ -205,8 +205,11 @@ function specCell(sum) {
   return `${parts.join(" · ")} <span class="muted">/ ${sum.specs}</span>`;
 }
 const shotCell = (n) => n ? `<span class="tag">📷 ${n}</span>` : `<span class="muted">–</span>`;
+// Signed in through an identity provider (a session cookie): an expired session signs in again.
+let viaSession = false;
 async function api(path, opts = {}) {
   const res = await fetch(path, { ...opts, headers: { "X-Testor": "1", ...(opts.headers || {}) } });
+  if (res.status === 401 && viaSession) location.href = "/";
   if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
   return res;
 }
@@ -794,6 +797,15 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") lb.classLi
 
 connect();
 enter();
+api("/api/v1/auth/me").then((r) => r.json()).then((me) => {
+  if (me.via !== "session") return;
+  viaSession = true;
+  $("#who").innerHTML = `${esc(me.user)} <button class="small" id="signout">Sign out</button>`;
+  $("#signout").addEventListener("click", async () => {
+    await api("/auth/logout", { method: "POST" }).catch(() => {});
+    location.href = "/auth/signed-out";
+  });
+}).catch(() => {});
 </script>
 </body>
 </html>

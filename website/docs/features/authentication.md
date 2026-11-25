@@ -9,6 +9,9 @@ description: Users, roles and scopes, Bearer tokens for programs, signed links, 
 Authentication is **off until you add the first user**. A fresh install works at once on a
 private network; once anyone else can reach the port, turn it on.
 
+People can also sign in with your company's identity provider instead of a password: see
+[single sign-on](single-sign-on.md).
+
 ## Add users
 
 From the workstation (the password travels on the SSH session's stdin, never on a command

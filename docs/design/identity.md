@@ -1,9 +1,9 @@
 # Identity
 
-Status: in progress (asymmetric tokens and per-project access done). Builds on: users, roles
+Status: in progress (single sign-on, asymmetric tokens and per-project access done). Builds on: users, roles
 and scopes; HS256 tokens; signed links (0.2).
 
-- **OpenID Connect sign-in** for the dashboard (authorization code with PKCE, a session
+- **OpenID Connect sign-in** (done, 0.8) for the dashboard (authorization code with PKCE, a session
   cookie: `HttpOnly`, `Secure`, `SameSite=Lax`), groups or claims mapped to roles; Basic stays
   for scripts and as a break-glass account.
 - **Asymmetric tokens** (done, 0.8): testor's own tokens signed with EdDSA and published as
