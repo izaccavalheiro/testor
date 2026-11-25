@@ -105,10 +105,10 @@ the agent's user at its first lease: give every agent a user of its own (see
 
 ## Agents in containers and Kubernetes
 
-`ghcr.io/izaccavalheiro/testor-agent` is the agent as an image (linux/amd64 and linux/arm64, for Graviton, Ampere and Apple
-silicon hosts): PowerShell 7,
-git, `run.ps1` and `agent.ps1`, unprivileged, fit for a read-only root file system. Build your
-projects' image from it, with their tools:
+`ghcr.io/izaccavalheiro/testor-agent` is the agent as an image (linux/amd64 and linux/arm64,
+for Graviton, Ampere and Apple silicon hosts): PowerShell 7, git, `run.ps1` and `agent.ps1`,
+unprivileged, fit for a read-only root file system. Build your projects' image from it, with
+their tools:
 
 ```dockerfile
 FROM ghcr.io/izaccavalheiro/testor-agent:0.6.0
