@@ -7,6 +7,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Release gates**: `gates` in `config.json` (a project and the kinds a release needs, an
+  optional agent signature and age); `GET /api/v1/gates/<name>?commit=<sha>` answers whether
+  the commit passes from each kind's latest run of it from a clean tree, checking testor's
+  attestation again with its key, for a pipeline or an OPA policy. `GET /api/v1/gates`.
+- Attestations sign the run's `source` (commit, branch, dirty) and `job` too.
+- The agent records the commit it checked out (`TESTOR_COMMIT`, `TESTOR_BRANCH`,
+  `TESTOR_DIRTY`) for a git workspace's runs.
+
 ## 0.8.0 - 2026-11-25
 
 ### Added

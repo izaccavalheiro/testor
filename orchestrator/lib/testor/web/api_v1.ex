@@ -275,6 +275,24 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # Release gates (Testor.Gates): whether a commit may ship, from signed results.
+  get "/gates" do
+    json(conn, 200, %{"data" => Testor.Access.filter(Testor.Gates.list(), conn.assigns.principal)})
+  end
+
+  get "/gates/:name" do
+    conn = fetch_query_params(conn)
+
+    with {:ok, gate} <- Testor.Gates.get(name),
+         true <- Testor.Access.allowed?(conn.assigns.principal, gate["project"]) || {:error, :not_found},
+         {:ok, result} <- Testor.Gates.evaluate(gate, conn.query_params["commit"]) do
+      json(conn, 200, result)
+    else
+      {:error, :not_found} -> error(conn, 404, "not_found", "no gate #{name}")
+      {:error, why} -> error(conn, 400, "bad_request", why)
+    end
+  end
+
   # config.json's schedules (Testor.Schedules), each with its next time, of the projects one sees.
   get "/schedules" do
     json(conn, 200, %{"data" => Testor.Access.filter(Testor.Schedules.list(), conn.assigns.principal)})

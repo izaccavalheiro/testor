@@ -63,6 +63,8 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | -------- | ----- | - |
 | `GET /api/v1/jobs?status=` | read | jobs, newest first |
 | `GET /api/v1/jobs/:id` | read | one job |
+| `GET /api/v1/gates` | read | `config.json`'s release gates, or the `error` that leaves one out |
+| `GET /api/v1/gates/:name?commit=` | read | whether a commit passes: `{gate, commit, pass, checks: [{kind, pass, reason, runId, attestation}]}` ([release gates](attestation.md#release-gates)) |
 | `GET /api/v1/schedules` | read | `config.json`'s schedules with their `next` time (UTC), or the `error` that leaves one out |
 | `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref?}`: `201`, or `403` while `execution.enabled` is off |
 | `POST /api/v1/jobs/:id/cancel` | execute | cancel a queued or running job |

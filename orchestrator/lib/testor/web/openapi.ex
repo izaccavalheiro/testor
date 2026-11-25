@@ -23,6 +23,7 @@ defmodule Testor.Web.OpenAPI do
         %{"name" => "runner"},
         %{"name" => "maintenance"},
         %{"name" => "jobs"},
+        %{"name" => "gates"},
         %{"name" => "agents"}
       ],
       "paths" => paths(),
@@ -142,6 +143,19 @@ defmodule Testor.Web.OpenAPI do
       "/jobs/{id}/cancel" => %{
         "parameters" => [%{"$ref" => "#/components/parameters/id"}],
         "post" => op("jobs", "Cancel a job (scope execute)", %{"type" => "object"})
+      },
+      "/gates" => %{
+        "get" => op("gates", "config.json's release gates, or why one is left out", %{"type" => "object"})
+      },
+      "/gates/{name}" => %{
+        "parameters" => [
+          %{"name" => "name", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},
+          %{"name" => "commit", "in" => "query", "required" => true, "schema" => %{"type" => "string"}}
+        ],
+        "get" =>
+          op("gates", "Whether a commit passes the gate: each kind's latest signed run of it", %{
+            "type" => "object"
+          })
       },
       "/schedules" => %{
         "get" =>

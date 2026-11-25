@@ -11,6 +11,9 @@ testor keeps evidence you can check without trusting the dashboard.
 - **Every finished run is signed** by testor: an in-toto statement in a DSSE envelope (Ed25519)
   holding the run's record and the SHA-256 of its log, screenshots and artifacts.
   `GET /api/v1/runs/<id>/attestation`, verifiable with OpenSSL.
+- **Release gates**: `GET /api/v1/gates/<gate>?commit=<sha>` says whether a commit may ship:
+  each kind's latest run of it passed, and its signature holds. For a deploy pipeline, or as
+  the input of an OPA policy.
 - **Runs from agents are signed by the agent too**, with an ECDSA P-256 key testor pins to it,
   and kept only when they match, byte for byte, what testor received.
   `GET /api/v1/runs/<id>/attestation?by=agent`.
