@@ -74,6 +74,18 @@ list, a user sees every project, as before. Their tokens follow the user at once
 - A list that cannot be read (not a list, or names that are not names) fails closed: the user
   sees no project, and `testor.log` says why.
 
+A user can also hold **a role per project**: `"projects": {"web*": "operator", "docs":
+"viewer"}` (or `task testor:projects USER=ana PROJECTS="web*=operator docs=viewer"`).
+
+- What a request does to a project it names (cancelling or deleting a run, queuing or
+  cancelling a job, taking one as an agent, MCP's tools) needs a scope a role of that project
+  grants: `403` otherwise. The user's `role` is then not used.
+- Lists, streams and MCP show the runs of projects one of their roles may read (an `agent`
+  role reads nothing); the others answer `404`, as above.
+- A token carries the scopes asked for, and a project's roles limit them further.
+- An entry with a pattern or a role testor does not know is left out (fail closed), and
+  `testor.log` says so. `/api/v1/auth/me` shows `projectRoles`.
+
 ### Tokens
 
 JSON Web Tokens with `iss` and `aud` `testor`, `sub` (the user), `iat`, `nbf`, `exp`, `jti`

@@ -157,7 +157,7 @@ defmodule Testor.MCP.Tools do
 
       %{"scope" => scope} ->
         if scope in principal.scopes do
-          {:ok, args |> gated(name, base, principal) |> result()}
+          {:ok, args |> gated(name, base, principal, scope) |> result()}
         else
           {:ok, failure("#{Testor.Auth.who(principal)} lacks the #{scope} scope this tool needs")}
         end
@@ -167,13 +167,16 @@ defmodule Testor.MCP.Tools do
   end
 
   # A run, or a project, the principal may not see is one that does not exist (Testor.Access).
-  defp gated(args, name, base, principal) do
+  defp gated(args, name, base, principal, scope) do
     run_id = args["id"]
     run = is_binary(run_id) && Store.get(run_id)
 
     cond do
       run && not Access.allowed?(principal, run["project"]) ->
         {:error, "no run #{run_id}"}
+
+      run && not Access.permits?(principal, run["project"], scope) ->
+        {:error, "#{Testor.Auth.who(principal)} lacks the #{scope} scope on #{run["project"]}"}
 
       name == "find_flaky_specs" and not Access.allowed?(principal, args["project"]) ->
         {:ok, %{"flaky" => []}}

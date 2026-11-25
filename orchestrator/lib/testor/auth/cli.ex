@@ -65,23 +65,28 @@ defmodule Testor.Auth.CLI do
   end
 
   @doc """
-  Limits `name` to `projects` (space-separated names, `*` as a wildcard: `"web lib-*"`), or,
-  with `"all"`, lets them see every project again. Their tokens follow at once.
+  Limits `name` to `projects` (space-separated names, `*` as a wildcard: `"web lib-*"`), gives
+  them a role per project (`"web*=operator docs=viewer"`), or, with `"all"`, lets them see every
+  project again with their role. Their tokens follow at once.
   """
   def projects(name, projects) do
     list = String.split(projects, " ", trim: true)
+    roles = if list != [] and Enum.all?(list, &String.contains?(&1, "=")), do: parse_roles(list)
 
     cond do
-      list != ["all"] and (list == [] or not Enum.all?(list, &Testor.Access.valid_pattern?/1)) ->
-        fail("projects are names or patterns (letters, digits, _ . - and *), or all")
+      roles == :invalid ->
+        fail("a role per project is pattern=role, the role one of #{Enum.join(Auth.roles(), ", ")}")
+
+      roles == nil and list != ["all"] and (list == [] or not Enum.all?(list, &Testor.Access.valid_pattern?/1)) ->
+        fail("projects are names or patterns (letters, digits, _ . - and *), pattern=role pairs, or all")
 
       true ->
+        value = roles || list
+
         update(fn raw ->
           case raw do
             %{"users" => %{^name => user} = users} ->
-              user =
-                if list == ["all"], do: Map.delete(user, "projects"), else: Map.put(user, "projects", list)
-
+              user = if list == ["all"], do: Map.delete(user, "projects"), else: Map.put(user, "projects", value)
               Map.put(raw, "users", Map.put(users, name, user))
 
             _ ->
@@ -90,9 +95,25 @@ defmodule Testor.Auth.CLI do
         end)
 
         IO.puts(
-          if list == ["all"], do: "#{name} sees every project", else: "#{name} sees #{Enum.join(list, ", ")}"
+          cond do
+            list == ["all"] -> "#{name} sees every project"
+            roles -> "#{name} is " <> Enum.map_join(Enum.sort(roles), ", ", fn {p, r} -> "#{r} on #{p}" end)
+            true -> "#{name} sees #{Enum.join(list, ", ")}"
+          end
         )
     end
+  end
+
+  defp parse_roles(pairs) do
+    roles =
+      for pair <- pairs, into: %{} do
+        [pattern, role] = String.split(pair, "=", parts: 2)
+        {pattern, role}
+      end
+
+    if Enum.all?(roles, fn {pattern, role} -> Testor.Access.valid_pattern?(pattern) and Auth.role_scopes(role) != nil end),
+      do: roles,
+      else: :invalid
   end
 
   @doc "Forgets the signing key pinned to agent `name`: its next lease pins the key it presents."

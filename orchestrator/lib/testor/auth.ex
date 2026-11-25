@@ -214,14 +214,31 @@ defmodule Testor.Auth do
 
         valid_after = if is_integer(user["tokensValidAfter"]), do: user["tokensValidAfter"], else: 0
 
-        {name,
-         %{
-           hash: hash,
-           role: role,
-           scopes: scopes,
-           valid_after: valid_after,
-           projects: projects_of(name, user)
-         }}
+        case user["projects"] do
+          # A role per project: {"web*": "operator", "docs": "viewer"}.
+          %{} = roles ->
+            project_roles = project_roles(name, roles)
+
+            {name,
+             %{
+               hash: hash,
+               role: role,
+               scopes: project_roles |> Enum.flat_map(& &1.scopes) |> Enum.uniq(),
+               valid_after: valid_after,
+               projects: Enum.map(project_roles, & &1.pattern),
+               project_roles: project_roles
+             }}
+
+          _ ->
+            {name,
+             %{
+               hash: hash,
+               role: role,
+               scopes: scopes,
+               valid_after: valid_after,
+               projects: projects_of(name, user)
+             }}
+        end
       end
 
     tokens = if is_map(raw["tokens"]), do: raw["tokens"], else: %{}
@@ -308,10 +325,31 @@ defmodule Testor.Auth do
   def who(%{sub: sub}), do: sub
 
   defp principal(name, user, via),
-    do: %{sub: name, scopes: user.scopes, via: via, projects: Map.get(user, :projects)}
+    do: %{
+          sub: name,
+          scopes: user.scopes,
+          via: via,
+          projects: Map.get(user, :projects),
+          project_roles: Map.get(user, :project_roles)
+        }
 
   # The projects a user may see (Testor.Access): nil for all; a list that cannot be read
   # fails closed, to no project at all.
+  # Entries with a pattern or a role testor does not know are dropped (and logged): fail closed.
+  defp project_roles(name, roles) do
+    {valid, invalid} =
+      Enum.split_with(roles, fn {pattern, role} ->
+        Testor.Access.valid_pattern?(pattern) and role_scopes(role) != nil
+      end)
+
+    if invalid != [],
+      do: Logger.warning("auth: #{name} has project roles that are not valid, left out: #{inspect(Map.new(invalid))}")
+
+    valid
+    |> Enum.sort()
+    |> Enum.map(fn {pattern, role} -> %{pattern: pattern, role: role, scopes: role_scopes(role)} end)
+  end
+
   defp projects_of(_name, %{"projects" => nil}), do: nil
   defp projects_of(_name, user) when not is_map_key(user, "projects"), do: nil
 
@@ -381,7 +419,8 @@ defmodule Testor.Auth do
                  scopes: granted,
                  via: :bearer,
                  exp: claims["exp"],
-                 projects: Map.get(user, :projects)
+                 projects: Map.get(user, :projects),
+                 project_roles: Map.get(user, :project_roles)
                }}
 
             _ ->

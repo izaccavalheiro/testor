@@ -15,6 +15,12 @@ defmodule Testor.Access do
       the agents' keys) needs access to every project: `403` otherwise.
 
   An agent user restricted to projects only takes their jobs.
+
+  A user may also hold **a role per project** (`"projects": {"web*": "operator", "docs":
+  "viewer"}`): what a request does to a project it names (cancelling a run, queuing a job,
+  taking one) needs a scope that project's roles grant (`permits?/3`, `403` otherwise), and
+  lists show the projects one of its roles may read. A token still carries no more than the
+  scopes asked for.
   """
   import Plug.Conn
   alias Testor.{Jobs, Store}
@@ -28,11 +34,33 @@ defmodule Testor.Access do
 
   @doc "Whether `principal` may see `project`."
   def allowed?(principal, project) do
-    case projects(principal) do
-      nil -> true
-      patterns -> is_binary(project) and Enum.any?(patterns, &matches?(&1, project))
+    cond do
+      project_roles(principal) != nil -> permits?(principal, project, "read")
+      projects(principal) == nil -> true
+      true -> is_binary(project) and Enum.any?(projects(principal), &matches?(&1, project))
     end
   end
+
+  @doc """
+  Whether `principal` may act with `scope` on `project`: it holds the scope, and, with a role per
+  project, a role of a pattern matching the project grants it.
+  """
+  def permits?(principal, project, scope) do
+    held = principal |> Map.get(:scopes, []) |> Enum.member?(scope)
+
+    case project_roles(principal) do
+      nil ->
+        held and allowed?(principal, project)
+
+      roles ->
+        held and is_binary(project) and
+          Enum.any?(roles, &(scope in &1.scopes and matches?(&1.pattern, project)))
+    end
+  end
+
+  @doc "The roles per project of a principal, or nil when its scopes apply to every project it sees."
+  def project_roles(%{project_roles: roles}) when is_list(roles), do: roles
+  def project_roles(_principal), do: nil
 
   @doc "A pattern (letters, digits, `_ . -`, and `*`), as the auth file holds them."
   def valid_pattern?(pattern), do: is_binary(pattern) and Regex.match?(~r/^[A-Za-z0-9_.*-]{1,100}$/, pattern)
@@ -91,8 +119,21 @@ defmodule Testor.Access do
       not allowed_or_none?(principal, named_project(conn.path_info)) ->
         refuse(conn, 404, "not_found", "not found")
 
+      not permitted_or_none?(conn, principal) ->
+        scope = Testor.Web.Auth.required_scope(conn)
+        refuse(conn, 403, "forbidden", "#{Testor.Auth.who(principal)} lacks the #{scope} scope on that project")
+
       true ->
         conn
+    end
+  end
+
+  # With a role per project, the request's scope on the project it names.
+  defp permitted_or_none?(conn, principal) do
+    case {project_roles(principal), named_project(conn.path_info)} do
+      {nil, _} -> true
+      {_, :none} -> true
+      {_, project} -> permits?(principal, project, Testor.Web.Auth.required_scope(conn))
     end
   end
 

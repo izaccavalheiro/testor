@@ -34,7 +34,7 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 ### 0.8: teams
 
 - **Per-project access** (done, in the next release): a user, a token or an agent limited to
-  some projects, on every run, job, list, stream and MCP tool.
+  some projects, on every run, job, list, stream and MCP tool, with a role per project.
 - **Asymmetric tokens** (done, in the next release): EdDSA, the public keys at
   `/.well-known/jwks.json`, so other services verify them without a secret.
 - **Single sign-on** (done, in the next release): OpenID Connect sign-in for the dashboard,
