@@ -22,6 +22,8 @@ defmodule Testor.CommitStatus do
   require Logger
   alias Testor.{Config, Store, Webhooks}
 
+  @types ["github", "gitlab"]
+
   def file, do: Path.join(Config.secrets_dir(), "statuses.json")
 
   @doc "Sets the status of run `id`'s commit, in the background, when its project has a provider."
@@ -44,7 +46,7 @@ defmodule Testor.CommitStatus do
          {:ok, %{} = config} <- JSON.decode(Config.strip_bom(text)),
          %{"provider" => name, "repository" => repository} when is_binary(repository) <-
            get_in(config, ["projects", project]),
-         %{"type" => type} = provider when type in ["github", "gitlab"] <- get_in(config, ["providers", name]),
+         %{"type" => type} = provider when type in @types <- get_in(config, ["providers", name]),
          token when is_binary(token) and token != "" <- token(provider) do
       {:ok,
        %{
