@@ -7,7 +7,9 @@ defmodule Testor.Web.Edge do
       limiting, the audit log and the anonymous-access check see the client, not the proxy;
     * the `Host` allow-list (`Testor.Net.host_allowed?/3`): a request for a name that is not
       this machine's is refused with `421`, which stops DNS rebinding, where a page on another
-      site resolves its own name to this server to read it as same-origin.
+      site resolves its own name to this server to read it as same-origin;
+    * ACME's HTTP-01 challenges (`/.well-known/acme-challenge/<token>`, `Testor.Acme`), answered
+      without authentication while their order is in progress, `404` otherwise.
   """
   import Plug.Conn
   require Logger
@@ -24,7 +26,7 @@ defmodule Testor.Web.Edge do
     }
 
     if Net.host_allowed?(conn.host, Net.machine_names(), Config.allowed_hosts()) do
-      conn
+      challenge(conn)
     else
       Logger.warning(
         "edge: refused Host #{inspect(conn.host)} from #{conn.remote_ip |> :inet.ntoa() |> to_string()}"
@@ -39,4 +41,9 @@ defmodule Testor.Web.Edge do
       |> halt()
     end
   end
+
+  defp challenge(%Plug.Conn{path_info: [".well-known", "acme-challenge", _]} = conn),
+    do: conn |> Testor.Web.AcmeHttp.call([]) |> halt()
+
+  defp challenge(conn), do: conn
 end

@@ -19,6 +19,8 @@ defmodule Testor.Metrics do
     * `testor_cpu_ratio`, `testor_memory_available_bytes`, `testor_memory_total_bytes`
     * `testor_queue_depth{queue}`, `testor_queue_errors_total`: the broker's queues
       (`execution.queue`) and its failed calls
+    * `testor_tls_expiry_seconds`: time left on the certificate from ACME (`tls.acme`), when one
+      is served; alert well before it reaches 0
   """
   alias Testor.{Device, Query, Stats, Store}
 
@@ -72,6 +74,9 @@ defmodule Testor.Metrics do
       ),
       family("testor_queue_errors_total", "counter", "broker calls that failed", [
         sample("testor_queue_errors_total", %{}, Testor.Queue.error_count())
+      ]),
+      family("testor_tls_expiry_seconds", "gauge", "time left on the ACME certificate", [
+        sample("testor_tls_expiry_seconds", %{}, tls_left(Testor.Acme.expiry()))
       ])
     ]
   end
@@ -88,6 +93,9 @@ defmodule Testor.Metrics do
             do: sample("testor_queue_depth", %{"queue" => queue.name}, n)
     end
   end
+
+  defp tls_left(nil), do: nil
+  defp tls_left(not_after), do: not_after - System.os_time(:second)
 
   defp runs_by_status(runs) do
     counts = Enum.frequencies_by(runs, & &1["status"])

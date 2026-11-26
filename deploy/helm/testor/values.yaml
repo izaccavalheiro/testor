@@ -35,6 +35,12 @@ database:
 # Built-in TLS: a kubernetes.io/tls Secret (tls.crt, tls.key), e.g. from cert-manager.
 tls:
   existingSecret: ""
+  # Or certificates testor orders itself from an ACME CA (Let's Encrypt by default), over
+  # HTTP-01: tls.acme in config.json (docs/security.md), passed as TESTOR_ACME. Not with
+  # existingSecret. With httpPort (for example 8080), the Service also listens on port 80 for
+  # the CA's challenges and redirects the rest to HTTPS; the CA must reach that port.
+  #   acme: { domains: [testor.example.com], email: ops@example.com, httpPort: 8080 }
+  acme: {}
 
 persistence:
   size: 10Gi

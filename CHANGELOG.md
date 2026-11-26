@@ -45,6 +45,28 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 - **Commands as objects** in `agent.json` (`command`, `reports`, `artifacts`, `preserve`), a
   plain string still working; preserved caches survive isolated workspaces; `KEEP` takes
   paths, `PRESERVE` and `CLEAN=1` in `remote.yml`, and `"clean": true` on a job.
+- **Certificates from ACME** for the built-in TLS: `tls.acme` in config.json (or
+  `TESTOR_ACME`) orders the certificate from Let's Encrypt or any RFC 8555 CA over HTTP-01,
+  checks it, serves it without a restart, and renews it at two thirds of its lifetime or in the
+  CA's renewal window; `testor_tls_expiry_seconds`. The Helm chart takes `tls.acme`.
+- **A Terraform module** (`deploy/terraform/testor`) over the Helm chart, with three examples
+  checked in CI and applied on kind; the chart is published with each release to
+  `oci://ghcr.io/izaccavalheiro/charts/testor`, signed with cosign.
+
+### Fixed
+
+- The release caps the runtime's port table (`ERL_MAX_PORTS`, 65536 unless set): where the
+  open-files limit is near 2^30 (containerd, kind) it sized its tables from it and was killed
+  for memory under the chart's 1 GiB limit.
+- The Helm chart turns Kubernetes service links off: a release named `testor` made a Service
+  whose variables (`TESTOR_PORT=tcp://...`) testor read as its own and failed to start.
+
+### Security
+
+- **File links bound to the viewer and minutes long**: screenshot and artifact links are now
+  `/s/v2.<expiry>.<viewer>.<mac>/...`, valid for `linkMinutes` (auth.json, 15 by default) and
+  refused with `403` for another signed-in person. The dashboard renews them before they
+  expire. Links made before this release (one to two days long) open until they expire.
 
 ## 0.12.2 - 2026-11-26
 

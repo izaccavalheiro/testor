@@ -204,7 +204,21 @@ fixed (fail closed), and says why in `testor.log`.
 ## Screenshots and artifacts: signed links
 
 While authentication is on, screenshot and artifact URLs in every answer carry a signature:
-`/s/<expiry>.<hmac>/shots/<run>/...`, valid one to two days and only for that run's files.
+`/s/v2.<expiry>.<viewer>.<hmac>/shots/<run>/...`, valid for that run's files only, for
+`linkMinutes` (auth.json, 15 by default), and for the person it was made for:
+
+- `<viewer>` is an HMAC of the user's name, never the name. A request that carries
+  credentials (Basic, a token, a session) must be that user and may see the run's project, or
+  it gets `403`; a request without any (an image in a sandboxed report) needs the link alone.
+  A copied link stops working within minutes and never opens for another signed-in person.
+- Answers carry each link bound for whoever asked (JSON, event streams, MCP), and the
+  dashboard fetches the links it shows again before they expire. A video that is playing or a
+  download already started keeps going.
+- A link for anyone (`<viewer>` `-`) is made only for a request without a user, and the audit
+  trail records it (`link`).
+- Links of version 1 (`/s/<expiry>.<hmac>/`, one to two days, before 0.13) open until they
+  expire; testor makes none. Rotating the key (`Testor.Auth.CLI.rotate_key`) ends every link.
+
 Images, videos and HTML reports load without credentials. A report runs sandboxed
 (`Content-Security-Policy: sandbox`) with an opaque origin, so it sends no credentials, but
 its relative links stay under its own signed prefix. The plain `/shots/` and `/artifacts/`
@@ -289,8 +303,43 @@ only as private as the network:
   its key) testor speaks HTTPS only, TLS 1.2 and 1.3 with strong ciphers, and sends
   `Strict-Transport-Security`; `tailscale cert` or any ACME client provides the files
   (`task testor:deploy TLS_CERT=... TLS_KEY=...`);
+- or testor orders its certificates itself from an ACME CA (Let's Encrypt by default), with
+  `tls.acme` in config.json (below);
 - or put a TLS-terminating proxy in front (Caddy, nginx, `tailscale serve`) and set
   `TESTOR_BIND=127.0.0.1` so testor listens locally only.
+
+### Certificates from ACME
+
+```json
+{"tls": {"acme": {"domains": ["testor.example.com"], "email": "ops@example.com", "httpPort": 80}}}
+```
+
+testor registers an account with the CA (accepting its terms of service), orders a
+certificate for `domains` over HTTP-01, checks it (its names, its key, its chain to the
+system's CAs or `caBundle`) and serves it at once; it renews at two thirds of the lifetime, or
+in the window the CA suggests (ACME Renewal Information), without a restart. The settings:
+
+| Key | Default | |
+| --- | ------- | - |
+| `directory` | Let's Encrypt production | the CA's directory, HTTPS only; try `https://acme-staging-v02.api.letsencrypt.org/directory` first |
+| `domains` | (required) | names in `TESTOR_ALLOWED_HOSTS` |
+| `email` | none | the account's contact |
+| `httpPort` | none | a plain-HTTP listener for the challenges (80 for a public CA), which redirects everything else to HTTPS |
+| `caBundle` | none | a PEM file of CAs to trust as well (a private CA) |
+| `renewBefore` | two thirds | days before expiry to renew at the latest |
+| `keyType` | `ec` | `ec` (P-256) or `rsa` (2048) |
+
+- Only the tokens of an order in progress are answered at `/.well-known/acme-challenge/`
+  (before authentication); any other is `404`. TLS-ALPN-01 and DNS-01 are not offered: in
+  Kubernetes, cert-manager covers both (`tls.existingSecret`).
+- The account key (`<home>/acme/account.key`) and the certificate's key (`key.pem`) are mode
+  0600, never logged nor served.
+- A failed order is logged as an error and retried after 1 minute, then doubling up to 6 hours
+  (Let's Encrypt's rate limits). Alert on `testor_tls_expiry_seconds`.
+- Several testors on one home: one orders (a claim), the others serve the new files within a
+  minute.
+- With `TESTOR_TLS_CERT`/`TESTOR_TLS_KEY` set, those serve and `tls.acme` is ignored. The Helm
+  chart takes `tls.acme` (passed as `TESTOR_ACME`) and refuses it with `tls.existingSecret`.
 
 ## Audit
 

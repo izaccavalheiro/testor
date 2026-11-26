@@ -331,6 +331,14 @@ try {
   $signed = @((Invoke-RestMethod "$base/api/v1/runs/$($test.id)" -Headers $basic).screenshots)[0].url
   Check "auth: screenshots are linked signed" ($signed -like "/s/*")
   Check "auth: a signed link needs no credentials" ((Invoke-WebRequest "$base$signed").StatusCode -eq 200)
+  Check "auth: links are bound to their viewer (v2)" ($signed -like "/s/v2.*")
+  Check "auth: the viewer opens it" ((Invoke-WebRequest "$base$signed" -Headers $basic).StatusCode -eq 200)
+  $other = Invoke-WebRequest "$base$signed" -Headers $viewer -SkipHttpErrorCheck
+  Check "auth: another signed-in user gets 403" ($other.StatusCode -eq 403)
+  $parts = $signed.Split("/")[2].Split(".")
+  $stale = $signed.Replace($parts[1], [string]([long]$parts[1] - 3600))
+  $staleReply = Invoke-WebRequest "$base$stale" -SkipHttpErrorCheck
+  Check "auth: a stale link opens nothing" ($staleReply.StatusCode -eq 404)
   $plain = Invoke-WebRequest "$base/shots/$($test.id)/$(Split-Path -Leaf $signed)" -SkipHttpErrorCheck
   Check "auth: an unsigned link does" ($plain.StatusCode -eq 401)
   & $bin eval "Testor.Auth.CLI.revoke ~s[smoke]" | Out-Null

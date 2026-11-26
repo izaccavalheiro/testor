@@ -11,7 +11,12 @@
 #      setup.ps1), SHA256 sums and an SPDX SBOM, and attests the provenance of every file and
 #      the SBOM of the archives (`gh attestation verify <file> --repo <owner>/testor`);
 #   4. creates the GitHub release, with the changelog section as notes (a version with a
-#      pre-release suffix, such as 1.0.0-rc.1, is marked as a pre-release).
+#      pre-release suffix, such as 1.0.0-rc.1, is marked as a pre-release);
+#   5. publishes the Helm chart as an OCI artifact, oci://ghcr.io/<owner>/charts/testor at the
+#      version, signed with cosign keyless (the Terraform module installs it from there):
+#      `cosign verify ghcr.io/<owner>/charts/testor:<version> --certificate-identity-regexp
+#      'https://github.com/<owner>/testor/' --certificate-oidc-issuer
+#      https://token.actions.githubusercontent.com`.
 
 name: Release
 
@@ -147,3 +152,43 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.ps1 dist/testor.spdx.json dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --title "testor ${GITHUB_REF_NAME#v}" \
             --notes-file "$RUNNER_TEMP/notes.md" --verify-tag $prerelease
+
+  chart:
+    name: Publish the Helm chart (OCI)
+    needs: [verify, check]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    env:
+      HELM: alpine/helm@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1 # 3.22.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        with:
+          cosign-release: v3.1.4
+      - name: Package the chart at the tag's version, push it to ghcr.io
+        id: push
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p "$RUNNER_TEMP/helm" dist
+          helm() { docker run --rm -u "$(id -u):$(id -g)" -e HOME=/helm -v "$RUNNER_TEMP/helm:/helm" -v "$PWD:/w" -w /w "$HELM" "$@"; }
+          helm package deploy/helm/testor --version "$version" --app-version "$version" -d dist
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          helm push "dist/testor-$version.tgz" "oci://ghcr.io/${OWNER,,}/charts" 2>&1 | tee push.log
+          digest=$(grep -o 'sha256:[0-9a-f]\{64\}' push.log | head -1)
+          test -n "$digest"
+          echo "ref=ghcr.io/${OWNER,,}/charts/testor@$digest" >> "$GITHUB_OUTPUT"
+      - name: Sign it (cosign keyless)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ steps.push.outputs.ref }}
+        run: |
+          echo "$GH_TOKEN" | cosign login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          cosign sign --yes "$REF"

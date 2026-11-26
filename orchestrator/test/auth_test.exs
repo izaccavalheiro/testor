@@ -128,21 +128,17 @@ defmodule Testor.AuthTest do
   end
 
   describe "signed file links" do
-    test "are bound to a run and expire" do
-      s = settings()
-      now = 1_800_000_000
-      "/s/" <> cap = Auth.file_prefix("run-1", s, now)
-
-      assert Auth.file_cap_valid?(cap, "run-1", s, now)
-      assert Auth.file_cap_valid?(cap, "run-1", s, now + 86_400)
-      refute Auth.file_cap_valid?(cap, "run-2", s, now)
-      refute Auth.file_cap_valid?(cap, "run-1", s, now + 3 * 86_400)
-      refute Auth.file_cap_valid?(cap, "run-1", %{s | key: String.duplicate("t", 32)}, now)
-      refute Auth.file_cap_valid?("garbage", "run-1", s, now)
+    test "are placeholders in data, bound per response (Testor.Auth.Links)" do
+      assert Auth.file_prefix("run-1", settings()) == "/s/~"
+      assert Auth.bind_links("x", nil, settings()) == "x"
     end
 
     test "are not used while authentication is off" do
       assert Auth.file_prefix("run-1", %{settings() | enabled: false}) == ""
+    end
+
+    test "last linkMinutes" do
+      assert Auth.settings().link_ttl == 900
     end
   end
 end

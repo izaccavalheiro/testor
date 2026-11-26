@@ -87,7 +87,7 @@ defmodule Testor.Web.SSE do
 
   defp send_then_loop(conn, snapshot, offset) do
     conn
-    |> chunk(["retry: 3000\n\n" | event("snapshot", snapshot)])
+    |> chunk(["retry: 3000\n\n" | event(conn, "snapshot", snapshot)])
     |> continue(conn, offset)
   end
 
@@ -100,7 +100,7 @@ defmodule Testor.Web.SSE do
       {:event, name, data} ->
         # Events of projects this stream's principal may not see are left out (Testor.Access).
         if Testor.Access.event?(conn.assigns[:principal], name, data),
-          do: conn |> chunk(event(name, data)) |> continue(conn, offset),
+          do: conn |> chunk(event(conn, name, data)) |> continue(conn, offset),
           else: loop(conn, offset)
     after
       Application.get_env(:testor, :sse_heartbeat_ms, @heartbeat) ->
@@ -112,5 +112,10 @@ defmodule Testor.Web.SSE do
   defp continue({:ok, conn}, _previous, offset), do: loop(conn, offset)
   defp continue({:error, _}, conn, _offset), do: conn
 
-  defp event(name, data), do: ["event: ", name, "\ndata: ", JSON.encode!(data), "\n\n"]
+  # File links in the data are bound to this stream's principal as each event is sent, so they
+  # are fresh (Testor.Auth.Links).
+  defp event(conn, name, data) do
+    data = data |> JSON.encode!() |> Testor.Auth.bind_links(conn.assigns[:principal])
+    ["event: ", name, "\ndata: ", data, "\n\n"]
+  end
 end

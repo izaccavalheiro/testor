@@ -244,6 +244,39 @@ jobs:
           cd examples/node-project
           TESTOR_RUNNER=ci-runner task --dry test
 
+  terraform:
+    name: Terraform module
+    runs-on: ubuntu-24.04
+    env:
+      TERRAFORM: hashicorp/terraform@sha256:6e9c1e647c31a960dc9b59e13272f9111d90010c10b717f77ffb324767660475 # 1.17.2
+      TFLINT: ghcr.io/terraform-linters/tflint@sha256:65b9944a9274c4989492c1d79998c2801664bf8a55fddb4bd3a9e6d73a006ddc # v0.66.0
+      TRIVY: aquasec/trivy@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb # 0.76.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Format, then init and validate each example
+        run: |
+          tf() { docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/deploy/terraform:/w" -w /w "$TERRAFORM" "$@"; }
+          tf fmt -check -recursive -diff
+          for example in minimal cluster agents-keda; do
+            # -lockfile=readonly: the providers are the ones .terraform.lock.hcl pins.
+            tf -chdir="examples/$example" init -backend=false -input=false -lockfile=readonly
+            tf -chdir="examples/$example" validate
+          done
+      - name: tflint (the terraform ruleset, recommended rules)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # The plugin --init installs must outlive its container.
+          mkdir -p "$RUNNER_TEMP/tflint"
+          lint() { docker run --rm -e GITHUB_TOKEN -e TFLINT_PLUGIN_DIR=/plugins -v "$RUNNER_TEMP/tflint:/plugins" -v "$PWD/deploy/terraform:/data" -w /data "$TFLINT" "$@"; }
+          lint --init --config /data/.tflint.hcl
+          lint --recursive --config /data/.tflint.hcl
+      - name: Misconfigurations (trivy config)
+        run: |
+          docker run --rm -v "$PWD/deploy/terraform:/src" "$TRIVY" config --exit-code 1 --severity HIGH,CRITICAL /src
+
   versioning:
     name: Versioning (release tool, changelog, commit subjects)
     runs-on: ubuntu-24.04

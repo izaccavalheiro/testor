@@ -169,6 +169,24 @@ const shotFilters = { project: "" };
 const artFilters = { project: "" };
 let route = parseRoute(), detail = null, runES = null, shots = null, shotsDirty = true, flashIds = new Set();
 let arts = null, artsDirty = true, maint = null;
+// Signed file links (screenshots, artifacts) last linkTtl seconds while authentication is on
+// (auth.json linkMinutes): those shown are fetched again before they expire. A video that is
+// playing keeps its link: it is renewed once it stops.
+let linksAt = Date.now();
+setInterval(async () => {
+  const ttl = S.linkTtl;
+  if (!ttl || Date.now() - linksAt < (Math.max(ttl / 2, 30) - 30) * 1000) return;
+  if ([...document.querySelectorAll("video")].some((v) => !v.paused)) return;
+  linksAt = Date.now();
+  if (route.name === "run" && detail) {
+    const id = detail.run.id;
+    try {
+      const d = await (await api(`/api/runs/${encodeURIComponent(id)}`)).json();
+      if (detail && detail.run.id === id) { detail.screenshots = d.screenshots; detail.artifacts = d.artifacts; schedule(); }
+    } catch { linksAt = 0; }
+  } else if (route.name === "shots") { shotsDirty = true; schedule(); }
+  else if (route.name === "artifacts") { artsDirty = true; schedule(); }
+}, 15000);
 const maintSel = { scanId: null, ids: new Set() };
 
 // --- formatting ---------------------------------------------------------------------------------
@@ -263,7 +281,7 @@ function connect() {
   const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
   on("snapshot", (d) => {
     S.runs = new Map([...d.running, ...d.history].map((r) => [r.id, r]));
-    Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, paths: d.paths, ready: true });
+    Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, paths: d.paths, linkTtl: d.linkTtl, ready: true });
     if (d.device) S.device = { static: d.device.static, sample: d.device.sample, history: d.device.history || [] };
     shotsDirty = artsDirty = true;
     setConn("live");
@@ -453,7 +471,7 @@ function openRun(id) {
   const es = runES = new EventSource(`/events/runs/${encodeURIComponent(id)}`);
   const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
   on("snapshot", (d) => {
-    detail = d;
+    detail = d; linksAt = Date.now();
     const log = $("#log"); log.innerHTML = ""; detail.trimmed = false;
     appendLog(d.log, true);
   });
@@ -590,7 +608,7 @@ let artsLoading = false;
 async function loadArts() {
   if (artsLoading) return;
   artsLoading = true; artsDirty = false;
-  try { arts = await (await api("/api/artifacts")).json(); } catch { artsDirty = true; }
+  try { arts = await (await api("/api/artifacts")).json(); linksAt = Date.now(); } catch { artsDirty = true; }
   artsLoading = false;
   schedule();
 }
@@ -689,7 +707,7 @@ let shotsLoading = false;
 async function loadShots() {
   if (shotsLoading) return;
   shotsLoading = true; shotsDirty = false;
-  try { shots = await (await api("/api/screenshots")).json(); } catch { shotsDirty = true; }
+  try { shots = await (await api("/api/screenshots")).json(); linksAt = Date.now(); } catch { shotsDirty = true; }
   shotsLoading = false;
   schedule();
 }
