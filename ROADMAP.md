@@ -29,16 +29,15 @@ Two principles hold through every milestone:
 | **0.8.0** | Teams and identity: per-project access and a role per project; EdDSA tokens with a published JWKS; single sign-on with OpenID Connect; secrets for jobs from Vault, cloud secret managers and SOPS, resolved on the runner and masked; identity tokens for jobs (testor as an OIDC issuer for cloud credentials); isolated workspaces; scheduled jobs; OpenTelemetry traces joined to CI's; the agent image for arm64 | released |
 | **0.9.0** | Delivery: release gates on signed results (for pipelines and OPA), commit statuses on GitHub and GitLab pull requests, approvals of AI agents' actions, DORA metrics, status badges and a Backstage guide | released |
 | **0.10.0** | Storage: signed runs archived to S3-compatible storage (encrypted, optionally locked; SigV4 without a dependency), the job queue in PostgreSQL shared by several testors | released |
+| **0.11.0** | Several testors serving one team: one shared home and one PostgreSQL, claims for what must happen once, shared approvals, an audit trail per testor; the Helm chart's replicas | released |
 
 ## Next milestones
 
 Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-### 0.11: many testors, other backends
+### 0.12: many testors, other backends
 
 - A **hub**: the board and history across several testors, filtered by runner label.
-- **Several testors serving one team** (done, in the next release): one shared home and one
-  PostgreSQL, claims for what must happen once.
 - [Storage, queue and event ports](docs/design/ports.md): S3-compatible object storage as the
   primary store (no shared volume), RabbitMQ, NATS or SQS for jobs.
 - Signed links bound to the viewer and minutes long.
