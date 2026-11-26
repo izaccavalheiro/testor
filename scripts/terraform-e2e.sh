@@ -15,8 +15,16 @@ WORK=$(mktemp -d)
 # A value that must never reach the state: the admin password is only a Secret's name there.
 SECRET="tf-e2e-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 PF=""
+WATCH=""
 cleanup() {
+  status=$?
   [ -n "$PF" ] && kill "$PF" 2>/dev/null || true
+  [ -n "$WATCH" ] && kill "$WATCH" 2>/dev/null || true
+  if [ "$status" != 0 ]; then
+    echo "--- what the cluster saw"
+    cat "$WORK/watch.log" 2>/dev/null | tail -150 || true
+    kubectl -n testor get events --sort-by=.lastTimestamp 2>/dev/null | tail -40 || true
+  fi
   "$WORK/kind" delete cluster --name "$CLUSTER" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
@@ -45,8 +53,21 @@ vars=(-var chart_path=/repo/deploy/helm/testor
   -state=/work/terraform.tfstate)
 
 tf init -backend=false -input=false -lockfile=readonly
+# While Helm waits: the pods, their containers' states and logs (an atomic install that fails
+# removes them).
+(while true; do
+  kubectl -n testor get pods,pvc -o wide 2>&1
+  for pod in $(kubectl -n testor get pods -o name 2>/dev/null); do
+    kubectl -n testor describe "$pod" 2>&1 | sed -n '/^Init Containers:/,/^Conditions:/p' | grep -E 'State|Reason|Exit|Message|Ready' || true
+    kubectl -n testor logs "$pod" --all-containers --tail=20 2>&1 || true
+  done
+  sleep 20
+done) >"$WORK/watch.log" 2>&1 &
+WATCH=$!
 tf apply -auto-approve -input=false "${vars[@]}"
 
+kill "$WATCH" 2>/dev/null || true
+WATCH=""
 kubectl -n testor rollout status deployment/testor --timeout=180s
 kubectl -n testor port-forward svc/testor 16767:6767 >"$WORK/pf.log" 2>&1 &
 PF=$!
