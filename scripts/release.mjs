@@ -22,6 +22,15 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIX = join(root, "orchestrator", "mix.exs");
 const CHANGELOG = join(root, "CHANGELOG.md");
+// Files that carry the version too: bump writes them, check requires them to agree with mix.exs.
+export const FOLLOWERS = [
+  { file: join(root, "deploy", "helm", "testor", "Chart.yaml"), name: "deploy/helm/testor/Chart.yaml", patterns: [/^(version: )(\S+)()$/m, /^(appVersion: ")([^"]+)(")$/m] },
+  {
+    file: join(root, "deploy", "terraform", "testor", "variables.tf"),
+    name: "deploy/terraform/testor/variables.tf (chart_version)",
+    patterns: [/(variable "chart_version" \{[^}]*?default\s*=\s*")([^"]+)(")/],
+  },
+];
 
 // SemVer 2.0.0, without build metadata (a release is never told apart by it).
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/;
@@ -200,9 +209,26 @@ function cmdBump(target) {
   const changelog = text.slice(0, unreleased.start) + `## Unreleased\n\n## ${next} - ${date}\n\n${unreleased.body}\n\n` + text.slice(unreleased.end);
   writeFileSync(CHANGELOG, changelog);
   writeFileSync(MIX, readFileSync(MIX, "utf8").replace(MIX_VERSION, `$1${next}$3`));
-  console.log(`${current} -> ${next}: orchestrator/mix.exs and CHANGELOG.md updated.`);
+  for (const f of FOLLOWERS) {
+    writeFileSync(f.file, f.patterns.reduce((text, p) => text.replace(p, `$1${next}$3`), readFileSync(f.file, "utf8")));
+  }
+  console.log(`${current} -> ${next}: orchestrator/mix.exs, CHANGELOG.md, the Helm chart and the Terraform module updated.`);
   console.log(`Next: review, commit "chore(release): ${next}", merge, then tag the merge commit:`);
   console.log(`  git tag -s v${next} -m "testor ${next}" && git push origin v${next}`);
+}
+
+/** The files of FOLLOWERS whose version is not `version`. */
+export function followerErrors(version, read = (file) => readFileSync(file, "utf8")) {
+  const errors = [];
+  for (const f of FOLLOWERS) {
+    const text = read(f.file);
+    for (const p of f.patterns) {
+      const m = p.exec(text);
+      if (!m) errors.push(`${f.name}: no version found`);
+      else if (m[2] !== version) errors.push(`${f.name}: ${m[2]} does not match mix.exs (${version})`);
+    }
+  }
+  return errors;
 }
 
 function cmdCheck(opts) {
@@ -226,6 +252,7 @@ function cmdCheck(opts) {
   if (typeof opts.tag === "string" && opts.tag !== `v${version}`) {
     errors.push(`tag ${opts.tag} does not match mix.exs (expected v${version})`);
   }
+  errors.push(...followerErrors(version));
   if (errors.length) fail(`\n  ${errors.join("\n  ")}`);
   console.log(`ok: ${version}${typeof opts.tag === "string" ? `, tag ${opts.tag}` : ""}`);
 }

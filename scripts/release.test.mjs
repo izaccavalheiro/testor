@@ -1,7 +1,7 @@
 // Tests of scripts/release.mjs: node --test scripts/
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { bumped, compare, levelFor, lintSubject, parse, sections } from "./release.mjs";
+import { bumped, compare, FOLLOWERS, followerErrors, levelFor, lintSubject, parse, sections } from "./release.mjs";
 
 const c = (subject, body = "") => ({ subject, body });
 
@@ -50,4 +50,14 @@ test("sections splits CHANGELOG.md by version", () => {
   const text = "# Changelog\n\nintro\n\n## Unreleased\n\n- a\n\n## 0.2.0 - 2026-12-01\n\n- b\n\n## 0.1.0\n\n- c\n";
   const s = sections(text);
   assert.deepEqual(s.map((x) => [x.name, x.date, x.body]), [["Unreleased", null, "- a"], ["0.2.0", "2026-12-01", "- b"], ["0.1.0", null, "- c"]]);
+});
+
+test("the Helm chart and the Terraform module carry mix.exs's version", () => {
+  const texts = {
+    [FOLLOWERS[0].file]: 'version: 1.2.3\nappVersion: "1.2.3"\n',
+    [FOLLOWERS[1].file]: 'variable "chart_version" {\n  type    = string\n  default = "1.2.3"\n}\n',
+  };
+  assert.deepEqual(followerErrors("1.2.3", (f) => texts[f]), []);
+  assert.equal(followerErrors("1.2.4", (f) => texts[f]).length, 3);
+  assert.match(followerErrors("1.2.3", () => "")[0], /no version found/);
 });
