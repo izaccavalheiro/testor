@@ -38,9 +38,14 @@ defmodule Testor.Views do
       "stats" => Stats.get(),
       "device" => Device.snapshot(),
       "config" => Config.retention(),
+      # How long file links last (Testor.Auth.Links): the dashboard renews them before then.
+      "linkTtl" => link_ttl(Auth.settings()),
       "paths" => %{"home" => Config.data_dir(), "workspaces" => Config.workspaces()}
     }
   end
+
+  defp link_ttl(%{enabled: true} = settings), do: settings.link_ttl
+  defp link_ttl(_settings), do: nil
 
   @doc "A run, its specs, screenshots, artifacts and the end of its log, with the log offset it reaches."
   def run_snapshot(id) do

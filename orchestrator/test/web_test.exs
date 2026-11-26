@@ -199,19 +199,39 @@ defmodule Testor.WebTest do
   end
 
   describe "signed file links" do
-    test "need no credentials, but a valid signature for that run" do
-      prefix = Testor.Auth.file_prefix("20261124-100000-aaaaaa")
-      assert "/s/" <> _ = prefix
+    test "are bound to the viewer: no credentials or the viewer open them, someone else gets 403" do
+      id = "20261124-100000-aaaaaa"
+      dir = Path.join(Testor.Config.shots_dir(), id)
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "a.png"), <<137, 80, 78, 71>>)
+      on_exit(fn -> File.rm_rf!(dir) end)
 
-      # Valid: past authentication, to the file lookup (there is no such file).
-      conn = conn(:get, prefix <> "/shots/20261124-100000-aaaaaa/a.png") |> call()
-      assert conn.status == 404
+      %{"screenshots" => [%{"url" => url}]} =
+        conn(:get, "/api/runs/#{id}") |> basic("val") |> call() |> body()
 
-      conn = conn(:get, prefix <> "/artifacts/20261124-110000-bbbbbb/index.html") |> call()
-      assert conn.status == 404
+      assert "/s/v2." <> _ = url
 
-      conn = conn(:get, "/s/123.abc/shots/20261124-100000-aaaaaa/a.png") |> call()
-      assert conn.status == 404
+      assert conn(:get, url) |> basic("val") |> call() |> Map.get(:status) == 200
+      assert conn(:get, url) |> call() |> Map.get(:status) == 200
+
+      conn = conn(:get, url) |> basic("ada") |> call()
+      assert conn.status == 403
+      assert %{"error" => "this link was made for someone else"} = body(conn)
+
+      arts = Path.join(Testor.Config.artifacts_dir(), id)
+      File.mkdir_p!(arts)
+      File.write!(Path.join(arts, "out.txt"), "hello")
+      on_exit(fn -> File.rm_rf!(arts) end)
+
+      %{"artifacts" => [%{"url" => art}]} = conn(:get, "/api/runs/#{id}") |> basic("val") |> call() |> body()
+      assert conn(:get, art) |> basic("val") |> call() |> Map.get(:resp_body) == "hello"
+
+      assert conn(:get, "/s/123.abc/shots/#{id}/a.png") |> call() |> Map.get(:status) == 404
+      assert conn(:get, "/s/~/shots/#{id}/a.png") |> call() |> Map.get(:status) == 404
+    end
+
+    test "the dashboard's state says how long they last" do
+      assert %{"linkTtl" => 900} = conn(:get, "/api/state") |> basic("val") |> call() |> body()
     end
   end
 
@@ -412,6 +432,7 @@ defmodule Testor.WebTest do
       assert %{"via" => "none", "authEnabled" => false} = conn(:get, "/api/v1/auth/me") |> call() |> body()
       assert %{"data" => [_, _, _]} = conn(:get, "/api/v1/runs?q=webt-") |> call() |> body()
       assert Testor.Auth.file_prefix("x") == ""
+      assert %{"linkTtl" => nil} = conn(:get, "/api/state") |> call() |> body()
     end
 
     test "the CSRF guard still applies" do

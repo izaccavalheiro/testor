@@ -83,11 +83,6 @@ defmodule Testor.UnitsTest do
       assert Auth.issue_token(%{via: :bearer}, %{}) == {:error, :invalid_client}
     end
 
-    test "file links without a key, and while off" do
-      assert Auth.file_cap_valid?("x", "run", %{enabled: false})
-      refute Auth.file_cap_valid?("x", "run", %{enabled: true, key: nil})
-    end
-
     test "the guard forgets what has expired" do
       Guard.failed("sweep-test", 0)
       send(Guard, :sweep)

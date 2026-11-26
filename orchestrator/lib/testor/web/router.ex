@@ -227,10 +227,13 @@ defmodule Testor.Web.Router do
   defp hsts(conn), do: conn
 
   # A signed link opens the files of the run (or the loose screenshot) its first segment names.
+  # A link made for someone else, or for a run of a project the viewer may not see: 403.
   defp signed(conn, cap, [first | _] = segments, serve) do
-    if Auth.file_cap_valid?(cap, first),
-      do: serve.(conn, segments),
-      else: error(conn, 404, "not_found", "not found")
+    case Testor.Auth.Links.check(cap, first, conn.assigns[:principal], Auth.settings()) do
+      :ok -> serve.(conn, segments)
+      {:error, :forbidden} -> error(conn, 403, "forbidden", "this link was made for someone else")
+      {:error, :invalid} -> error(conn, 404, "not_found", "not found")
+    end
   end
 
   defp signed(conn, _cap, _segments, _serve), do: error(conn, 404, "not_found", "not found")
