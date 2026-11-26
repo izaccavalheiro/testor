@@ -7,7 +7,10 @@ defmodule Testor.Jobs do
   A job names a project and a task (`kind`), never a command: the agent's own configuration
   maps them to the command it runs, so whoever owns a runner decides what can run on it. A job
   may also name `labels` an agent must have (`windows`, `gpu`, ...) and a git `ref` the agent
-  checks out first.
+  checks out first, or a `snapshot` of the project (`Testor.Snapshots`) it materializes instead.
+
+  The queue prefers the agent that ran a project last (its caches and snapshot are warm): a
+  queued job waits up to `execution.warmSeconds` for it while it is polling, then goes to any.
 
       queued ──lease──▶ leased ──heartbeat──▶ running ──finish──▶ passed | failed | cancelled
          ▲                 │ lease expires (agent gone)
@@ -33,6 +36,8 @@ defmodule Testor.Jobs do
   @active ["leased", "running"]
   @statuses ["queued", "leased", "running", "passed", "failed", "cancelled", "expired"]
   @over ["passed", "failed", "cancelled", "expired"]
+  # Who ran each project last, and when each agent last asked for a job (the lease hint).
+  @warm :testor_jobs_warm
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   def statuses, do: @statuses
@@ -63,15 +68,37 @@ defmodule Testor.Jobs do
     labels = params["labels"] || []
     queue = cfg && is_list(labels) && Testor.Queue.queue_for(cfg, labels)
 
-    if cfg && is_list(labels) && queue == nil do
-      {:error, "no queue takes jobs with the labels #{Enum.join(labels, ", ")} (execution.queue.queues)"}
-    else
-      case GenServer.call(__MODULE__, {:enqueue, params, who}) do
-        {:ok, job} when cfg != nil -> dispatch(cfg, queue, job)
-        other -> other
-      end
+    cond do
+      cfg && is_list(labels) && queue == nil ->
+        {:error, "no queue takes jobs with the labels #{Enum.join(labels, ", ")} (execution.queue.queues)"}
+
+      true ->
+        with {:ok, source} <- snapshot(params) do
+          case GenServer.call(__MODULE__, {:enqueue, params, source, who}) do
+            {:ok, job} when cfg != nil -> dispatch(cfg, queue, job)
+            other -> other
+          end
+        end
     end
   end
+
+  # A job's snapshot, read before it is queued: its id, and the branch and commit it is of.
+  defp snapshot(%{"snapshot" => id, "project" => project}) when is_binary(id) and is_binary(project) do
+    with {:ok, hex} <- Testor.Snapshots.parse_id(id),
+         true <- name?(project),
+         {:ok, manifest} <- Testor.Snapshots.manifest(project, hex) do
+      {:ok, Map.take(manifest, ["branch", "commit"]) |> Map.put("snapshot", id)}
+    else
+      _ -> {:error, "snapshot is the id of a snapshot of this project (sha256:<hex>)"}
+    end
+  end
+
+  defp snapshot(%{"snapshot" => nil}), do: {:ok, %{}}
+
+  defp snapshot(%{"snapshot" => _}),
+    do: {:error, "snapshot is the id of a snapshot of this project (sha256:<hex>)"}
+
+  defp snapshot(_params), do: {:ok, %{}}
 
   # The broker's message for a new job; a job the broker refused is not left queued.
   defp dispatch(cfg, queue, job) do
@@ -87,11 +114,12 @@ defmodule Testor.Jobs do
 
   @doc """
   The oldest queued job `agent` (with `labels`) can take, leased to it: `{:ok, job}` or `:none`.
-  `allow` says which projects the agent may take (an agent user restricted to projects).
+  `allow` says which projects the agent may take (an agent user restricted to projects);
+  `instance` tells apart agents that share a user (pods of one chart), for the warm hint.
   """
-  def lease(agent, labels, allow \\ fn _project -> true end) do
+  def lease(agent, labels, allow \\ fn _project -> true end, instance \\ nil) do
     case Testor.Queue.config() do
-      nil -> GenServer.call(__MODULE__, {:lease, agent, labels, allow})
+      nil -> GenServer.call(__MODULE__, {:lease, agent, labels, allow, instance || agent})
       cfg -> lease_from(cfg, Testor.Queue.queues_for(cfg, labels), agent, labels, allow, 10)
     end
   end
@@ -211,6 +239,7 @@ defmodule Testor.Jobs do
   @impl true
   def init(nil) do
     backend = if Testor.Jobs.Postgres.enabled?(), do: Testor.Jobs.Postgres, else: Testor.Jobs.FileStore
+    if :ets.whereis(@warm) == :undefined, do: :ets.new(@warm, [:named_table, :public])
     Process.send_after(self(), :sweep, @sweep_ms)
     {:ok, {backend, backend.init()}}
   end
@@ -237,9 +266,10 @@ defmodule Testor.Jobs do
     end)
   end
 
-  def handle_call({:enqueue, params, who}, _from, state) do
+  def handle_call({:enqueue, params, source, who}, _from, state) do
     with true <- settings()["enabled"] == true || {:error, :disabled},
-         {:ok, job} <- new_job(params, who) do
+         {:ok, job} <- new_job(params, who),
+         job = Map.merge(job, source) do
       Logger.info("jobs: #{job["id"]} queued (#{job["project"]} #{job["kind"]}) by #{who}")
       transact(state, :none, fn _ -> {{:ok, job}, [job]} end)
     else
@@ -247,7 +277,10 @@ defmodule Testor.Jobs do
     end
   end
 
-  def handle_call({:lease, agent, labels, allow}, _from, state) do
+  def handle_call({:lease, agent, labels, allow, who}, _from, state) do
+    now = System.monotonic_time(:millisecond)
+    :ets.insert(@warm, {{:seen, who}, now, labels})
+
     transact(state, :open, fn jobs ->
       busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
 
@@ -258,6 +291,7 @@ defmodule Testor.Jobs do
           &(&1["status"] == "queued" and not MapSet.member?(busy, &1["project"]) and allow.(&1["project"]))
         )
         |> Enum.filter(&Enum.all?(&1["labels"], fn label -> label in labels end))
+        |> Enum.reject(&warm_elsewhere?(&1, who, now))
         |> Enum.min_by(&order/1, fn -> nil end)
 
       case candidate do
@@ -265,6 +299,9 @@ defmodule Testor.Jobs do
           {:none, []}
 
         job ->
+          # Busy now: no job waits for it until it asks again.
+          :ets.insert(@warm, {{:last, job["project"]}, who})
+          :ets.delete(@warm, {:seen, who})
           job = take(job, agent)
           {{:ok, job}, [job]}
       end
@@ -381,7 +418,10 @@ defmodule Testor.Jobs do
     end)
   end
 
-  def handle_call(:reset, _from, {backend, state}), do: {:reply, :ok, {backend, backend.clear(state)}}
+  def handle_call(:reset, _from, {backend, state}) do
+    :ets.delete_all_objects(@warm)
+    {:reply, :ok, {backend, backend.clear(state)}}
+  end
 
   def handle_call({:sweep, now}, _from, state) do
     {:reply, _, state} = sweep(state, now)
@@ -458,6 +498,22 @@ defmodule Testor.Jobs do
 
   # --- helpers ------------------------------------------------------------------------------
 
+  # A job another agent ran the project of last: while that agent is idle (polling) and could
+  # take it, the job waits warmSeconds for it.
+  defp warm_elsewhere?(job, agent, now) do
+    wait = (settings()["warmSeconds"] || 0) * 1000
+
+    with true <- wait > 0,
+         [{_, last}] when last != agent <- :ets.lookup(@warm, {:last, job["project"]}),
+         [{_, seen, labels}] <- :ets.lookup(@warm, {:seen, last}),
+         true <- now - seen < 5_000 and Enum.all?(job["labels"], &(&1 in labels)),
+         {:ok, created, _} <- DateTime.from_iso8601(job["createdAt"]) do
+      DateTime.diff(DateTime.utc_now(), created, :millisecond) < wait
+    else
+      _ -> false
+    end
+  end
+
   defp take(job, agent) do
     job =
       Map.merge(job, %{
@@ -486,8 +542,11 @@ defmodule Testor.Jobs do
       not (is_list(labels) and Enum.all?(labels, &name?/1)) ->
         {:error, "labels is a list of names"}
 
-      ref != nil and not (is_binary(ref) and Regex.match?(@ref, ref)) ->
+      ref != nil and not ref?(ref) ->
         {:error, "ref is a git branch, tag or commit"}
+
+      ref != nil and params["snapshot"] != nil ->
+        {:error, "a job names a ref or a snapshot, not both"}
 
       params["traceparent"] != nil and Testor.Tracing.parse(params["traceparent"]) == :error ->
         {:error, "traceparent is a W3C trace context (00-<trace id>-<span id>-<flags>)"}
@@ -556,6 +615,9 @@ defmodule Testor.Jobs do
   def seconds(_), do: :error
 
   defp name?(value), do: is_binary(value) and Regex.match?(@name, value)
+
+  @doc "Whether `value` is a git branch, tag or commit as a job may name it."
+  def ref?(value), do: is_binary(value) and Regex.match?(@ref, value)
 
   defp held(jobs, id, agent) do
     case Map.get(jobs, id) do

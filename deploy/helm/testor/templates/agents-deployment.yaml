@@ -4,13 +4,34 @@
 {{- if eq $g.mode "deployment" }}
 ---
 apiVersion: apps/v1
+{{- if $g.persistence.enabled }}
+# Warm agents: each pod keeps its home (workspaces, caches, the snapshot cache, its key) on a
+# volume of its own, and its name, across restarts.
+kind: StatefulSet
+{{- else }}
 kind: Deployment
+{{- end }}
 metadata:
   name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
   labels: {{- include "testor.labels" $ | nindent 4 }}
 spec:
   {{- if not $g.autoscaling.keda }}
   replicas: {{ $g.replicas }}
+  {{- end }}
+  {{- if $g.persistence.enabled }}
+  serviceName: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  podManagementPolicy: Parallel
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: {{- toYaml $g.persistence.accessModes | nindent 10 }}
+        {{- with $g.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $g.persistence.size }}
   {{- end }}
   selector:
     matchLabels: {{- include "testor.agentGroupSelector" (dict "root" $ "group" $g) | nindent 6 }}

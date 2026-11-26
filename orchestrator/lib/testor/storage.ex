@@ -85,6 +85,9 @@ defmodule Testor.Storage do
   def shared?,
     do: s3?() and Testor.Jobs.Postgres.enabled?() and Application.get_env(:testor, :storage_shared, true)
 
+  @doc "The store's adapter and its config: the bucket, or the home as a folder."
+  def blob, do: {adapter(), blob_cfg()}
+
   defp adapter, do: if(s3?(), do: Blob.S3, else: Blob.Files)
   defp blob_cfg, do: if(s3?(), do: config(), else: %{root: Config.data_dir()})
 

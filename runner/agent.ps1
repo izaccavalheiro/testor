@@ -41,7 +41,16 @@
 # then ends it, before the kernel's OOM killer takes the agent (docs/heavy-jobs.md);
 # "exclusive": true marks a job nothing else may share an agent with. "preserve" paths survive an isolated
 # workspace (copied from <home>/cache/<project> before the run and back after it); a job with
-# "clean": true drops them first.
+# "clean": true drops them first. "state" paths (also a project's) are kept by testor per project and
+# branch (docs/snapshots.md): restored before the run, from the branch or else the default branch,
+# and sent back after it, so Stryker's incremental file follows a branch from agent to agent.
+#
+# Snapshots: a project with "snapshots": true takes jobs that name a snapshot (runner/snapshot.ps1)
+# instead of a ref. Its files are written into the workspace (by default
+# <home>/workspaces/<project>) from a cache of contents by hash (<home>/cas), fetching only what
+# the cache lacks; files the previous snapshot wrote and this one lacks are deleted, and the rest
+# (dependencies, build caches) stays. Anyone with the execute scope can send a snapshot, so its
+# code runs with this machine's commands: opt in only where that is meant.
 #
 # Every run gets TESTOR_CPUS and TESTOR_MEMORY_MB (the container's quota and limit on Linux);
 # a project with "limits": "auto" also gets GOMAXPROCS, CARGO_BUILD_JOBS, DOTNET_PROCESSOR_COUNT,
@@ -250,25 +259,30 @@ function Resolve-Job($job) {
   $command = if ($entry -is [Collections.IDictionary]) { $entry.command } else { $entry }
   if (-not $command -or $command -isnot [string]) { return @{ error = "task $($job.kind) of $($job.project) is not in this agent's configuration" } }
   $lists = @{}
-  foreach ($key in "reports", "artifacts", "preserve") {
-    $lists[$key] = @(if ($entry -is [Collections.IDictionary] -and $entry[$key]) { $entry[$key] } else { @() })
+  foreach ($key in "reports", "artifacts", "preserve", "state") {
+    $lists[$key] = @(if ($entry -is [Collections.IDictionary] -and $entry[$key]) { $entry[$key] } elseif ($key -eq "state" -and $project.state) { $project.state } else { @() })
     foreach ($path in $lists[$key]) {
       if ($path -isnot [string] -or [IO.Path]::IsPathRooted($path) -or ($path -split "[\\/]") -contains "..") {
         return @{ error = "$key of $($job.project) $($job.kind) are paths inside the workspace" }
       }
     }
   }
+  foreach ($path in $lists.state) {
+    if ((State-Name $path) -notmatch "^[A-Za-z0-9_.-]{1,100}$") { return @{ error = "state of $($job.project) $($job.kind): $path makes no state name (letters, digits, _ . - and /)" } }
+  }
   # With a repository, the workspace (by default <home>/workspaces/<project>) is cloned when
-  # missing, and refs can be checked out.
+  # missing, and refs can be checked out. A snapshot is written into it, made when missing.
+  $snapshot = [bool]$job.snapshot
+  if ($snapshot -and $project.snapshots -ne $true) { return @{ error = "this agent takes no snapshots of $($job.project) (snapshots: true)" } }
   $repository = $project.repository
-  $workspace = if ($project.workspace) { Expand $project.workspace } elseif ($repository) { Join-Path (Join-Path $home_ "workspaces") $job.project } else { $null }
-  $git = $project.git -eq $true -or [bool]$repository
-  $clone = $repository -and $workspace -and -not (Test-Path -LiteralPath $workspace)
-  if (-not $workspace -or (-not $clone -and -not (Test-Path -LiteralPath $workspace))) { return @{ error = "workspace of $($job.project) not found: $workspace" } }
+  $workspace = if ($project.workspace) { Expand $project.workspace } elseif ($repository -or $snapshot) { Join-Path (Join-Path $home_ "workspaces") $job.project } else { $null }
+  $git = ($project.git -eq $true -or [bool]$repository) -and -not $snapshot
+  $clone = $repository -and $workspace -and -not $snapshot -and -not (Test-Path -LiteralPath $workspace)
+  if (-not $workspace -or (-not $clone -and -not $snapshot -and -not (Test-Path -LiteralPath $workspace))) { return @{ error = "workspace of $($job.project) not found: $workspace" } }
   if ($job.ref -and -not $git) { return @{ error = "this agent does not check out refs for $($job.project) (git: true)" } }
   $isolate = $project.isolate
   if ($isolate -notin @($null, $false, "worktree", "copy")) { return @{ error = "isolate of $($job.project) is worktree, copy or false" } }
-  if ($isolate -eq "worktree" -and -not $git) { return @{ error = "isolate: worktree needs a git workspace for $($job.project) (git: true)" } }
+  if ($isolate -eq "worktree" -and -not $git) { return @{ error = "isolate: worktree needs a git workspace for $($job.project) (git: true, and a ref, not a snapshot)" } }
   # Limits, all from this file: the command's timeout (a job may ask for a shorter one), its
   # memory guard, and the project's container executor.
   $timeout = if ($entry -is [Collections.IDictionary]) { Get-Seconds $entry.timeout } else { 0 }
@@ -286,9 +300,134 @@ function Resolve-Job($job) {
     if ($container.network -notin @($null, "none", "bridge")) { return @{ error = "executor of $($job.project): container.network is none or bridge" } }
   }
   @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null }; isolate = $isolate
-     reports = $lists.reports; artifacts = $lists.artifacts; preserve = $lists.preserve
+     reports = $lists.reports; artifacts = $lists.artifacts; preserve = $lists.preserve; state = $lists.state
      timeout = $timeout; guard = if ($guard) { "$($guard.warn),$($guard.stop)" } else { "" }; limits = $project.limits -eq "auto"
      container = $container; exclusive = ($entry -is [Collections.IDictionary] -and $entry.exclusive -eq $true) }
+}
+
+# --- snapshots and state --------------------------------------------------------------------
+
+# The name testor keeps a state path under: reports/stryker-incremental.json is
+# reports--stryker-incremental.json.
+function State-Name([string]$path) { "$path" -replace "[\\/]", "--" }
+
+# Writes snapshot $job.snapshot into $workspace: contents from the cache by hash, fetched when
+# missing (eight at a time, each checked against its hash); a file left as the last snapshot
+# wrote it is not touched. What it did: @{ files; fetched; written; deleted }.
+function Sync-Snapshot($job, [string]$workspace) {
+  $auth = @{ Authorization = "Bearer $token" }
+  $manifest = Invoke-RestMethod -Uri "$base/api/v1/agent/projects/$($job.project)/snapshots/$($job.snapshot)" -Headers $auth `
+    -SkipCertificateCheck:$skipCert -TimeoutSec 120
+  $cache = Join-Path (Join-Path $home_ "cas") "sha256"
+  $null = New-Item -ItemType Directory -Force $cache, $workspace
+  $sep = [IO.Path]::DirectorySeparatorChar
+  $root = [IO.Path]::GetFullPath($workspace).TrimEnd($sep) + $sep
+  # What the last snapshot wrote here (kept beside the cache: the tree may hold any name).
+  $written = Join-Path (Join-Path $home_ "cas") "$($job.project).written.json"
+  $before = @{}
+  if (Test-Path -LiteralPath $written) { try { $before = Get-Content -Raw -LiteralPath $written | ConvertFrom-Json -AsHashtable } catch { } }
+  $files = @($manifest.files)
+  $missing = @($files | ForEach-Object { $_.sha256 } | Sort-Object -Unique | Where-Object { -not (Test-Path -LiteralPath (Join-Path $cache $_)) })
+  $missing | ForEach-Object -ThrottleLimit 8 -Parallel {
+    $hex = $_
+    $file = Join-Path $using:cache $hex
+    $part = "$file.$([guid]::NewGuid().ToString('N')).part"
+    # A redirect to the bucket drops the Authorization header (PowerShell's default).
+    Invoke-WebRequest -Uri "$($using:base)/api/v1/agent/blobs/sha256:$hex" -Headers $using:auth -OutFile $part `
+      -SkipCertificateCheck:$using:skipCert -TimeoutSec 600
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $part).Hash.ToLower() -ne $hex) {
+      Remove-Item -LiteralPath $part -Force
+      throw "content $hex does not match its hash"
+    }
+    Move-Item -Force -LiteralPath $part -Destination $file
+  }
+  $after = @{}
+  $folders = [Collections.Generic.HashSet[string]]::new()
+  $count = 0
+  foreach ($file in $files) {
+    $path = "$($file.path)"
+    if ([IO.Path]::IsPathRooted($path) -or $path -match "[\\:]" -or ($path -split "/") -contains ".." -or ($path -split "/") -contains "") {
+      throw "snapshot path $path is not inside the workspace"
+    }
+    $target = [IO.Path]::GetFullPath([IO.Path]::Combine($workspace, $path))
+    if (-not $target.StartsWith($root)) { throw "snapshot path $path is not inside the workspace" }
+    $item = Get-Item -LiteralPath $target -Force -ErrorAction SilentlyContinue
+    $was = $before[$path]
+    if ($item -and -not $item.LinkType -and -not $item.PSIsContainer -and $was -and $was.sha256 -eq $file.sha256 -and
+        $was.size -eq $item.Length -and $was.ticks -eq $item.LastWriteTimeUtc.Ticks) {
+      $after[$path] = $was
+      continue
+    }
+    # The folders down to it are folders, never links a run left (which would send the file
+    # elsewhere) nor files.
+    $dir = $root
+    foreach ($segment in @($path -split "/" | Select-Object -SkipLast 1)) {
+      $dir = Join-Path $dir $segment
+      if (-not $folders.Add($dir)) { continue }
+      $there = Get-Item -LiteralPath $dir -Force -ErrorAction SilentlyContinue
+      if ($there -and ($there.LinkType -or -not $there.PSIsContainer)) { $there.Delete() }
+      if (-not $there -or $there.LinkType -or -not $there.PSIsContainer) { $null = New-Item -ItemType Directory -Path $dir }
+    }
+    if ($item) { if ($item.PSIsContainer -and -not $item.LinkType) { Remove-Item -LiteralPath $target -Recurse -Force } else { $item.Delete() } }
+    $source = Join-Path $cache $file.sha256
+    # Copied, not linked: a run that writes into a file must not change the cache.
+    Copy-Item -LiteralPath $source -Destination $target -Force
+    (Get-Item -LiteralPath $source).LastWriteTimeUtc = [DateTime]::UtcNow
+    if (-not $IsWindows) {
+      [IO.File]::SetUnixFileMode($target, [IO.UnixFileMode]$(if ($file.mode -eq "755") { "UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute" } else { "UserRead, UserWrite, GroupRead, OtherRead" }))
+    }
+    $item = Get-Item -LiteralPath $target -Force
+    $after[$path] = @{ sha256 = $file.sha256; size = $item.Length; ticks = $item.LastWriteTimeUtc.Ticks }
+    $count++
+  }
+  # Files the last snapshot wrote and this one lacks; what runs made (dependencies, caches) stays.
+  $deleted = 0
+  foreach ($path in @($before.Keys)) {
+    if ($after.ContainsKey($path)) { continue }
+    $gone = [IO.Path]::GetFullPath([IO.Path]::Combine($workspace, $path))
+    if ($gone.StartsWith($root) -and (Test-Path -LiteralPath $gone -PathType Leaf)) { Remove-Item -LiteralPath $gone -Force; $deleted++ }
+  }
+  ConvertTo-Json -InputObject $after -Depth 3 -Compress | Set-Content -LiteralPath $written
+  @{ files = $files.Count; fetched = $missing.Count; written = $count; deleted = $deleted }
+}
+
+# Contents of the cache not used for two weeks go when the agent starts.
+function Clear-Cas {
+  $cache = Join-Path (Join-Path $home_ "cas") "sha256"
+  if (-not (Test-Path -LiteralPath $cache)) { return }
+  $old = (Get-Date).ToUniversalTime().AddDays(-14)
+  Get-ChildItem -LiteralPath $cache -File | Where-Object { $_.LastWriteTimeUtc -lt $old -or $_.Name -like "*.part" } |
+    Remove-Item -Force -ErrorAction SilentlyContinue
+}
+
+# The command's state paths from testor, for the branch (else the default branch's).
+function Restore-State($job, $plan, [string]$runDir, [string]$branch) {
+  $query = if ($branch) { "?branch=$([Uri]::EscapeDataString($branch))" } else { "" }
+  foreach ($path in $plan.state) {
+    try {
+      $answer = Invoke-WebRequest -Uri "$base/api/v1/agent/projects/$($job.project)/state/$(State-Name $path)$query" `
+        -Headers @{ Authorization = "Bearer $token" } -SkipHttpErrorCheck -SkipCertificateCheck:$skipCert -TimeoutSec 120
+      if ($answer.StatusCode -ne 200) { continue }
+      $to = Join-Path $runDir $path
+      $null = New-Item -ItemType Directory -Force (Split-Path -Parent $to)
+      [IO.File]::WriteAllBytes($to, [byte[]]$answer.Content)
+      Log "$($job.id) state $path restored (from $($answer.Headers['X-Testor-State-Branch']))"
+    } catch { Log "$($job.id) state $path not restored: $($_.Exception.Message)" }
+  }
+}
+
+# The command's state paths back to testor once the run has ended.
+function Save-State($job, $plan, [string]$runDir, [string]$branch) {
+  $query = "?job=$($job.id)" + $(if ($branch) { "&branch=$([Uri]::EscapeDataString($branch))" } else { "" })
+  foreach ($path in $plan.state) {
+    $from = Join-Path $runDir $path
+    if (-not (Test-Path -LiteralPath $from -PathType Leaf)) { continue }
+    try {
+      $null = Invoke-RestMethod -Method Put -Uri "$base/api/v1/agent/projects/$($job.project)/state/$(State-Name $path)$query" `
+        -Headers @{ Authorization = "Bearer $token" } -ContentType "application/octet-stream" -InFile $from `
+        -SkipCertificateCheck:$skipCert -TimeoutSec 120
+    } catch { Log "$($job.id) state $path not saved: $($_.Exception.Message)" }
+  }
 }
 
 # "45m", "90s", "2h" or a number of seconds: seconds (0 for none), or $null when it is neither.
@@ -470,6 +609,15 @@ function Invoke-Job($job) {
       return
     }
   }
+  if ($job.snapshot) {
+    try {
+      $synced = Sync-Snapshot $job $plan.workspace
+      Log "$($job.id) snapshot $($job.snapshot): $($synced.files) files, $($synced.fetched) fetched, $($synced.written) written, $($synced.deleted) deleted"
+    } catch {
+      $null = Call "/agent/jobs/$($job.id)/finish" @{ error = "snapshot $($job.snapshot) could not be written: $($_.Exception.Message)" }
+      return
+    }
+  }
   if ($job.ref) {
     # The ref matched testor's pattern (no leading dash); -- ends git's options anyway.
     git -C $plan.workspace fetch --quiet --all --tags
@@ -559,7 +707,11 @@ function Invoke-Job($job) {
     foreach ($name in $auto.Keys) { if (-not [Environment]::GetEnvironmentVariable($name)) { $plain[$name] = $auto[$name] } }
   }
   # What was tested: the commit checked out (release gates look runs up by it), its ref, and
-  # whether the tree had changes.
+  # whether the tree had changes; for a snapshot, what its sender said.
+  if ($job.snapshot) {
+    if ($job.commit) { $plain["TESTOR_COMMIT"] = "$($job.commit)" }
+    if ($job.branch) { $plain["TESTOR_BRANCH"] = "$($job.branch)" }
+  }
   if ($plan.git) {
     $head = git -C $runDir rev-parse HEAD 2>$null
     if (-not $LASTEXITCODE -and $head) {
@@ -573,6 +725,8 @@ function Invoke-Job($job) {
     $plain[$(if ($identity.file) { $identity.file } else { "TESTOR_ID_TOKEN_FILE" })] = $tokenFile
     if ($identity.env) { foreach ($name in $identity.env.Keys) { $plain[$name] = "$($identity.env[$name])" } }
   }
+  $branch = if ($plain["TESTOR_BRANCH"] -and $plain["TESTOR_BRANCH"] -ne "HEAD") { $plain["TESTOR_BRANCH"] } else { $null }
+  if ($plan.state.Count) { Restore-State $job $plan $runDir $branch }
   foreach ($name in $plain.Keys) { [Environment]::SetEnvironmentVariable($name, $plain[$name]) }
   foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $secrets.vars[$name]) }
   if ($secrets.vars.Count) { $env:TESTOR_MASK = (@($maskBefore) + @($secrets.vars.Keys) | Where-Object { $_ }) -join "," }
@@ -632,6 +786,7 @@ function Invoke-Job($job) {
   }
   $process.WaitForExit()
   Remove-Item "$out.out", "$out.err", "$out.jwt" -ErrorAction SilentlyContinue
+  if ($plan.state.Count -and -not $lost) { Save-State $job $plan $runDir $branch }
   if ($plan.isolate) {
     foreach ($path in $plan.preserve) {
       $from = Join-Path $runDir $path
@@ -653,10 +808,11 @@ function Invoke-Job($job) {
   } catch { Log "$($job.id) ended (exit $($process.ExitCode)) but could not report it: $($_.Exception.Message)" }
 }
 
+Clear-Cas
 Log "taking jobs from $base (labels: $($labels -join ', '); projects: $(@($projects.Keys) -join ', '))"
 do {
   try {
-    $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait; key = $publicKey }
+    $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait; key = $publicKey; instance = [Environment]::MachineName.ToLower() }
     if ($job) { Invoke-Job $job }
   } catch {
     Log "testor did not answer: $($_.Exception.Message)"

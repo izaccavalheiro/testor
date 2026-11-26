@@ -44,6 +44,15 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   (`storage_s3`, `keys_secret`, `service_account_annotations`). `TESTOR_SIGNING_KEY` signs
   attestations in place of `signing.key`; agents' pinned keys are kept in PostgreSQL for
   testors that share no volume.
+- **Snapshots and incremental state** ([docs/snapshots.md](docs/snapshots.md)): a job can run
+  a content-addressed snapshot of a working tree (`runner/snapshot.ps1`, `SYNC=cas`) instead of
+  a ref: testor keeps contents by SHA-256 (`POST /api/v1/projects/<p>/snapshots`,
+  `PUT /api/v1/blobs/sha256:<hex>`) and agents of projects with `"snapshots": true` fetch and
+  write only what changed. `remote.yml`'s `sync` sends only changed files (`SYNC=full` for the
+  whole tree). A command's `"state"` paths are kept per project and branch, restored before a
+  run (from the default branch on a branch's first) and saved after. The queue waits
+  `execution.warmSeconds` for the agent that ran a project last, and the chart's
+  `agents.persistence` runs agents as a StatefulSet with a volume per pod.
 - **Heavy jobs** ([docs/heavy-jobs.md](docs/heavy-jobs.md)): timeouts (a command's, a job's
   shorter one, `execution.defaultTimeout`, `run.ps1 -TimeoutSeconds`, `TIMEOUT`), a memory guard
   that ends a run before the OOM killer does, `TESTOR_CPUS` and `TESTOR_MEMORY_MB` from the

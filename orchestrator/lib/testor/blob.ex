@@ -17,8 +17,8 @@ defmodule Testor.Blob do
       or `:binary` (`{:ok, data}`). `:not_found` when there is no such object.
     * `head(cfg, key)`: `{:ok, %{size: bytes, sha256: base64 | nil}}` (the checksum S3 keeps,
       when it has a whole object's) or `:not_found`.
-    * `list(cfg, prefix)`: `{:ok, [%{key, size}]}`, every object whose key starts with
-      `prefix`, sorted by key.
+    * `list(cfg, prefix)`: `{:ok, [%{key, size, modified}]}`, every object whose key starts
+      with `prefix`, sorted by key (`modified`: when it was written, Unix seconds).
     * `delete(cfg, keys)`: `{:ok, deleted, kept}`; `kept` are the keys the store refused to
       delete (S3: under legal hold or Object Lock), left as they are.
     * `presign(cfg, key, seconds, opts)`: `{:ok, url}` a browser may GET for `seconds`
@@ -32,7 +32,8 @@ defmodule Testor.Blob do
   @callback get(cfg, key, {:file, Path.t()} | :binary) ::
               :ok | {:ok, binary()} | :not_found | {:error, term()}
   @callback head(cfg, key) :: {:ok, %{size: non_neg_integer()}} | :not_found | {:error, term()}
-  @callback list(cfg, String.t()) :: {:ok, [%{key: key, size: non_neg_integer()}]} | {:error, term()}
+  @callback list(cfg, String.t()) ::
+              {:ok, [%{key: key, size: non_neg_integer(), modified: integer() | nil}]} | {:error, term()}
   @callback delete(cfg, [key]) :: {:ok, [key], [key]} | {:error, term()}
   @callback presign(cfg, key, pos_integer(), keyword()) :: {:ok, String.t()} | :none
 

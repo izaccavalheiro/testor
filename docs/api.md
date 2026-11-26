@@ -70,9 +70,15 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `GET /api/v1/gates` | read | `config.json`'s release gates, or the `error` that leaves one out |
 | `GET /api/v1/gates/:name?commit=` | read | whether a commit passes: `{gate, commit, pass, checks: [{kind, pass, reason, runId, attestation}]}` ([release gates](attestation.md#release-gates)) |
 | `GET /api/v1/schedules` | read | `config.json`'s schedules with their `next` time (UTC), or the `error` that leaves one out |
-| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref?}`: `201`, or `403` while `execution.enabled` is off |
+| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref? or snapshot?}`: `201`, or `403` while `execution.enabled` is off |
+| `POST /api/v1/projects/:p/snapshots` | execute | a snapshot's manifest `{files, branch?, commit?}`: `200` with the `missing` contents, `201` once kept ([snapshots](snapshots.md)) |
+| `PUT /api/v1/blobs/sha256:<hex>` | execute | one content, checked against its hash (`snapshots.maxFileMB`) |
+| `GET /api/v1/projects/:p/state/:name?branch=` | read | a state file of the branch, else the default branch's (`X-Testor-State-Branch`) |
 | `POST /api/v1/jobs/:id/cancel` | execute | cancel a queued or running job |
-| `POST /api/v1/agent/lease` | agent | `{labels, wait}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most) |
+| `POST /api/v1/agent/lease` | agent | `{labels, wait, instance?}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most); `instance` (its host) for the warm hint |
+| `GET /api/v1/agent/projects/:p/snapshots/:id` | agent | a snapshot's manifest |
+| `GET /api/v1/agent/blobs/sha256:<hex>` | agent | a content, or a `302` to a presigned link to the bucket |
+| `GET`, `PUT /api/v1/agent/projects/:p/state/:name?branch=` | agent | read a state file; write one, holding a job of the project (`job=<id>`) |
 | `POST /api/v1/agent/jobs/:id/heartbeat` | agent | renew the lease: `{"cancel": bool}` |
 | `POST /api/v1/agent/jobs/:id/token` | agent | the held job's identity token for `{"audience"}`: `{token, expires_in}` (`jobTokens` in `auth.json`) |
 | `POST /api/v1/agent/jobs/:id/finish` | agent | `{exitCode, error?}` |

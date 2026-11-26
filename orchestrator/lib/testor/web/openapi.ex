@@ -23,6 +23,7 @@ defmodule Testor.Web.OpenAPI do
         %{"name" => "runner"},
         %{"name" => "maintenance"},
         %{"name" => "jobs"},
+        %{"name" => "snapshots"},
         %{"name" => "gates"},
         %{"name" => "approvals"},
         %{"name" => "agents"}
@@ -52,6 +53,11 @@ defmodule Testor.Web.OpenAPI do
       }
     }
   end
+
+  defp project_param, do: path_param("project")
+
+  defp path_param(name),
+    do: %{"name" => name, "in" => "path", "required" => true, "schema" => %{"type" => "string"}}
 
   defp paths do
     %{
@@ -133,7 +139,7 @@ defmodule Testor.Web.OpenAPI do
         "post" =>
           op(
             "jobs",
-            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref?, clean?}",
+            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref? or snapshot?, clean?}",
             %{"type" => "object"}
           )
       },
@@ -217,6 +223,59 @@ defmodule Testor.Web.OpenAPI do
           op("jobs", "config.json's schedules, each with its next time (UTC) or why it is left out", %{
             "type" => "object"
           })
+      },
+      "/projects/{project}/snapshots" => %{
+        "parameters" => [project_param()],
+        "post" =>
+          op(
+            "snapshots",
+            "Send a manifest {files: [{path, sha256, mode, size}], branch?, commit?} (scope execute): " <>
+              "201 once kept, else 200 with the contents to upload",
+            %{"type" => "object"}
+          )
+      },
+      "/blobs/{digest}" => %{
+        "parameters" => [path_param("digest")],
+        "put" =>
+          op("snapshots", "Upload a content as sha256:<hex>, checked on receipt (scope execute)", %{
+            "type" => "object"
+          })
+      },
+      "/projects/{project}/state/{name}" => %{
+        "parameters" => [
+          project_param(),
+          path_param("name"),
+          query("branch", %{"type" => "string"}, "a branch")
+        ],
+        "get" =>
+          op("snapshots", "A state file of the branch, else of state.defaultBranch", %{"type" => "string"})
+      },
+      "/agent/projects/{project}/snapshots/{id}" => %{
+        "parameters" => [project_param(), path_param("id")],
+        "get" => op("agents", "A snapshot's manifest (scope agent)", %{"type" => "object"})
+      },
+      "/agent/blobs/{digest}" => %{
+        "parameters" => [path_param("digest")],
+        "get" => op("agents", "A content, or a 302 to the bucket (scope agent)", %{"type" => "string"})
+      },
+      "/agent/projects/{project}/state/{name}" => %{
+        "parameters" => [
+          project_param(),
+          path_param("name"),
+          query("branch", %{"type" => "string"}, "a branch")
+        ],
+        "get" =>
+          op("agents", "A state file of the branch, else of state.defaultBranch (scope agent)", %{
+            "type" => "string"
+          }),
+        "put" =>
+          op(
+            "agents",
+            "Write a state file, holding a job of the project: ?job=<id>&branch=b (scope agent)",
+            %{
+              "type" => "object"
+            }
+          )
       },
       "/agent/lease" => %{
         "post" =>

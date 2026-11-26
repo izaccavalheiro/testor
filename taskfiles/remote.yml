@@ -22,7 +22,13 @@
 #
 # sync uploads the working tree as git sees it (tracked and untracked files, uncommitted
 # changes included, minus what .gitignore excludes) to ~/<WORKSPACES>/<PROJECT> on the runner,
-# deleting the previous snapshot's files except KEEP (dependencies and build caches). exec runs
+# deleting the previous snapshot's files except KEEP (dependencies and build caches). Only what
+# changed travels: git hashes the tree into a throwaway index (no objects written), the runner
+# compares it with the manifest of its last sync (<HOME_DIR>/manifests/<PROJECT>.json) and the
+# files as they are there, and asks for the files it lacks; SYNC=full sends the whole tree, as
+# before 0.18. SYNC=cas sends it to testor instead (SERVER, a token in TESTOR_TOKEN), as a
+# content-addressed snapshot an agent runs (runner/snapshot.ps1; needs pwsh here), and with KIND
+# queues that task (LABELS: an agent's labels). exec runs
 # CMD there in PowerShell 7, stopping at the first failing command, whatever the runner's
 # operating system or login shell. With KIND, the command runs through testor's run.ps1, so
 # the run shows on the dashboard; output, stderr and exit code are passed through unchanged.
@@ -80,6 +86,7 @@ vars:
   # Caches a tool keeps between runs (Stryker's incremental file), paths relative to the project;
   # CLEAN=1 drops them before the sync.
   _PRESERVE: '{{range $i, $k := splitList " " (.PRESERVE | default "")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
+  _SYNC: '{{if eq (.SYNC | default "") "full"}}full{{else if eq (.SYNC | default "") "cas"}}cas{{else}}delta{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
   _PRELUDE: |
@@ -99,6 +106,111 @@ vars:
 tasks:
   sync:
     run: once
+    cmds:
+      - task: 'sync-{{._SYNC}}'
+
+  sync-cas:
+    internal: true
+    requires:
+      vars: [SERVER]
+    cmds:
+      - cmd: >-
+          pwsh -NoProfile -NonInteractive -File "{{.TASKFILE_DIR}}/../runner/snapshot.ps1"
+          -Server "{{.SERVER}}" -Project "{{._PROJECT}}" -Path "{{._ROOT}}"
+          {{if .KIND}}-Kind "{{.KIND}}"{{end}}{{if .LABELS}} -Labels {{range $i, $l := splitList " " (.LABELS | trim)}}{{if $i}},{{end}}"{{$l}}"{{end}}{{end}}
+
+  # The tree's files as git hashes them, into an index of their own (git's objects untouched).
+  sync-delta:
+    internal: true
+    requires:
+      vars: [RUNNER]
+    vars:
+      _GIT_DIR:
+        sh: 'git -C "{{._ROOT}}" rev-parse --absolute-git-dir'
+    cmds:
+      - cmd: GIT_INDEX_FILE="{{._GIT_DIR}}/testor-sync.index" git -C "{{._ROOT}}" read-tree --empty
+        silent: true
+      - cmd: >-
+          git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
+          GIT_INDEX_FILE="{{._GIT_DIR}}/testor-sync.index" git -C "{{._ROOT}}" update-index -z --add --remove --info-only --stdin
+        silent: true
+      # 1. The manifest goes over; the runner answers with the files it lacks.
+      - task: ps
+        vars:
+          LABEL: "sync {{._ROOT}} -> ~/{{._WORKSPACES}}/{{._PROJECT}} (changed files)"
+          STDIN: 'GIT_INDEX_FILE="{{._GIT_DIR}}/testor-sync.index" git -C "{{._ROOT}}" ls-files -s -z'
+          OUT: '> "{{._GIT_DIR}}/testor-sync.need"'
+          SCRIPT: |
+            # Entries "<mode> <sha-1> <stage>\t<path>", NUL-separated: git's hash of each file.
+            $in = [IO.MemoryStream]::new()
+            [Console]::OpenStandardInput().CopyTo($in)
+            $wanted = [ordered]@{}
+            foreach ($entry in ([Text.Encoding]::UTF8.GetString($in.ToArray()) -split "`0")) {
+              if ($entry -match "^\d+ ([0-9a-f]{40,64}) \d+`t(.+)$") { $wanted[$Matches[2]] = $Matches[1] }
+            }
+            $manifests = Join-Path (Split-Path $testorRun) "manifests"
+            $null = New-Item -ItemType Directory -Force $manifests
+            $last = @{}
+            $file = Join-Path $manifests "{{._PROJECT}}.json"
+            if ((Test-Path $file) -and (Test-Path $workspace)) { try { $last = Get-Content -Raw $file | ConvertFrom-Json -AsHashtable } catch { } }
+            # git's hash of a file as it is here: for one a run changed since the last sync.
+            $sha1 = [Security.Cryptography.SHA1]::Create()
+            function Get-GitHash([string]$path) {
+              $bytes = [IO.File]::ReadAllBytes($path)
+              $head = [Text.Encoding]::ASCII.GetBytes("blob $($bytes.Length)`0")
+              ($sha1.ComputeHash([byte[]]($head + $bytes)) | ForEach-Object { $_.ToString("x2") }) -join ""
+            }
+            $need = [Collections.Generic.List[string]]::new()
+            foreach ($path in $wanted.Keys) {
+              $here = Get-Item -LiteralPath (Join-Path $workspace $path) -Force -ErrorAction SilentlyContinue
+              $was = $last[$path]
+              $same = $here -and -not $here.PSIsContainer -and $was -and $was.sha -eq $wanted[$path] -and (
+                ($was.size -eq $here.Length -and $was.ticks -eq $here.LastWriteTimeUtc.Ticks) -or (Get-GitHash $here.FullName) -eq $wanted[$path])
+              if (-not $same) { $need.Add($path) }
+            }
+            # Kept until the files arrive (step 2).
+            ConvertTo-Json -InputObject $wanted -Compress | Set-Content (Join-Path $manifests "{{._PROJECT}}.pending.json")
+            [Console]::Error.WriteLine("[{{.RUNNER}}] $($need.Count) of $($wanted.Count) files changed")
+            [Console]::Out.Write(($need -join "`0"))
+      # 2. Those files; the runner deletes what the tree no longer has (KEEP and PRESERVE stay).
+      - task: ps
+        vars:
+          LABEL: "sync: the changed files"
+          STDIN: 'tar -czf - -C "{{._ROOT}}" --null -T "{{._GIT_DIR}}/testor-sync.need"'
+          SCRIPT: |
+            $manifests = Join-Path (Split-Path $testorRun) "manifests"
+            $pending = Join-Path $manifests "{{._PROJECT}}.pending.json"
+            $wanted = Get-Content -Raw $pending | ConvertFrom-Json -AsHashtable
+            $keep = @({{._KEEP}}) | Where-Object { $_ }
+            $preserve = @({{._PRESERVE}}) | Where-Object { $_ } | ForEach-Object { $_ -replace "\\", "/" }
+            $keepNames = @($keep | Where-Object { $_ -notmatch "/" })
+            $keepPaths = @($keep | Where-Object { $_ -match "/" }) + @($preserve)
+            if ("{{.CLEAN | default ""}}" -eq "1" -and (Test-Path $workspace)) {
+              foreach ($p in $preserve) { Remove-Item -LiteralPath (Join-Path $workspace $p) -Recurse -Force -ErrorAction SilentlyContinue }
+              $keepPaths = @($keep | Where-Object { $_ -match "/" })
+            }
+            function Clear-Stale($p, $rel) {
+              Get-ChildItem -LiteralPath $p -Force | ForEach-Object {
+                $r = if ($rel) { "$rel/$($_.Name)" } else { $_.Name }
+                if ($_.Name -in $keepNames -or $r -in $keepPaths) { return }
+                if ($_.PSIsContainer -and -not $_.LinkType) { Clear-Stale $_.FullName $r }
+                elseif (-not $wanted.Contains($r)) { Remove-Item -LiteralPath $_.FullName -Force }
+              }
+            }
+            if (Test-Path $workspace) { Clear-Stale $workspace "" }
+            $null = New-Item -ItemType Directory -Force -Path $workspace
+            tar -xzf - -C $workspace
+            # Each file as it is now: the next sync trusts what has not changed since.
+            $now = @{}
+            foreach ($path in $wanted.Keys) {
+              $item = Get-Item -LiteralPath (Join-Path $workspace $path) -Force -ErrorAction SilentlyContinue
+              if ($item) { $now[$path] = @{ sha = $wanted[$path]; size = $item.Length; ticks = $item.LastWriteTimeUtc.Ticks } }
+            }
+            ConvertTo-Json -InputObject $now -Compress | Set-Content (Join-Path $manifests "{{._PROJECT}}.json")
+            Remove-Item $pending
+
+  sync-full:
+    internal: true
     requires:
       vars: [RUNNER]
     cmds:
@@ -109,6 +221,8 @@ tasks:
             git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
             tar -czf - -C "{{._ROOT}}" --null -T -
           SCRIPT: |
+            # The manifest of a delta sync no longer says what is here.
+            Remove-Item -LiteralPath (Join-Path (Join-Path (Split-Path $testorRun) "manifests") "{{._PROJECT}}.json") -ErrorAction SilentlyContinue
             # KEEP: names kept wherever they are (node_modules), or paths from the project's root
             # (a/b); PRESERVE: such paths too, unless CLEAN=1.
             $keep = @({{._KEEP}}) | Where-Object { $_ }
@@ -202,5 +316,5 @@ tasks:
       # shell and PowerShell (whichever is the runner's login shell) pass on as they are.
       - cmd: >-
           {{if .STDIN}}{{.STDIN}} | {{end}}ssh {{.RUNNER}}
-          "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"{{b64enc (print ._PRELUDE .SCRIPT)}}\"))))'"
+          "pwsh -NoProfile -NonInteractive -Command '&([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"{{b64enc (print ._PRELUDE .SCRIPT)}}\"))))'"{{if .OUT}} {{.OUT}}{{end}}
         silent: true

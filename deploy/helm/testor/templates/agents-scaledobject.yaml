@@ -12,6 +12,9 @@ metadata:
   labels: {{- include "testor.labels" $ | nindent 4 }}
 spec:
   scaleTargetRef:
+    {{- if $g.persistence.enabled }}
+    kind: StatefulSet
+    {{- end }}
     name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
   minReplicaCount: {{ $a.minReplicas }}
   maxReplicaCount: {{ $a.maxReplicas }}

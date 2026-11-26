@@ -53,6 +53,8 @@ A run's objects have the keys its files have in the home, under `prefix`:
 | `reports/<id>/...`, `reports/<id>.*.json` | its report files, and what testor read from them |
 | `attestations/<id>.dsse.json`, `attestations/<id>.agent.dsse.json` | testor's and its agent's signatures |
 | `audit/<instance>/<yyyy-mm-dd>/<ms>.jsonl` | the audit trail, sent every 10 s |
+| `cas/sha256/<ab>/<hex>`, `snapshots/<project>/<hex>.json` | snapshots' contents and manifests ([snapshots](snapshots.md)) |
+| `state/<project>/<branch>/<name>` | incremental state, per project and branch |
 
 Every object carries its SHA-256 (`x-amz-checksum-sha256`), which the server checks; a file
 over 64 MB goes in 16 MB parts, each with its own checksum.

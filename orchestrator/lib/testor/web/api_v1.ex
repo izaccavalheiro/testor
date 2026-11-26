@@ -446,7 +446,11 @@ defmodule Testor.Web.ApiV1 do
       wait = if is_integer(params["wait"]), do: params["wait"] |> max(0) |> min(25), else: 0
       deadline = System.monotonic_time(:millisecond) + wait * 1000
 
-      case wait_for_job(agent, labels, deadline, conn.assigns.principal) do
+      # Pods that share an agent user tell themselves apart by name (the queue's warm hint).
+      instance =
+        if is_binary(params["instance"]), do: agent <> "/" <> String.slice(params["instance"], 0, 100)
+
+      case wait_for_job(agent, labels, deadline, conn.assigns.principal, instance) do
         {:ok, job} -> json(conn, 200, job)
         :none -> send_resp(conn, 204, "")
       end
@@ -541,6 +545,113 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # --- snapshots and incremental state (Testor.Snapshots, Testor.States) ---------------------
+  # Sent by who may execute jobs (scope execute); read by agents, under /agent (scope agent).
+
+  post "/projects/:project/snapshots" do
+    with {:ok, _who} <- signed_in(conn),
+         :ok <- project_name(conn, project),
+         {:ok, params, conn} <- body_params(conn, 32 * 1_048_576) do
+      case Testor.Snapshots.offer(project, params) do
+        {:ok, %{"stored" => true} = answer} -> json(conn, 201, answer)
+        {:ok, answer} -> json(conn, 200, answer)
+        {:error, {:store, _}} -> unavailable(conn)
+        {:error, message} -> error(conn, 400, "bad_request", message)
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  put "/blobs/:digest" do
+    with {:ok, _who} <- signed_in(conn),
+         {:ok, hex} <- Testor.Snapshots.parse_id(digest) |> found(conn),
+         {:ok, path, conn} <- receive_file(conn, Testor.Snapshots.settings()["maxFileMB"] * 1_048_576) do
+      try do
+        case Testor.Snapshots.put_blob(hex, path) do
+          :ok -> json(conn, 201, %{"id" => digest})
+          {:error, :digest} -> error(conn, 400, "digest", "the body's SHA-256 is not #{digest}")
+          {:error, _} -> unavailable(conn)
+        end
+      after
+        File.rm(path)
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  get "/projects/:project/state/:name" do
+    conn = fetch_query_params(conn)
+
+    with {:ok, _who} <- signed_in(conn),
+         :ok <- project_name(conn, project) do
+      read_state(conn, project, name, conn.query_params["branch"])
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  get "/agent/projects/:project/snapshots/:id" do
+    with {:ok, who} <- signed_in(conn),
+         :ok <- agent_project(conn, project, who),
+         {:ok, hex} <- Testor.Snapshots.parse_id(id) |> found(conn),
+         {:ok, manifest} <- Testor.Snapshots.manifest(project, hex) |> found(conn) do
+      json(conn, 200, manifest)
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  get "/agent/blobs/:digest" do
+    with {:ok, _who} <- signed_in(conn),
+         {:ok, hex} <- Testor.Snapshots.parse_id(digest) |> found(conn) do
+      case Testor.Snapshots.blob(hex) do
+        {:redirect, url} ->
+          conn |> put_resp_header("location", url) |> send_resp(302, "")
+
+        {:file, path} ->
+          conn |> put_resp_content_type("application/octet-stream") |> send_file(200, path) |> drop(path)
+
+        :not_found ->
+          error(conn, 404, "not_found", "no such content")
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  get "/agent/projects/:project/state/:name" do
+    conn = fetch_query_params(conn)
+
+    with {:ok, who} <- signed_in(conn),
+         :ok <- agent_project(conn, project, who) do
+      read_state(conn, project, name, conn.query_params["branch"])
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  # Written by the agent holding a job of the project, after its run.
+  put "/agent/projects/:project/state/:name" do
+    conn = fetch_query_params(conn)
+    branch = conn.query_params["branch"]
+    max = Testor.States.settings()["maxMB"] * 1_048_576
+
+    with {:ok, agent} <- signed_in(conn),
+         :ok <- agent_project(conn, project, agent),
+         :ok <- state_name(conn, name, branch),
+         {:ok, _job} <- state_job(conn, project, conn.query_params["job"], agent),
+         {:ok, data, conn} <- read_body(conn, length: max) |> whole_body(max) do
+      case Testor.States.put(project, branch || Testor.States.settings()["defaultBranch"], name, data) do
+        :ok -> json(conn, 200, %{"bytes" => byte_size(data)})
+        {:error, _} -> unavailable(conn)
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
   match _ do
     error(
       conn,
@@ -551,6 +662,101 @@ defmodule Testor.Web.ApiV1 do
   end
 
   # --- helpers -------------------------------------------------------------------------------
+
+  defp project_name(conn, project) do
+    if Regex.match?(~r/^[A-Za-z0-9_.-]{1,100}$/, project) and String.trim(project, ".") != "",
+      do: :ok,
+      else: {:error, error(conn, 400, "bad_request", "a project is a name: letters, digits, _ . -")}
+  end
+
+  # An agent restricted to projects (or with roles per project) reads only theirs.
+  defp agent_project(conn, project, who) do
+    with :ok <- project_name(conn, project) do
+      if Testor.Access.permits?(conn.assigns.principal, project, "agent"),
+        do: :ok,
+        else: {:error, error(conn, 403, "forbidden", "#{who} takes no jobs of #{project}")}
+    end
+  end
+
+  defp read_state(conn, project, name, branch) do
+    with :ok <- state_name(conn, name, branch),
+         {:ok, data, from} <- Testor.States.get(project, branch, name) |> found(conn) do
+      conn
+      |> put_resp_content_type("application/octet-stream")
+      |> put_resp_header("x-testor-state-branch", from)
+      |> send_resp(200, data)
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  defp found(:error, conn), do: {:error, error(conn, 404, "not_found", "no such snapshot or content")}
+  defp found(:not_found, conn), do: {:error, error(conn, 404, "not_found", "not found")}
+  defp found(ok, _conn), do: ok
+
+  defp state_name(conn, name, branch) do
+    if Testor.States.name?(name) and (branch == nil or Jobs.ref?(branch)),
+      do: :ok,
+      else:
+        {:error,
+         error(conn, 400, "bad_request", "a state is a name (letters, digits, _ . -) and branch a git branch")}
+  end
+
+  defp state_job(conn, project, id, agent) do
+    case valid_id?(id) && Jobs.held(id, agent) do
+      {:ok, %{"project" => ^project} = job} ->
+        {:ok, job}
+
+      _ ->
+        {:error,
+         error(conn, 403, "forbidden", "state is written by the agent running a job of #{project} (job=<id>)")}
+    end
+  end
+
+  defp whole_body({:ok, data, conn}, _max), do: {:ok, data, conn}
+  defp whole_body({_, _, conn}, max), do: {:error, error(conn, 413, "too_large", "over #{max} bytes")}
+
+  # The request's body, streamed to a temporary file of at most `max` bytes.
+  defp receive_file(conn, max) do
+    dir = Path.join(Testor.Config.data_dir(), "tmp")
+    File.mkdir_p!(dir)
+    path = Path.join(dir, "upload-#{System.unique_integer([:positive])}")
+    {:ok, file} = File.open(path, [:write, :binary])
+    received = receive_chunks(conn, file, max)
+    File.close(file)
+
+    case received do
+      {:ok, conn} ->
+        {:ok, path, conn}
+
+      {:error, conn} ->
+        File.rm(path)
+        {:error, conn}
+    end
+  end
+
+  defp receive_chunks(conn, file, left) do
+    case read_body(conn, length: 1_048_576) do
+      {status, data, conn} when status in [:ok, :more] and byte_size(data) <= left ->
+        IO.binwrite(file, data)
+        if status == :ok, do: {:ok, conn}, else: receive_chunks(conn, file, left - byte_size(data))
+
+      {_, _, conn} ->
+        {:error, error(conn, 413, "too_large", "a content is snapshots.maxFileMB at most")}
+    end
+  end
+
+  # A content fetched from the bucket to be sent is not kept: the bucket is the store.
+  defp drop(conn, path) do
+    if Testor.Storage.s3?(), do: File.rm(path)
+    conn
+  end
+
+  defp unavailable(conn) do
+    conn
+    |> put_resp_header("retry-after", "5")
+    |> error(503, "storage_unavailable", "the store cannot be reached now: try again")
+  end
 
   defp reply(conn, {:ok, data}, status), do: json(conn, status, data)
   defp reply(conn, {:error, status, code, message}, _), do: error(conn, status, code, message)
@@ -598,8 +804,8 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
-  defp wait_for_job(agent, labels, deadline, principal) do
-    case Jobs.lease(agent, labels, &Testor.Access.permits?(principal, &1, "agent")) do
+  defp wait_for_job(agent, labels, deadline, principal, instance) do
+    case Jobs.lease(agent, labels, &Testor.Access.permits?(principal, &1, "agent"), instance) do
       {:ok, job} ->
         {:ok, job}
 
@@ -608,7 +814,7 @@ defmodule Testor.Web.ApiV1 do
           :none
         else
           Process.sleep(Application.get_env(:testor, :lease_poll_ms, 500))
-          wait_for_job(agent, labels, deadline, principal)
+          wait_for_job(agent, labels, deadline, principal, instance)
         end
     end
   end

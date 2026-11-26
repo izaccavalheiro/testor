@@ -61,6 +61,11 @@ locals {
         prometheusServer = local.agents.autoscaling.prometheus_server
         queuedPerAgent   = local.agents.autoscaling.queued_per_agent
       }
+      persistence = {
+        enabled      = local.agents.persistence.enabled
+        size         = local.agents.persistence.size
+        storageClass = local.agents.persistence.storage_class
+      }
     }
   }
 
