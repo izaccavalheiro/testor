@@ -30,14 +30,14 @@ Two principles hold through every milestone:
 | **0.9.0** | Delivery: release gates on signed results (for pipelines and OPA), commit statuses on GitHub and GitLab pull requests, approvals of AI agents' actions, DORA metrics, status badges and a Backstage guide | released |
 | **0.10.0** | Storage: signed runs archived to S3-compatible storage (encrypted, optionally locked; SigV4 without a dependency), the job queue in PostgreSQL shared by several testors | released |
 | **0.11.0** | Several testors serving one team: one shared home and one PostgreSQL, claims for what must happen once, shared approvals, an audit trail per testor; the Helm chart's replicas | released |
+| **0.12.0** | The hub: one board across several testors (each project's latest result, a link back), filtered by label | released |
 
 ## Next milestones
 
 Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-### 0.12: many testors, other backends
+### 0.13: other backends
 
-- **The hub** (done, in the next release): the board across several testors, filtered by label.
 - [Storage, queue and event ports](docs/design/ports.md): S3-compatible object storage as the
   primary store (no shared volume), RabbitMQ, NATS or SQS for jobs.
 - Signed links bound to the viewer and minutes long.
