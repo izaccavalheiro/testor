@@ -267,9 +267,22 @@ try {
   # Jobs: queued through the API, taken by an agent (runner/agent.ps1) that runs them through
   # run.ps1 with the commands of its own configuration.
   $configFile = Join-Path $testorHome "config.json"
+  # testor reads config.json now and then; on Windows a read in progress keeps it from being
+  # written for a moment: try again.
+  function Write-Config {
+    param([Parameter(ValueFromPipeline)][string[]]$Text, [string]$Path = $configFile)
+    begin { $lines = @() }
+    process { $lines += $Text }
+    end {
+      for ($try = 1; ; $try++) {
+        try { Set-Content -LiteralPath $Path -Value $lines -ErrorAction Stop; return }
+        catch { if ($try -ge 20) { throw }; Start-Sleep -Milliseconds 100 }
+      }
+    }
+  }
   $config = if (Test-Path $configFile) { Get-Content -Raw $configFile | ConvertFrom-Json -AsHashtable } else { @{} }
   $config.execution = @{ enabled = $true; leaseSeconds = 30; maxAttempts = 3 }
-  $config | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $configFile
+  $config | ConvertTo-Json -Depth 5 | Write-Config
   $env:TESTOR_PASSWORD = "smoke-test-password"
   & $bin eval "Testor.Auth.CLI.user ~s[smoke-agent], ~s[agent]" | Out-Null
   Remove-Item Env:TESTOR_PASSWORD
@@ -376,7 +389,7 @@ try {
   $authFile = Join-Path $testorHome "auth.json"
   $auth = Get-Content -Raw -LiteralPath $authFile | ConvertFrom-Json -AsHashtable
   $auth.jobTokens = @{ issuer = "https://testor.example.com"; audiences = @("smoke-audience") }
-  $auth | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $authFile
+  $auth | ConvertTo-Json -Depth 8 | Write-Config -Path $authFile
   Start-Sleep -Milliseconds 2000
   $idConfig = Join-Path $work "agent-identity.json"
   $showToken = '$p = (Get-Content -Raw $env:SMOKE_TOKEN_FILE).Split(".")[1].Replace("-", "+").Replace("_", "/"); $p += "=" * ((4 - $p.Length % 4) % 4); $c = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($p)) | ConvertFrom-Json; "sub=$($c.sub) aud=$($c.aud) role=$env:SMOKE_ROLE"; "token=$env:TESTOR_ID_TOKEN"'
@@ -438,7 +451,7 @@ try {
   # the run's signed result.
   $config = Get-Content -Raw -LiteralPath $configFile | ConvertFrom-Json -AsHashtable
   $config.gates = @{ "iso-release" = @{ project = "iso-git"; kinds = @("probe") } }
-  $config | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $configFile
+  $config | ConvertTo-Json -Depth 6 | Write-Config
   $isoHead = "$(git -C $isoGit rev-parse HEAD)".Trim()
   $deadline = (Get-Date).AddSeconds(15)
   do {
