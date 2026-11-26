@@ -82,7 +82,9 @@ defmodule Testor.AuditTest do
     Audit.record("auth_failed", %{"why" => "two"})
     Audit.flush()
 
-    [name] = Config.data_dir() |> File.ls!() |> Enum.filter(&String.starts_with?(&1, "audit-"))
+    current = Path.basename(Audit.file())
+    prefix = String.replace_suffix(current, ".jsonl", "-")
+    [name] = Config.data_dir() |> File.ls!() |> Enum.filter(&String.starts_with?(&1, prefix))
     rotated = Path.join(Config.data_dir(), name)
     on_exit(fn -> File.rm(rotated) end)
     [old] = rotated |> File.read!() |> String.split("\n", trim: true)

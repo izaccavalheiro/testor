@@ -84,7 +84,12 @@ defmodule Testor.Schedules do
 
     queued =
       if Jobs.settings()["enabled"] == true do
-        for {:ok, schedule} <- results, Cron.matches?(schedule.spec, at), job = enqueue(schedule), do: job
+        # One job for a schedule's minute across testors sharing a queue (Testor.Cluster).
+        for {:ok, schedule} <- results,
+            Cron.matches?(schedule.spec, at),
+            Testor.Cluster.claim("schedule", "#{schedule["name"]}@#{DateTime.to_iso8601(at)}"),
+            job = enqueue(schedule),
+            do: job
       else
         []
       end
