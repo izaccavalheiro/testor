@@ -9,6 +9,8 @@ defmodule Testor.Metrics do
     * `testor_build_info{version}`
     * `testor_runs{status}`: runs kept, by status
     * `testor_jobs{status}`: jobs by status; `queued` is what an autoscaler (KEDA) scales agents on
+    * `testor_jobs{status,label}`: queued, leased and running jobs per label they ask for (an
+      agent profile's queue)
     * `testor_last_run_success{project,kind}`: 1 when the latest finished run of a task passed
     * `testor_last_run_timestamp_seconds{project,kind}`, `testor_last_run_duration_seconds{project,kind}`
     * `testor_event_streams`: open dashboard and API event streams
@@ -73,8 +75,23 @@ defmodule Testor.Metrics do
   defp jobs_by_status do
     counts = Enum.frequencies_by(Testor.Jobs.list(), & &1["status"])
 
-    for status <- Testor.Jobs.statuses(),
-        do: sample("testor_jobs", %{"status" => status}, Map.get(counts, status, 0))
+    all =
+      for status <- Testor.Jobs.statuses(),
+          do: sample("testor_jobs", %{"status" => status}, Map.get(counts, status, 0))
+
+    # Queued and taken jobs per label too, so each agent profile scales on its own queue
+    # (testor_jobs{status="queued",label="mutation"}).
+    by_label =
+      for job <- Testor.Jobs.list(),
+          job["status"] in ["queued", "leased", "running"],
+          label <- job["labels"] || [],
+          reduce: %{} do
+        acc -> Map.update(acc, {job["status"], label}, 1, &(&1 + 1))
+      end
+
+    all ++
+      for {{status, label}, n} <- Enum.sort(by_label),
+          do: sample("testor_jobs", %{"status" => status, "label" => label}, n)
   end
 
   # The newest finished run of each project and task.

@@ -338,11 +338,15 @@ defmodule Testor.Jobs do
       params["clean"] not in [nil, true, false] ->
         {:error, "clean is true or false"}
 
+      seconds(params["timeout"]) == :error ->
+        {:error, "timeout is seconds (1 to 86400) or 90s, 45m, 2h"}
+
       true ->
         job =
           build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
           # The agent drops the project's preserved caches first (agent.json's "preserve").
           |> then(&if(params["clean"] == true, do: Map.put(&1, "clean", true), else: &1))
+          |> put_timeout(params["timeout"] || settings()["defaultTimeout"])
 
         {:ok, Map.merge(job, Testor.Tracing.job_fields(params["traceparent"]))}
     end
@@ -367,6 +371,32 @@ defmodule Testor.Jobs do
   end
 
   defp order(job), do: {job["createdAt"], job["id"]}
+
+  # The longest the run may take, as data: the agent's own timeout for the task caps it
+  # (execution.defaultTimeout when the job names none).
+  defp put_timeout(job, value) do
+    case seconds(value) do
+      n when is_integer(n) -> Map.put(job, "timeout", n)
+      _ -> job
+    end
+  end
+
+  @doc false
+  # A timeout: seconds (1 to a day), or "90s", "45m", "2h"; nil for none, :error otherwise.
+  def seconds(nil), do: nil
+  def seconds(n) when is_integer(n) and n >= 1 and n <= 86_400, do: n
+
+  def seconds(text) when is_binary(text) do
+    case Regex.run(~r/^(\d+)(s|m|h)?$/, text) do
+      [_, n | unit] ->
+        seconds(String.to_integer(n) * %{[] => 1, ["s"] => 1, ["m"] => 60, ["h"] => 3600}[unit])
+
+      nil ->
+        :error
+    end
+  end
+
+  def seconds(_), do: :error
 
   defp name?(value), do: is_binary(value) and Regex.match?(@name, value)
 

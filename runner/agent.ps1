@@ -36,9 +36,19 @@
 # to the workspace) and what it keeps between jobs:
 #   "mutation": { "command": "npx stryker run", "reports": ["reports/mutation/mutation.json"],
 #                 "artifacts": ["reports/mutation"], "preserve": ["reports/stryker-incremental.json"] }
-# "reports" are files testor reads (docs/mutation.md); "preserve" paths survive an isolated
+# "reports" are files testor reads (docs/mutation.md); "timeout" ("45m") ends a run that takes
+# longer (a job may ask for less, never more); "memoryGuard": { "warn": 80, "stop": 92 } warns,
+# then ends it, before the kernel's OOM killer takes the agent (docs/heavy-jobs.md);
+# "exclusive": true marks a job nothing else may share an agent with. "preserve" paths survive an isolated
 # workspace (copied from <home>/cache/<project> before the run and back after it); a job with
 # "clean": true drops them first.
+#
+# Every run gets TESTOR_CPUS and TESTOR_MEMORY_MB (the container's quota and limit on Linux);
+# a project with "limits": "auto" also gets GOMAXPROCS, CARGO_BUILD_JOBS, DOTNET_PROCESSOR_COUNT,
+# PYTEST_XDIST_AUTO_NUM_WORKERS and NODE_OPTIONS=--max-old-space-size, unless already set. A
+# project with "executor": { "container": { "image": "name@sha256:...", "network": "none" } }
+# runs each command in that container (Docker, or tools.container: podman): read-only root, the
+# workspace mounted, no network unless "bridge", the limits as hard ones.
 #
 # Isolation: with a project's "isolate": "worktree" (a git workspace) each job runs in a git
 # worktree of its own, at the job's ref (or the workspace's HEAD: committed files only); with
@@ -259,8 +269,39 @@ function Resolve-Job($job) {
   $isolate = $project.isolate
   if ($isolate -notin @($null, $false, "worktree", "copy")) { return @{ error = "isolate of $($job.project) is worktree, copy or false" } }
   if ($isolate -eq "worktree" -and -not $git) { return @{ error = "isolate: worktree needs a git workspace for $($job.project) (git: true)" } }
+  # Limits, all from this file: the command's timeout (a job may ask for a shorter one), its
+  # memory guard, and the project's container executor.
+  $timeout = if ($entry -is [Collections.IDictionary]) { Get-Seconds $entry.timeout } else { 0 }
+  if ($null -eq $timeout) { return @{ error = "timeout of $($job.project) $($job.kind) is seconds or 90s, 45m, 2h" } }
+  $asked = Get-Seconds $job.timeout
+  if ($asked -gt 0 -and ($timeout -eq 0 -or $asked -lt $timeout)) { $timeout = $asked }
+  $guard = if ($entry -is [Collections.IDictionary] -and $entry.memoryGuard) { $entry.memoryGuard } else { $project.memoryGuard }
+  if ($guard -and -not ($guard.warn -is [int] -and $guard.stop -is [int] -and 0 -lt $guard.warn -and $guard.warn -le $guard.stop -and $guard.stop -le 100)) {
+    return @{ error = "memoryGuard of $($job.project) is { warn, stop }: percentages, warn <= stop" }
+  }
+  $container = $null
+  if ($project.executor) {
+    $container = $project.executor.container
+    if (-not $container -or "$($container.image)" -notmatch "^[\w./:-]+@sha256:[0-9a-f]{64}$") { return @{ error = "executor of $($job.project): container.image is pinned by digest (name@sha256:...)" } }
+    if ($container.network -notin @($null, "none", "bridge")) { return @{ error = "executor of $($job.project): container.network is none or bridge" } }
+  }
   @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null }; isolate = $isolate
-     reports = $lists.reports; artifacts = $lists.artifacts; preserve = $lists.preserve }
+     reports = $lists.reports; artifacts = $lists.artifacts; preserve = $lists.preserve
+     timeout = $timeout; guard = if ($guard) { "$($guard.warn),$($guard.stop)" } else { "" }; limits = $project.limits -eq "auto"
+     container = $container; exclusive = ($entry -is [Collections.IDictionary] -and $entry.exclusive -eq $true) }
+}
+
+# "45m", "90s", "2h" or a number of seconds: seconds (0 for none), or $null when it is neither.
+function Get-Seconds($value) {
+  if ($null -eq $value -or "$value" -eq "") { return 0 }
+  if ($value -is [int] -or $value -is [long]) { return [math]::Max([long]$value, 0) }
+  if ("$value" -match "^(\d+)(s|m|h)?$") { return [long]$Matches[1] * @{ "" = 1; s = 1; m = 60; h = 3600 }["$($Matches[2])"] }
+  $null
+}
+
+# The CPUs and memory this agent may use: .NET reads the cgroup's quota and limit on Linux.
+function Get-Limits {
+  @{ cpus = [Environment]::ProcessorCount; memoryMb = [long]([GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes / 1MB) }
 }
 
 function Tool([string]$name) { if ($tools[$name]) { Expand $tools[$name] } else { $name } }
@@ -462,6 +503,7 @@ function Invoke-Job($job) {
 
   # Encoded: Start-Process passes arguments without escaping their double quotes, which would
   # break any command holding one.
+  $limits = Get-Limits
   $quote = { param($text) "'" + ($text -replace "'", "''") + "'" }
   # Preserved caches: dropped for a clean job, else brought into an isolated workspace.
   $cache = Join-Path (Join-Path $home_ "cache") $job.project
@@ -474,7 +516,21 @@ function Invoke-Job($job) {
     }
   }
   $list = { param($paths) if ($paths.Count) { "@(" + (($paths | ForEach-Object { & $quote $_ }) -join ", ") + ")" } else { "@()" } }
-  $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Artifacts $(& $list $plan.artifacts) -Reports $(& $list $plan.reports) -Body { $($plan.command) }"
+  $body = $plan.command
+  if ($plan.container) {
+    # In a container: a read-only root, the workspace mounted, /tmp a tmpfs, no network unless
+    # allowed, the limits as hard ones; no token, key or variable of the agent inside, only
+    # the job's secrets and the limits by name. Never privileged, nothing else mounted.
+    $c = $plan.container
+    $engine = Tool $(if ($tools.container) { "container" } else { "docker" })
+    $runtime = @("run", "--rm", "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+      "--network", $(if ($c.network) { $c.network } else { "none" }), "--cpus", "$($limits.cpus)", "--memory", "$($limits.memoryMb)m",
+      "-v", "$($runDir):/work", "-w", "/work", "-e", "TESTOR_CPUS", "-e", "TESTOR_MEMORY_MB")
+    foreach ($name in $secrets.vars.Keys) { $runtime += @("-e", $name) }
+    $shell = if ($c.shell) { @($c.shell) } else { @("sh", "-c") }
+    $body = "& $(& $quote $engine) " + (($runtime + @($c.image) + $shell + @($plan.command) | ForEach-Object { & $quote "$_" }) -join " ")
+  }
+  $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Artifacts $(& $list $plan.artifacts) -Reports $(& $list $plan.reports) -TimeoutSeconds $([long]$plan.timeout) -MemoryGuard $(& $quote $plan.guard) -Body { $body }"
   $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
   $env:TESTOR_JOB_ID = $job.id
@@ -491,6 +547,17 @@ function Invoke-Job($job) {
   # trace, which the run's spans join (and test tools that propagate W3C trace context).
   $plain = @{}
   if ($job.traceparent) { $plain["TRACEPARENT"] = $job.traceparent }
+  # What the run may use, for flags such as --maxWorkers or Stryker's --concurrency; with
+  # "limits": "auto", also the variables tools read themselves, unless they are set already.
+  $plain["TESTOR_CPUS"] = "$($limits.cpus)"
+  $plain["TESTOR_MEMORY_MB"] = "$($limits.memoryMb)"
+  if ($plan.limits) {
+    $auto = @{
+      GOMAXPROCS = "$($limits.cpus)"; CARGO_BUILD_JOBS = "$($limits.cpus)"; DOTNET_PROCESSOR_COUNT = "$($limits.cpus)"
+      PYTEST_XDIST_AUTO_NUM_WORKERS = "$($limits.cpus)"; NODE_OPTIONS = "--max-old-space-size=$([long]($limits.memoryMb * 0.75 / [math]::Max($limits.cpus, 1)))"
+    }
+    foreach ($name in $auto.Keys) { if (-not [Environment]::GetEnvironmentVariable($name)) { $plain[$name] = $auto[$name] } }
+  }
   # What was tested: the commit checked out (release gates look runs up by it), its ref, and
   # whether the tree had changes.
   if ($plan.git) {

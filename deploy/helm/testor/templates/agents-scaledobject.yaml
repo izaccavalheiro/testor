@@ -1,18 +1,55 @@
-{{- if and .Values.agents.enabled .Values.agents.autoscaling.keda }}
+{{- if .Values.agents.enabled }}
+{{- range $g := (include "testor.agentGroups" . | fromJsonArray) }}
+{{- $a := $g.autoscaling }}
+{{- /* The default group counts jobs without a label series (label=""); a profile, those with its label. */}}
+{{- $sel := printf "label=\"%s\"" $g.scaleLabel }}
+{{- if and (eq $g.mode "deployment") $a.keda }}
+---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
-  name: {{ include "testor.fullname" . }}-agent
-  labels: {{- include "testor.labels" . | nindent 4 }}
+  name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  labels: {{- include "testor.labels" $ | nindent 4 }}
 spec:
   scaleTargetRef:
-    name: {{ include "testor.fullname" . }}-agent
-  minReplicaCount: {{ .Values.agents.autoscaling.minReplicas }}
-  maxReplicaCount: {{ .Values.agents.autoscaling.maxReplicas }}
+    name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  minReplicaCount: {{ $a.minReplicas }}
+  maxReplicaCount: {{ $a.maxReplicas }}
   triggers:
     - type: prometheus
       metadata:
-        serverAddress: {{ .Values.agents.autoscaling.prometheusServer }}
-        query: sum(testor_jobs{status="queued"}) + sum(testor_jobs{status=~"leased|running"})
-        threshold: {{ .Values.agents.autoscaling.queuedPerAgent | quote }}
+        serverAddress: {{ $a.prometheusServer }}
+        query: sum(testor_jobs{status=~"queued|leased|running",{{ $sel }}}) or vector(0)
+        threshold: {{ $a.queuedPerAgent | quote }}
+{{- else if eq $g.mode "job" }}
+---
+# A Kubernetes Job per run (the design's kubernetes executor): KEDA starts one per queued job;
+# its agent takes that job (-Once) and the pod ends with it. KEDA creates the pods: nothing that
+# runs test code may create pods.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  labels: {{- include "testor.labels" $ | nindent 4 }}
+spec:
+  pollingInterval: 15
+  minReplicaCount: {{ $a.minReplicas }}
+  maxReplicaCount: {{ $a.maxReplicas }}
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTargetRef:
+    backoffLimit: 0
+    ttlSecondsAfterFinished: 600
+    template:
+      metadata:
+        labels: {{- include "testor.agentGroupSelector" (dict "root" $ "group" $g) | nindent 10 }}
+      spec: {{- include "testor.agentPodSpec" (dict "root" $ "group" $g) | nindent 8 }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ $a.prometheusServer }}
+        query: sum(testor_jobs{status="queued",{{ $sel }}}) or vector(0)
+        threshold: {{ $a.queuedPerAgent | quote }}
+{{- end }}
+{{- end }}
 {{- end }}

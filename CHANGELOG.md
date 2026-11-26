@@ -21,6 +21,13 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   badge; `report.junit.xml` and `report.ctrf.json` export a run's results; hotspots
   (`/api/v1/projects/<p>/hotspots`, MCP `find_hotspots`) rank the costliest spec files. XML is
   read with OTP's xmerl, entities refused.
+- **Heavy jobs** ([docs/heavy-jobs.md](docs/heavy-jobs.md)): timeouts (a command's, a job's
+  shorter one, `execution.defaultTimeout`, `run.ps1 -TimeoutSeconds`, `TIMEOUT`), a memory guard
+  that ends a run before the OOM killer does, `TESTOR_CPUS` and `TESTOR_MEMORY_MB` from the
+  cgroup (and `"limits": "auto"` for Go, Cargo, .NET, Node and pytest), cgroup limits in device
+  stats, agent profiles in the Helm chart (a Deployment each, or a KEDA ScaledJob per run) on
+  per-label queues (`testor_jobs{status,label}`), a per-project lock and `ISOLATE=copy`
+  workspaces for SSH runs, and a container executor.
 - **Commands as objects** in `agent.json` (`command`, `reports`, `artifacts`, `preserve`), a
   plain string still working; preserved caches survive isolated workspaces; `KEEP` takes
   paths, `PRESERVE` and `CLEAN=1` in `remote.yml`, and `"clean": true` on a job.
