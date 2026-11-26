@@ -37,9 +37,10 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 ### 0.11: many testors, other backends
 
 - A **hub**: the board and history across several testors, filtered by runner label.
-- [Storage, queue and event ports](docs/design/ports.md): PostgreSQL for the run index and
-  events, S3-compatible object storage as the primary store for logs and artifacts, RabbitMQ,
-  NATS or SQS for jobs.
+- **Several testors serving one team** (done, in the next release): one shared home and one
+  PostgreSQL, claims for what must happen once.
+- [Storage, queue and event ports](docs/design/ports.md): S3-compatible object storage as the
+  primary store (no shared volume), RabbitMQ, NATS or SQS for jobs.
 - Signed links bound to the viewer and minutes long.
 
 ### Later

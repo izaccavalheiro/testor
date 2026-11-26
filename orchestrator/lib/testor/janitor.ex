@@ -26,8 +26,10 @@ defmodule Testor.Janitor do
 
   @impl true
   def handle_info({:scheduled, reason}, state) do
-    safe_cleanup(reason)
     minutes = max(1, Config.retention()["cleanupIntervalMinutes"])
+    # One testor cleans a shared home in each period (Testor.Cluster).
+    period = div(System.os_time(:second), minutes * 60)
+    if Testor.Cluster.claim("janitor", "#{reason}-#{period}"), do: safe_cleanup(reason)
     Process.send_after(self(), {:scheduled, "scheduled"}, minutes * 60_000)
     {:noreply, state}
   end

@@ -22,6 +22,10 @@ auth:
   existingSecret: ""
   adminUser: admin
 
+# Testors serving one team: more than one needs database.existingSecret and a volume every
+# replica mounts (persistence.accessModes: [ReadWriteMany]: EFS, Filestore, Azure Files, NFS).
+replicas: 1
+
 # The job queue in PostgreSQL: a Secret with a key "url",
 # postgres://testor:<password>@<host>:5432/testor?sslmode=verify-full. Jobs then outlive the
 # pod and its volume, and testors sharing the database share the queue.

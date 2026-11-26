@@ -11,7 +11,9 @@ defmodule Testor.Audit do
   `sig` signs the line without it, with the attestation key (`Testor.Attestation`), so anyone
   with the public key (`GET /api/v1/attestation/key`) can check the trail; `verify/2` does.
   The first entry's `prev` is 64 zeros. When the file passes #{16} MB it is renamed
-  `audit-<time>.jsonl` and the chain goes on in a new file.
+  `audit-<time>.jsonl` and the chain goes on in a new file. Testors sharing a home
+  (`Testor.Cluster`) each keep `audit.<instance>.jsonl`, and `GET /api/v1/audit` shows the trail
+  of the testor that answers.
   """
   use GenServer
   require Logger
@@ -21,7 +23,13 @@ defmodule Testor.Audit do
   @max_bytes 16 * 1024 * 1024
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
-  def file, do: Path.join(Config.data_dir(), "audit.jsonl")
+  # Testors sharing a home each write a trail of their own: a chain has one writer.
+  def file,
+    do:
+      Path.join(
+        Config.data_dir(),
+        if(Testor.Cluster.enabled?(), do: "audit.#{Testor.Cluster.instance()}.jsonl", else: "audit.jsonl")
+      )
 
   @doc "Appends an entry (`event` and its fields); returns at once."
   def record(event, fields), do: GenServer.cast(__MODULE__, {:record, event, fields})
@@ -140,7 +148,7 @@ defmodule Testor.Audit do
   defp rotate(state) do
     if Testor.Files.size(file()) > Application.get_env(:testor, :audit_max_bytes, @max_bytes) do
       stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S")
-      File.rename!(file(), Path.join(Config.data_dir(), "audit-#{stamp}.jsonl"))
+      File.rename!(file(), String.replace_suffix(file(), ".jsonl", "-#{stamp}.jsonl"))
     end
 
     state

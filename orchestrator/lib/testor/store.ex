@@ -270,12 +270,15 @@ defmodule Testor.Store do
     state
   end
 
-  # Once per run, when it has ended and is in the table: sign it, tell the webhooks.
+  # Once per run, when it has ended and is in the table: sign it, tell the webhooks. Once
+  # across testors sharing a home too (Testor.Cluster).
   defp finished(id) do
-    Testor.Attestation.attest_later(id)
-    Testor.Webhooks.notify("run.finished", id)
-    Testor.CommitStatus.notify(id)
-    if run = get(id), do: Testor.Tracing.run_ended(run)
+    if Testor.Cluster.claim("finished", id) do
+      Testor.Attestation.attest_later(id)
+      Testor.Webhooks.notify("run.finished", id)
+      Testor.CommitStatus.notify(id)
+      if run = get(id), do: Testor.Tracing.run_ended(run)
+    end
   end
 
   defp keep_annotations(run, nil), do: run
@@ -316,8 +319,8 @@ defmodule Testor.Store do
 
     Logger.info("store: #{id} started (#{run["project"]} #{run["kind"]})")
     Events.broadcast("global", "run", run)
-    # Its commit's pull request shows it running (Testor.CommitStatus).
-    Testor.CommitStatus.notify(id)
+    # Its commit's pull request shows it running (Testor.CommitStatus), from one testor.
+    if Testor.Cluster.claim("started", id), do: Testor.CommitStatus.notify(id)
   end
 
   defp on_finish(run) do

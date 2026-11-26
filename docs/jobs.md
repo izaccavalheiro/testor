@@ -170,10 +170,25 @@ TESTOR_DATABASE_URL=postgres://testor:<password>@db.example.com:5432/testor?sslm
   is unavailable, and nothing is lost.
 - The Helm chart takes it from a Secret (`database.existingSecret`, key `url`).
 
-This is the first step towards several testors serving one team: today the queue is shared,
-while runs, logs and files stay with the testor that recorded them (the run index and the
-files follow, see the [roadmap](../ROADMAP.md)). Use it so jobs outlive a testor's machine or
-volume, and for a standby that takes over the queue.
+### Several testors
+
+Several testors can serve one team behind a load balancer, each answering any request: give
+them **one testor home** (a volume they all mount: EFS, Filestore, Azure Files, NFS) and **one
+database** (`TESTOR_DATABASE_URL`).
+
+- The home holds the runs, logs, screenshots, artifacts and settings: every testor sees and
+  serves every run, and an agent's run arrives whole whichever testor each request reaches.
+- The database holds the queue, the approvals, and **claims**: what must happen once (a run's
+  signature, archive, webhooks, commit statuses and trace; a schedule's job for a minute; the
+  janitor's cleaning) is done by the first testor that claims it.
+- Each testor writes its own audit trail, `audit.<instance>.jsonl` (`TESTOR_INSTANCE`, by
+  default its host name; the chart gives each pod its name): a chain has one writer.
+- The Helm chart: `replicas: 3`, `persistence.accessModes: [ReadWriteMany]` with a storage
+  class that offers it, and `database.existingSecret`; it refuses more than one replica
+  without them.
+
+Live event streams come from the testor a browser is connected to, which watches the shared
+home like the others.
 
 ## Isolation
 
