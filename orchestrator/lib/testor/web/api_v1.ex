@@ -505,6 +505,14 @@ defmodule Testor.Web.ApiV1 do
       instance =
         if is_binary(params["instance"]), do: agent <> "/" <> String.slice(params["instance"], 0, 100)
 
+      # What it says of itself, for get_capacity: its slots and how many are busy.
+      slots = if is_integer(params["slots"]) and params["slots"] in 1..256, do: params["slots"], else: 1
+
+      busy =
+        if is_integer(params["busy"]) and params["busy"] in 0..256, do: min(params["busy"], slots), else: 0
+
+      Jobs.seen(instance || agent, labels, slots, busy)
+
       case wait_for_job(agent, labels, deadline, conn.assigns.principal, instance) do
         {:ok, job} -> json(conn, 200, job)
         :none -> send_resp(conn, 204, "")

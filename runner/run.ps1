@@ -255,7 +255,7 @@ if ($deadline -gt 0 -or $guard) {
     }
   } catch { Write-Warning "testor: the processes before the run: $_" }
 }
-$shared = [hashtable]::Synchronized(@{ reason = $null; done = $false; record = $record; runFile = $runFile; notes = [Collections.Concurrent.ConcurrentQueue[string]]::new() })
+$shared = [hashtable]::Synchronized(@{ reason = $null; done = $false; record = $record; runFile = $runFile; peak = [long]0; notes = [Collections.Concurrent.ConcurrentQueue[string]]::new() })
 
 # Cancelling: the orchestrator writes cancel\<id>, and this session ends its own process tree
 # (this PowerShell included), so the orchestrator never kills processes of another account.
@@ -335,6 +335,8 @@ try {
       if ($guard -and ([DateTime]::UtcNow - $sampled).TotalSeconds -ge 1) {
         $sampled = [DateTime]::UtcNow
         $share = try { Get-MemoryShare } catch { 0 }
+        # The tree's peak, for sizing (memory.peakMB) where the cgroup keeps none.
+        try { $b = (Get-Tree $owner).bytes; if ($b -gt $shared.peak) { $shared.peak = $b } } catch { }
         if ($share -ge $guard[1]) { $shared.notes.Enqueue("testor: memory at $([math]::Round($share))%, over the guard's $($guard[1])%: ending the run"); Stop-Run "memory"; return }
         if ($share -ge $guard[0] -and -not $warned) { $warned = $true; $shared.notes.Enqueue("testor: memory at $([math]::Round($share))%, over the guard's warning at $($guard[0])%") }
       }
@@ -437,6 +439,9 @@ try {
     }
     $record.endedAt = $ended.ToUniversalTime().ToString("o")
     $record.durationMs = [int]($ended - $started).TotalMilliseconds
+    # The peak memory (predictive sizing): the container's, else what the memory guard saw.
+    $peak = if ($IsLinux -and (Test-Path /sys/fs/cgroup/memory.peak)) { try { [long](Get-Content -Raw /sys/fs/cgroup/memory.peak).Trim() } catch { 0 } } else { $shared.peak }
+    if ($peak -gt 0) { $record.memory = [ordered]@{ peakMB = [math]::Round($peak / 1MB) } }
 
     $videos = @()
     foreach ($file in @(Find-Media $workdir $false)) {

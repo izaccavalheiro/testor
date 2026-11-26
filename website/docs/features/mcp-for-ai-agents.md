@@ -28,6 +28,9 @@ to 2025-11-25).
 
 ## Tools
 
+With the execute scope, an agent can also offload its own checks: see the
+[verification loop](../reference/mcp.md#verification-loop).
+
 | Tool | Scope | Use it to |
 | ---- | ----- | --------- |
 | `get_status` | read | see what runs now, sessions outside testor, disk space, the latest result per project and task |
@@ -38,6 +41,11 @@ to 2025-11-25).
 | `list_projects` | read | the latest run of every project and task with its recent history |
 | `get_device` | read | the runner's hardware and current load |
 | `cancel_run` | operate | stop a running run's process tree |
+| `get_run_digest` | read | read only the failures: tests, messages, the project's stack frames |
+| `get_impacted_tests`, `get_capacity` | read | which tests a change affects, first; whether agents are free |
+| `queue_job`, `offload_change` | execute | run a task on an agent, for a ref or a working tree's snapshot (never a command), within a budget |
+| `run_mutation_check` | execute | mutation-test the changed files and get the surviving mutants back |
+| `open_session`, `push_change`, `get_session_results` | execute | keep one warm workspace across many small edits |
 | `delete_run` | operate | remove a finished run and its files |
 
 An agent only sees the tools its token's scopes allow: a `read` token cannot cancel or delete.

@@ -24,6 +24,8 @@ change, and it is announced under **Breaking** in the [changelog](CHANGELOG.md) 
 | Taskfiles | the tasks and variables of `taskfiles/remote.yml` and `taskfiles/testor.yml` that are documented |
 | Configuration | keys of `config.json` and `auth.json`, their defaults' meaning, the environment variables `TESTOR_HOME`, `TESTOR_WORKSPACES`, `TESTOR_PORT`, `TESTOR_BIND`, `TESTOR_JWT_SECRET`, `TESTOR_TOKEN_KEY` |
 | Auth | roles, scopes and what each allows; the token claims; the JWKS at `/.well-known/jwks.json`; `Testor.Auth.CLI` functions |
+| Runner scripts | `agent.ps1`'s `agent.json` keys (commands as strings or objects: `argv`, `select`, `affected`, `state`, `reports`, `artifacts`, `preserve`, `rerun`; `snapshots`, `cache`, `slots`, `exec`), its parameters (`-Config`, `-Once`, `-Detect`), the environment it gives a job (`TESTOR_SELECT_*`, `TESTOR_SHARD_*`, `TESTOR_TEST_ORDER`, `TESTOR_CHANGED_FILES`); `testor.ps1 run` and `watch` with their flags; `snapshot.ps1`'s parameters |
+| Data formats | snapshot manifests and ids (`sha256:<hex>` of the canonical manifest), the `.streams` marks beside a log, the state store's names |
 | Platforms | the runner and workstation OSes and the minimum Erlang/OTP, Elixir, PowerShell and Task versions in the README. Raising a minimum is breaking |
 
 **Not covered**, and free to change in any release (the changelog still says so when it

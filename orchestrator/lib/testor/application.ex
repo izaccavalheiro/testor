@@ -31,6 +31,8 @@ defmodule Testor.Application do
         Testor.Storage.Shared,
         Testor.Store,
         Testor.Jobs,
+        # What MCP tools that queue work may spend (mcp.jobBudget).
+        Testor.Budget,
         Testor.Schedules,
         Testor.Approvals,
         Testor.Hub,

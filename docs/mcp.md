@@ -39,10 +39,52 @@ The tools listed are the ones the caller's scopes allow.
 | `cancel_run` | operate | kills a running run's process tree |
 | `delete_run` | operate | deletes a finished run with its log, screenshots and artifacts |
 | `get_approval` | read | the state of an approval a tool asked for, and its result once done |
+| `get_run_digest` | read | a run's counts, each failing test with its message, the project's first stack frames ([handoff](handoff.md#failure-digest)); fenced |
+| `get_impacted_tests` | read | spec files ranked for changed files, with the reasons ([impact](impact.md)) |
+| `get_capacity` | read | agents seen per label, free slots, queued jobs per label, the wait estimated from recent leases |
+| `queue_job` | execute | a job of a project's task (a ref or a snapshot, labels, `select`, `shards`, `order`); never a command; spends the [budget](#budget) |
+| `offload_change` | execute | the same for a working tree's snapshot (`testor run --snapshot-only`); spends the budget |
+| `run_mutation_check` | execute | the mutation task on the changed files only, waiting up to `wait` seconds; the surviving mutants, fenced; spends the budget |
+| `open_session`, `push_change` | execute | a warm [watch session](handoff.md#watch-sessions), and each edit as a new snapshot; opening spends the budget |
+| `get_session_results` | read | a session's runs, newest first, with the latest one's digest |
 
 Results carry the data as JSON text and as `structuredContent`; a tool that fails answers
 `isError: true` with the reason. Screenshot and artifact links are absolute and, while
 authentication is on, signed, so the agent can fetch them without credentials.
+
+## Budget
+
+Tools that queue work (`queue_job`, `offload_change`, `run_mutation_check`, `open_session`)
+spend the caller's budget, so a looping or prompt-injected assistant cannot flood the queue:
+
+```json
+{ "mcp": { "jobBudget": { "perMinute": 10, "perDay": 200 } } }
+```
+
+Each answer says what is left. The counts are kept in memory per caller and start again when
+testor restarts. None of these tools carries a command: [exec mode](handoff.md#exec-mode) is
+not open to MCP.
+
+## Verification loop
+
+How an assistant checks its own change without the developer's laptop running the work. testor
+writes no code: this is how to use it.
+
+1. **Offload.** With a shell, `pwsh runner/testor.ps1 run --affected=then-all --quiet --digest`
+   does it all and exits with the tests' code. Without one, run
+   `pwsh runner/testor.ps1 run --snapshot-only` (it uploads only what testor lacks and prints the
+   snapshot's id) and call `offload_change` with it.
+2. **Wait** with `wait_for_run`, then read `get_run_digest`: the failing tests and their
+   messages, not the whole log.
+3. **Fix** what failed and go back to 1.
+4. **Check the tests themselves:** `run_mutation_check` with the files you changed returns the
+   mutants no test killed (file, line, original and replacement). Write a test that kills each,
+   and check again: a killed survivor no longer shows.
+5. **Stop** when the digest is clean and no survivor is left, or when the budget says so.
+
+`get_capacity` tells whether agents are free; `get_impacted_tests` which tests to run first.
+For many small edits, `open_session` keeps one warm workspace: `push_change` each snapshot and
+read `get_session_results`.
 
 ## Approvals
 

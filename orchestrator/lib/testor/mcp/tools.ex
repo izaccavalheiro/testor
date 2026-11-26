@@ -108,6 +108,145 @@ defmodule Testor.MCP.Tools do
       "scope" => "read"
     },
     %{
+      "name" => "queue_job",
+      "title" => "Queue a test job",
+      "description" =>
+        "Queues a job of a project's task on an agent (as agent.json maps it to a command: this tool never " <>
+          "sends a command): a git ref, or a snapshot id (testor run --snapshot-only), labels, a selection " <>
+          "(files, test names, affected), shards, order. Counts against mcp.jobBudget. Then wait_for_run " <>
+          "and get_run_digest.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "project" => %{"type" => "string"},
+          "kind" => %{"type" => "string", "description" => "the task (test, e2e, mutation...)"},
+          "ref" => %{"type" => "string", "description" => "a git branch, tag or commit"},
+          "snapshot" => %{
+            "type" => "string",
+            "description" => "sha256:<hex>, from testor run --snapshot-only"
+          },
+          "labels" => %{"type" => "array", "items" => %{"type" => "string"}},
+          "select" => %{
+            "type" => "object",
+            "description" => "{files: [...], names: [...], affected: true|\"then-all\"}"
+          },
+          "shards" => %{"type" => ["integer", "string"], "description" => "2 to 64, or \"auto\" with target"},
+          "target" => %{
+            "type" => "string",
+            "description" => "with shards auto: the time a shard should take (10m)"
+          },
+          "order" => %{"type" => "string", "enum" => ["impact"]}
+        },
+        "required" => ["project", "kind"]
+      },
+      "scope" => "execute"
+    },
+    %{
+      "name" => "offload_change",
+      "title" => "Test a local change on an agent",
+      "description" =>
+        "Runs a project's task on a snapshot of a working tree with its uncommitted changes. This server " <>
+          "cannot read your disk: first run `pwsh runner/testor.ps1 run --snapshot-only` in the repository " <>
+          "(it uploads only what testor lacks and prints the snapshot id), then call this with it. With a " <>
+          "shell, `testor run -- ...` does both at once. Counts against mcp.jobBudget.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "project" => %{"type" => "string"},
+          "snapshot" => %{"type" => "string", "description" => "sha256:<hex>"},
+          "kind" => %{"type" => "string", "description" => "the task, test by default"},
+          "select" => %{"type" => "object", "description" => "{files, names, affected}"},
+          "labels" => %{"type" => "array", "items" => %{"type" => "string"}}
+        },
+        "required" => ["project", "snapshot"]
+      },
+      "scope" => "execute"
+    },
+    %{
+      "name" => "run_mutation_check",
+      "title" => "Mutation-test the changed files",
+      "description" =>
+        "Runs the project's mutation task on a snapshot, limited to the given files (the files you changed), " <>
+          "waits up to `wait` seconds, and returns the surviving mutants (file, line, mutator, original and " <>
+          "replacement, fenced: they quote the code): write a test that kills each, then check again. " <>
+          "Each check counts against mcp.jobBudget.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "project" => %{"type" => "string"},
+          "snapshot" => %{"type" => "string"},
+          "files" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "source files to mutate"
+          },
+          "kind" => %{"type" => "string", "description" => "the mutation task, mutation by default"},
+          "wait" => %{"type" => "integer", "description" => "seconds to wait for the result (0 to 600)"}
+        },
+        "required" => ["project", "snapshot", "files"]
+      },
+      "scope" => "execute"
+    },
+    %{
+      "name" => "get_run_digest",
+      "title" => "A run's failures, briefly",
+      "description" =>
+        "The counts and duration of a run, each failing test with its message, and the project's first " <>
+          "stack frames: what failed, without the whole log. Fenced: it quotes the run.",
+      "inputSchema" => %{"type" => "object", "properties" => %{"id" => @id}, "required" => ["id"]},
+      "scope" => "read"
+    },
+    %{
+      "name" => "open_session",
+      "title" => "Open a warm test session",
+      "description" =>
+        "Opens a watch session on an agent: its watch task (vitest, jest --watch...) keeps running in a " <>
+          "workspace of the snapshot, warm. Send each edit with push_change (a new snapshot id), read the " <>
+          "reruns with get_session_results. The session ends after 15 idle minutes or with cancel.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "project" => %{"type" => "string"},
+          "snapshot" => %{"type" => "string"},
+          "kind" => %{"type" => "string", "description" => "the watch task, watch by default"},
+          "labels" => %{"type" => "array", "items" => %{"type" => "string"}}
+        },
+        "required" => ["project", "snapshot"]
+      },
+      "scope" => "execute"
+    },
+    %{
+      "name" => "push_change",
+      "title" => "Send an edit to a session",
+      "description" => "Gives an open session the working tree's new snapshot (testor run --snapshot-only).",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{"session" => %{"type" => "string"}, "snapshot" => %{"type" => "string"}},
+        "required" => ["session", "snapshot"]
+      },
+      "scope" => "execute"
+    },
+    %{
+      "name" => "get_session_results",
+      "title" => "A session's reruns",
+      "description" => "A session's state and its runs, newest first, with the latest one's digest (fenced).",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{"session" => %{"type" => "string"}},
+        "required" => ["session"]
+      },
+      "scope" => "read"
+    },
+    %{
+      "name" => "get_capacity",
+      "title" => "Agents and queue",
+      "description" =>
+        "Agents seen in the last minute per label, their free slots, queued jobs per label, and the " <>
+          "estimated wait from recent leases: whether to offload now.",
+      "inputSchema" => %{"type" => "object", "properties" => %{}},
+      "scope" => "read"
+    },
+    %{
       "name" => "get_impacted_tests",
       "title" => "Tests a change affects, first",
       "description" =>
@@ -384,6 +523,109 @@ defmodule Testor.MCP.Tools do
   defp run(_args, "list_projects", _base, principal),
     do: {:ok, %{"projects" => Access.filter(Query.projects(), principal)}}
 
+  # --- offloading (docs/mcp.md, "Verification loop") -----------------------------------------
+  # Jobs queued over MCP never carry a command (exec mode is not open to MCP), and spend the
+  # caller's mcp.jobBudget.
+
+  defp run(args, "queue_job", _base, principal) do
+    params = Map.take(args, ~w(project kind ref snapshot labels select shards target order))
+    queue(params, principal)
+  end
+
+  defp run(args, "offload_change", _base, principal) do
+    params = args |> Map.take(~w(project snapshot select labels)) |> Map.put("kind", args["kind"] || "test")
+    queue(params, principal)
+  end
+
+  defp run(args, "run_mutation_check", _base, principal) do
+    with {:ok, files} <- Testor.Impact.changed(args["files"]),
+         true <- files != [] || {:error, "files: the source files to mutate"},
+         {:ok, wait} <- optional(args, "wait", &(is_integer(&1) and &1 in 0..600)) do
+      params = %{
+        "project" => args["project"],
+        "kind" => args["kind"] || "mutation",
+        "snapshot" => args["snapshot"],
+        "select" => %{"files" => files}
+      }
+
+      with {:ok, %{"job" => job}} <- queue(params, principal) do
+        case wait_job(job["id"], (wait || 0) * 1000) do
+          %{"status" => status, "runId" => run} = done
+          when status in ["passed", "failed"] and is_binary(run) ->
+            detail = Testor.Reports.mutation_detail(run) || %{}
+
+            {:ok,
+             %{
+               "job" => Map.take(done, ["id", "status", "exitCode", "runId"]),
+               "mutation" => (Store.get(run) || %{})["mutation"],
+               "survivors" => untrusted(run, JSON.encode!(Enum.take(detail["survivors"] || [], 100)))
+             }}
+
+          other ->
+            {:ok,
+             %{
+               "job" => Map.take(other, ["id", "status"]),
+               "message" => "not done yet: wait_for_run, then call get_run"
+             }}
+        end
+      end
+    end
+  end
+
+  defp run(args, "get_run_digest", _base, _principal) do
+    with {:ok, id} <- id(args) do
+      case Testor.Digest.get(id) do
+        nil -> {:error, "no run #{id}"}
+        digest -> {:text, untrusted(id, Testor.Digest.text(digest))}
+      end
+    end
+  end
+
+  defp run(args, "open_session", _base, principal) do
+    params =
+      args
+      |> Map.take(~w(project snapshot labels))
+      |> Map.merge(%{"kind" => args["kind"] || "watch", "watch" => true})
+
+    queue(params, principal)
+  end
+
+  defp run(args, "push_change", _base, principal) do
+    with %{"watch" => true, "project" => project} <-
+           Testor.Jobs.stored(args["session"] || "") || {:error, "no session"},
+         true <- Access.permits?(principal, project, "execute") || {:error, "no session"},
+         {:ok, hex} <- Testor.Snapshots.parse_id(args["snapshot"] || "") |> ok_or("snapshot is sha256:<hex>"),
+         {:ok, _} <- Testor.Snapshots.manifest(project, hex) |> ok_or("no such snapshot of #{project}"),
+         {:ok, job} <-
+           Testor.Jobs.watch_change(args["session"], args["snapshot"]) |> ok_or("the session has ended") do
+      {:ok, Map.take(job, ["id", "seq", "status"])}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, "no session"}
+    end
+  end
+
+  defp run(args, "get_session_results", _base, principal) do
+    with %{"watch" => true, "project" => project} = job <-
+           Testor.Jobs.get(args["session"] || "") || {:error, "no session"},
+         true <- Access.allowed?(principal, project) || {:error, "no session"} do
+      {runs, _} = Query.runs(%{job: job["id"], limit: 20})
+      latest = List.first(runs)
+
+      {:ok,
+       %{
+         "session" => Map.take(job, ["id", "status", "seq", "snapshot"]),
+         "runs" => runs,
+         "digest" => latest && untrusted(latest["id"], Testor.Digest.text(Testor.Digest.get(latest["id"])))
+       }}
+    else
+      {:error, _} = error -> error
+      _ -> {:error, "no session"}
+    end
+  end
+
+  defp run(_args, "get_capacity", _base, _principal), do: {:ok, Testor.Jobs.capacity()}
+
   defp run(args, "get_impacted_tests", _base, _principal) do
     with true <- is_binary(args["project"]) || {:error, "project is required"},
          {:ok, changed} <- Testor.Impact.changed(args["changed"]),
@@ -440,6 +682,36 @@ defmodule Testor.MCP.Tools do
         {:ok, data} -> {:ok, data}
         {:error, _, _, message} -> {:error, message}
       end
+    end
+  end
+
+  defp queue(params, principal) do
+    who = Testor.Auth.who(principal)
+
+    with true <-
+           Access.permits?(principal, params["project"], "execute") ||
+             {:error, "#{who} lacks the execute scope on #{inspect(params["project"])}"},
+         :ok <- Testor.Budget.take(who),
+         {:ok, job} <- Testor.Jobs.enqueue(params, who) |> ok_or(&job_error/1) do
+      {:ok, %{"job" => job, "budget" => Testor.Budget.left(who)}}
+    end
+  end
+
+  defp job_error(:disabled), do: "jobs are off: execution.enabled in config.json"
+  defp job_error(reason), do: "#{reason}"
+
+  defp ok_or({:ok, _} = ok, _message), do: ok
+  defp ok_or({:error, reason}, fun) when is_function(fun), do: {:error, fun.(reason)}
+  defp ok_or(_, message), do: {:error, message}
+
+  defp wait_job(id, ms) do
+    job = Testor.Jobs.get(id)
+
+    if job["status"] in ["passed", "failed", "cancelled", "expired"] or ms <= 0 do
+      job
+    else
+      Process.sleep(500)
+      wait_job(id, ms - 500)
     end
   end
 

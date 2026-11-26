@@ -55,6 +55,8 @@ helm upgrade testor deploy/helm/testor --reuse-values \
 | `agents.secretMounts` | `[]` | `{secret, mountPath}`: Secrets mounted read-only, for secrets referenced as `file:` |
 | `agents.vault` | `{}` | agent.json's `vault`: `address`, `kubernetesRole`, `namespace`... |
 | `agents.serviceAccount` | none | `create`, `name`, `annotations` (a cloud workload identity for `aws:`, `gcp:`, `azure:`), `automountToken` (for Vault's Kubernetes login) |
+| `agents.terminationGracePeriodSeconds` | `120` | the time a stopped pod gives its job to end as preempted (state saved, run sent): it is queued again without spending an attempt |
+| `agents.podDisruptionBudget` | off | `enabled`, `maxUnavailable` (1): one agent of each group at a time in drains and spot consolidation |
 | `agents.persistence` | off | `enabled`, `size` (20Gi), `storageClass`, `accessModes`: warm agents, a StatefulSet with a volume per pod for the agent's home ([snapshots](../../../docs/snapshots.md#warm-agents)); a profile may set its own |
 | `agents.labels` | `[linux]` | jobs asking for labels go to agents that have them all |
 | `agents.autoscaling.keda` | `false` | a KEDA ScaledObject on `testor_jobs` (Prometheus), from `minReplicas` (0) to `maxReplicas` |

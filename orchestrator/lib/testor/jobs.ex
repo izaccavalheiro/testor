@@ -86,7 +86,8 @@ defmodule Testor.Jobs do
         {:error, "no queue takes jobs with the labels #{Enum.join(labels, ", ")} (execution.queue.queues)"}
 
       true ->
-        with {:ok, source} <- snapshot(params),
+        with {:ok, params} <- sized(params),
+             {:ok, source} <- snapshot(params),
              {:ok, source} <- exec_claim(params, source, who) do
           source = params |> cached(source) |> plan(params) |> order(params)
 
@@ -97,6 +98,43 @@ defmodule Testor.Jobs do
         end
     end
   end
+
+  # Predictive sizing (Testor.Sizing): "shards": "auto" with a target becomes a number of
+  # shards (or a plain job); a suggested profile, whose labels "profile": "auto" adds.
+  defp sized(params) do
+    project = params["project"]
+    kind = params["kind"]
+
+    with {:ok, params} <- auto_shards(params, project, kind) do
+      case (is_binary(project) and is_binary(kind)) &&
+             Testor.Sizing.profile(project, kind, settings()["profiles"]) do
+        {name, labels} ->
+          params = Map.put(params, "suggestedProfile", name)
+
+          {:ok, if(params["profile"] == "auto", do: add_labels(params, labels), else: params)}
+
+        _ ->
+          {:ok, params}
+      end
+    end
+  end
+
+  defp add_labels(params, labels), do: Map.update(params, "labels", labels, &(List.wrap(&1) ++ labels))
+
+  defp auto_shards(%{"shards" => "auto"} = params, project, kind) do
+    with n when is_integer(n) <-
+           seconds(params["target"]) ||
+             {:error, "shards auto needs a target: the time a shard should take (10m)"},
+         true <- (is_binary(project) and is_binary(kind)) || {:error, "project and kind are names"},
+         {:ok, shards} <- Testor.Sizing.shards(project, kind, n, capacity()["slots"]) do
+      {:ok, if(shards > 1, do: Map.put(params, "shards", shards), else: Map.delete(params, "shards"))}
+    else
+      :error -> {:error, "target is seconds (1 to 86400) or 90s, 45m, 2h"}
+      error -> error
+    end
+  end
+
+  defp auto_shards(params, _project, _kind), do: {:ok, params}
 
   # A job's snapshot, read before it is queued: its id, the branch and commit it is of, and with
   # select.affected the files that changed since its base.
@@ -344,6 +382,43 @@ defmodule Testor.Jobs do
   @doc "Sweeps leases as at `now` (Unix seconds); the timer does it every few seconds."
   def sweep_now(now), do: GenServer.call(__MODULE__, {:sweep, now})
 
+  @doc "What an agent says of itself when it asks for a job: its labels, slots and busy ones."
+  def seen(who, labels, slots, busy),
+    do: :ets.insert(@warm, {{:agent, who}, System.os_time(:second), labels, slots, busy})
+
+  @doc """
+  The agents seen in the last minute (per label), their slots and free ones, the queued jobs
+  (per label), and the wait estimated from the last leases (the median, in seconds).
+  """
+  def capacity do
+    now = System.os_time(:second)
+
+    agents =
+      for {{:agent, _}, at, labels, slots, busy} <- :ets.tab2list(@warm),
+          now - at <= 60,
+          do: {labels, slots, busy}
+
+    jobs = list()
+    queued = Enum.filter(jobs, &(&1["status"] == "queued"))
+
+    waits =
+      for %{"leasedAt" => leased, "createdAt" => created} <- Enum.take(jobs, 50),
+          {:ok, l, _} <- [DateTime.from_iso8601(leased)],
+          {:ok, c, _} <- [DateTime.from_iso8601(created)],
+          do: max(DateTime.diff(l, c, :millisecond), 0) / 1000
+
+    %{
+      "agents" => length(agents),
+      "agentsByLabel" => agents |> Enum.flat_map(&elem(&1, 0)) |> Enum.frequencies(),
+      "slots" => agents |> Enum.map(&elem(&1, 1)) |> Enum.sum(),
+      "freeSlots" => agents |> Enum.map(fn {_, slots, busy} -> max(slots - busy, 0) end) |> Enum.sum(),
+      "queued" => length(queued),
+      "queuedByLabel" => queued |> Enum.flat_map(& &1["labels"]) |> Enum.frequencies(),
+      "estimatedWaitSeconds" =>
+        if(waits == [], do: nil, else: Float.round(Testor.Shards.percentile(waits, 50) * 1.0, 1))
+    }
+  end
+
   @doc "Claims batch `id`'s merge: `:ok` once, `:taken` after."
   def claim_batch(id), do: GenServer.call(__MODULE__, {:batch, id, :claim})
 
@@ -496,24 +571,9 @@ defmodule Testor.Jobs do
   def handle_call({:finish, id, agent, result}, _from, state) do
     transact(state, {:id, id}, fn jobs ->
       with {:ok, job} <- held(jobs, id, agent) do
-        exit_code = if is_integer(result["exitCode"]), do: result["exitCode"], else: nil
-
-        status =
-          cond do
-            job["cancelRequested"] == true -> "cancelled"
-            exit_code == 0 and result["error"] == nil -> "passed"
-            true -> "failed"
-          end
-
-        job =
-          job
-          |> Map.merge(%{"status" => status, "exitCode" => exit_code, "endedAt" => now_iso()})
-          |> put_if("error", short(result["error"]))
-          |> Map.delete("leaseUntil")
-          |> link_run()
-
-        Logger.info("jobs: #{id} #{status} on #{agent}")
-        {{:ok, job}, [job]}
+        if result["preempted"] == true and job["cancelRequested"] != true,
+          do: preempted(job, agent),
+          else: finished(job, agent, result)
       else
         error -> {error, []}
       end
@@ -693,6 +753,45 @@ defmodule Testor.Jobs do
     {:reply, reply, {backend, state}}
   end
 
+  # Its agent was evicted (a spot notice, a drain): queued again without spending an attempt, up
+  # to execution.maxPreemptions times.
+  defp preempted(job, agent) do
+    count = (job["preemptions"] || 0) + 1
+
+    job =
+      if count > settings()["maxPreemptions"] do
+        Map.merge(job, %{"status" => "failed", "error" => "preempted #{count} times", "endedAt" => now_iso()})
+      else
+        Map.merge(job, %{"status" => "queued", "attempts" => job["attempts"] - 1})
+        |> Map.drop(["agent", "leaseUntil", "leasedAt", "runId", "dispatch"])
+      end
+      |> Map.put("preemptions", count)
+
+    Logger.warning("jobs: #{job["id"]} preempted on #{agent} (#{count}): #{job["status"]}")
+    {{:ok, job}, [job]}
+  end
+
+  defp finished(job, agent, result) do
+    exit_code = if is_integer(result["exitCode"]), do: result["exitCode"], else: nil
+
+    status =
+      cond do
+        job["cancelRequested"] == true -> "cancelled"
+        exit_code == 0 and result["error"] == nil -> "passed"
+        true -> "failed"
+      end
+
+    job =
+      job
+      |> Map.merge(%{"status" => status, "exitCode" => exit_code, "endedAt" => now_iso()})
+      |> put_if("error", short(result["error"]))
+      |> Map.delete("leaseUntil")
+      |> link_run()
+
+    Logger.info("jobs: #{job["id"]} #{status} on #{agent}")
+    {{:ok, job}, [job]}
+  end
+
   # --- helpers ------------------------------------------------------------------------------
 
   # A job another agent ran the project of last: while that agent is idle (polling) and could
@@ -780,6 +879,9 @@ defmodule Testor.Jobs do
       params["shards"] != nil and (select != nil or argv != nil or params["watch"] == true) ->
         {:error, "a batch takes no select, argv or watch: its shards get their files"}
 
+      params["profile"] not in [nil, "auto"] ->
+        {:error, ~s(profile is "auto": the suggested profile's labels)}
+
       params["order"] not in [nil, "impact"] ->
         {:error, ~s(order is "impact")}
 
@@ -802,6 +904,7 @@ defmodule Testor.Jobs do
           |> put_if("failFast", if(params["failFast"] == true, do: true))
           |> put_if("cache", if(params["cache"] == false, do: false))
           |> put_if("shards", params["shards"])
+          |> put_if("suggestedProfile", params["suggestedProfile"])
           |> put_if("impact", params["impact"])
           |> then(
             &if(params["watch"] == true,

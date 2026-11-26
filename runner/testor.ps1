@@ -4,7 +4,7 @@
 #
 #   pwsh testor.ps1 run [--project p] [--kind test] [--labels linux,gpu] [--files a b] [--names x y]
 #                       [--affected | --affected=then-all] [--fail-fast] [--no-cache] [--digest] [--quiet]
-#                       [--workspace w] [--root dir] [-- <argv>]
+#                       [--workspace w] [--root dir] [--snapshot-only] [-- <argv>]
 #   pwsh testor.ps1 watch [--project p] [--kind watch] [--labels ...]
 #
 # run sends the working tree as a snapshot (only what testor lacks: runner/snapshot.ps1), queues
@@ -14,6 +14,7 @@
 # says how its command takes them); --affected runs what the change since the branch's last
 # snapshot affects, then-all the rest after; --digest prints the failures after the output, and
 # --quiet --digest only them. -- <argv> sends a command (exec mode: an agent that accepts yours).
+# --snapshot-only sends the tree and prints its snapshot's id, for an MCP client (docs/mcp.md).
 #
 # watch keeps a session open on an agent whose watch command reruns on each change: every save
 # here (after 150 ms of quiet) sends a snapshot, and the reruns' output streams back. Ctrl+C ends it.
@@ -49,6 +50,7 @@ for ($i = 1; $i -lt $args.Count; $i++) {
     "^--no-cache$" { $opts.noCache = $true; $list = $null; continue }
     "^--digest$" { $opts.digest = $true; $list = $null; continue }
     "^--quiet$" { $opts.quiet = $true; $list = $null; continue }
+    "^--snapshot-only$" { $opts.snapshotOnly = $true; $list = $null; continue }
     "^--" { Fail "unknown option $a" }
     default { if ($list) { $opts[$list] += $a } else { Fail "unexpected $a (files after --files, names after --names)" } }
   }
@@ -129,6 +131,8 @@ function Read-Run([string]$id, $state) {
 function New-Follow { @{ offset = [long]0; pending = [Collections.Generic.List[byte]]::new(); marks = ""; marksAt = [long]0; line = 0 } }
 
 $snapshot = Get-Snapshot
+# For an MCP client: the snapshot's id, for offload_change, open_session or run_mutation_check.
+if ($opts.snapshotOnly) { $snapshot; exit 0 }
 $jobId = $null
 $over = @("passed", "failed", "cancelled", "expired")
 

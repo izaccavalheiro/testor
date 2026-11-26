@@ -1,0 +1,18 @@
+{{- if and .Values.agents.enabled .Values.agents.podDisruptionBudget.enabled }}
+{{- range $g := (include "testor.agentGroups" . | fromJsonArray) }}
+{{- if eq $g.mode "deployment" }}
+---
+# Drains and consolidation take one agent of the group at a time: its job ends as preempted and
+# is queued again (docs/zero-config.md, "Spot agents").
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  labels: {{- include "testor.labels" $ | nindent 4 }}
+spec:
+  maxUnavailable: {{ $.Values.agents.podDisruptionBudget.maxUnavailable | default 1 }}
+  selector:
+    matchLabels: {{- include "testor.agentGroupSelector" (dict "root" $ "group" $g) | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- end }}
