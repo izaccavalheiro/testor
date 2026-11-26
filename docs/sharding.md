@@ -62,5 +62,10 @@ cancelled when it was. The merged record lists each shard (`batch.shards`: job, 
 duration and the SHA-256 of its attestation), so its signature binds theirs. Shard runs carry
 `shard` and are left out of release gates and commit statuses; the merged run is what they read.
 
+The dashboard shows a batch's run with a bar per shard (its time and status, a link to its
+run), and marks shards' runs in the list. A shard whose agent is stopped (SIGTERM: an eviction, a
+spot notice) ends as preempted and runs again alone, without spending an attempt; one whose agent
+vanishes comes back when its lease runs out. `scripts/shard-e2e.sh` stops an agent mid-shard.
+
 Queued shards count in `testor_jobs`, so KEDA scales agents for them; heavy kinds go to their
 [profile](heavy-jobs.md)'s agents by labels.

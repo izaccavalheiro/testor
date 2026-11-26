@@ -1133,7 +1133,8 @@ if ($slots -gt 1) {
     foreach ($done in @($children | Where-Object { $_.HasExited })) { $null = $children.Remove($done) }
     if (Test-Terminating) {
       # Each slot's job ends as preempted too: they are told, then waited for.
-      if (-not $IsWindows) { foreach ($child in $children) { & /bin/kill -TERM $child.Id 2>$null } }
+      # Through sh: its kill is a builtin (slim images have no kill program).
+      if (-not $IsWindows) { foreach ($child in $children) { sh -c "kill -TERM $($child.Id)" 2>$null } }
       foreach ($child in $children) { $null = $child.WaitForExit(55000) }
       Log "stopped (SIGTERM)"
       exit 0
