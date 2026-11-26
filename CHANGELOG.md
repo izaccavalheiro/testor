@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.12.1 - 2026-11-26
+
 ### Changed
 
 - The test suite runs in partitions at once (`orchestrator/test/partitions.ps1`, coverage
