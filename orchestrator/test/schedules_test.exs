@@ -68,6 +68,8 @@ defmodule Testor.SchedulesTest do
     setup do
       Guard.reset()
       Jobs.reset()
+      # A schedule's minute is claimed once (Testor.Cluster): each test starts unclaimed.
+      Testor.Cluster.clear()
 
       on_exit(fn ->
         File.rm(Path.join(Config.data_dir(), "config.json"))
@@ -111,7 +113,8 @@ defmodule Testor.SchedulesTest do
       capture_log(fn -> assert Schedules.fire(at("2026-11-27T02:00:00Z")) == [] end)
 
       for job <- Jobs.list(), do: Jobs.request_cancel(job["id"])
-      assert [%{"project" => "web"}, _] = Schedules.fire(at("2026-11-27T02:00:00Z"))
+      # The next night (a minute is claimed once, across testors sharing a queue).
+      assert [%{"project" => "web"}, _] = Schedules.fire(at("2026-11-28T02:00:00Z"))
     end
 
     test "nothing while jobs are off; a job testor refuses is logged" do

@@ -21,11 +21,12 @@ defmodule Testor.Application do
   @doc "The processes that follow the runs and serve them, in start order."
   def server do
     [
-      {DynamicSupervisor, name: Testor.TrackerSupervisor, strategy: :one_for_one},
-      Testor.Store
+      {DynamicSupervisor, name: Testor.TrackerSupervisor, strategy: :one_for_one}
     ] ++
       if(Testor.Jobs.Postgres.enabled?(), do: [Testor.Jobs.Postgres], else: []) ++
       [
+        Testor.Cluster,
+        Testor.Store,
         Testor.Jobs,
         Testor.Schedules,
         Testor.Approvals,

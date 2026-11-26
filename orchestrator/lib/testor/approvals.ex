@@ -11,11 +11,13 @@ defmodule Testor.Approvals do
   the tool's scope on that project, approves it (`POST /api/v1/approvals/:id/approve`): testor
   then calls the tool as the agent, checking the agent's access again, and keeps the result,
   which the agent reads with `get_approval`. A denied request, or one not decided within
-  `ttlMinutes` (30 by default), does nothing. Requests live in memory: a restart drops the
-  pending ones.
+  `ttlMinutes` (30 by default), does nothing. Requests are kept as `Testor.Cluster` keeps
+  documents: in memory for one testor (a restart drops pending ones), in PostgreSQL for several.
   """
   use GenServer
-  alias Testor.{Access, Auth, Config, Events}
+  alias Testor.{Access, Auth, Cluster, Config, Events}
+
+  @kind "approval"
 
   @doc "The tools that need an approval."
   def tools do
@@ -32,6 +34,8 @@ defmodule Testor.Approvals do
     end
   end
 
+  # Requests are documents of Testor.Cluster (ETS, or PostgreSQL shared by several testors);
+  # this process puts one testor's decisions in a row, and a claim one across testors.
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   @doc "Records a request of `principal` to call `tool` with `args` on `project`'s run."
@@ -40,9 +44,22 @@ defmodule Testor.Approvals do
   end
 
   @doc "Approvals, newest first, optionally of one status; those past their time are expired."
-  def list(status \\ nil), do: GenServer.call(__MODULE__, {:list, status})
+  def list(status) do
+    now = System.system_time(:second)
 
-  def get(id), do: GenServer.call(__MODULE__, {:get, id})
+    Cluster.list(@kind)
+    |> Enum.map(&expired(&1, now))
+    |> Enum.filter(&(status == nil or &1["status"] == status))
+    |> Enum.sort_by(&{&1["createdAt"], &1["id"]}, :desc)
+    |> Enum.map(&public/1)
+  end
+
+  def get(id) do
+    case Cluster.get(@kind, id) do
+      nil -> nil
+      approval -> approval |> expired(System.system_time(:second)) |> public()
+    end
+  end
 
   @doc """
   `approver` approves (`:approve`) or denies (`:deny`) approval `id`: `{:ok, approval}` (with the
@@ -51,11 +68,17 @@ defmodule Testor.Approvals do
   def decide(id, approver, decision),
     do: GenServer.call(__MODULE__, {:decide, id, approver, decision}, 60_000)
 
-  @impl true
-  def init(nil), do: {:ok, %{}}
+  @doc "Forgets every approval (tests)."
+  def reset, do: Cluster.clear()
+
+  @doc "Makes approval `id` past its time (tests)."
+  def expire(id), do: Cluster.put(@kind, id, Map.put(Cluster.get(@kind, id), "expires", 0))
 
   @impl true
-  def handle_call({:request, tool, args, principal, project, base, ttl}, _from, approvals) do
+  def init(nil), do: {:ok, nil}
+
+  @impl true
+  def handle_call({:request, tool, args, principal, project, base, ttl}, _from, state) do
     now = System.system_time(:second)
 
     approval = %{
@@ -67,69 +90,60 @@ defmodule Testor.Approvals do
       "status" => "pending",
       "createdAt" => iso(now),
       "expiresAt" => iso(now + ttl),
-      principal: principal,
-      base: base,
-      expires: now + ttl
+      "expires" => now + ttl,
+      # Who asked, to act as them once approved; and the server's URL, for the tool's links.
+      "principal" => principal_doc(principal),
+      "base" => base
     }
 
+    :ok = Cluster.put(@kind, approval["id"], approval)
     Events.broadcast("global", "approval", public(approval))
-    {:reply, {:ok, public(approval)}, Map.put(approvals, approval["id"], approval)}
+    {:reply, {:ok, public(approval)}, state}
   end
 
-  def handle_call({:list, status}, _from, approvals) do
-    approvals = expire(approvals)
-
-    list =
-      approvals
-      |> Map.values()
-      |> Enum.filter(&(status == nil or &1["status"] == status))
-      |> Enum.sort_by(&{&1["createdAt"], &1["id"]}, :desc)
-      |> Enum.map(&public/1)
-
-    {:reply, list, approvals}
-  end
-
-  def handle_call({:get, id}, _from, approvals) do
-    approvals = expire(approvals)
-    {:reply, approvals |> Map.get(id) |> then(&(&1 && public(&1))), approvals}
-  end
-
-  def handle_call({:decide, id, approver, decision}, _from, approvals) do
-    approvals = expire(approvals)
-
-    case Map.get(approvals, id) do
+  def handle_call({:decide, id, approver, decision}, _from, state) do
+    case Cluster.get(@kind, id) do
       nil ->
-        {:reply, {:error, :not_found}, approvals}
-
-      %{"status" => status} when status != "pending" ->
-        {:reply, {:error, :decided}, approvals}
+        {:reply, {:error, :not_found}, state}
 
       approval ->
+        approval = expired(approval, System.system_time(:second))
+        requester = principal(approval["principal"])
         scope = Testor.MCP.Tools.scope(approval["tool"])
 
         cond do
-          approver[:sub] != nil and approver[:sub] == approval.principal[:sub] ->
-            {:reply, {:error, :own}, approvals}
+          approval["status"] != "pending" ->
+            {:reply, {:error, :decided}, state}
+
+          approver[:sub] != nil and approver[:sub] == requester[:sub] ->
+            {:reply, {:error, :own}, state}
 
           not Access.permits?(approver, approval["project"], scope) ->
-            {:reply, {:error, {:forbidden, scope}}, approvals}
+            {:reply, {:error, {:forbidden, scope}}, state}
 
+          # One decision across testors: the first to claim it.
           true ->
-            approval = settle(approval, approver, decision)
-            Events.broadcast("global", "approval", public(approval))
-            {:reply, {:ok, public(approval)}, Map.put(approvals, id, approval)}
+            if Cluster.claim("approval", id),
+              do: commit(approval, requester, approver, decision, state),
+              else: {:reply, {:error, :decided}, state}
         end
     end
   end
 
-  defp settle(approval, approver, :deny) do
+  defp commit(approval, requester, approver, decision, state) do
+    approval = settle(approval, requester, approver, decision)
+    :ok = Cluster.put(@kind, approval["id"], approval)
+    Events.broadcast("global", "approval", public(approval))
+    {:reply, {:ok, public(approval)}, state}
+  end
+
+  defp settle(approval, _requester, approver, :deny) do
     Map.merge(approval, %{"status" => "denied", "decidedBy" => Auth.who(approver), "decidedAt" => now_iso()})
   end
 
-  defp settle(approval, approver, :approve) do
+  defp settle(approval, requester, approver, :approve) do
     # As the agent that asked: its access is checked again now.
-    result =
-      Testor.MCP.Tools.execute(approval["tool"], approval["arguments"], approval.principal, approval.base)
+    result = Testor.MCP.Tools.execute(approval["tool"], approval["arguments"], requester, approval["base"])
 
     Map.merge(approval, %{
       "status" => if(result["isError"], do: "failed", else: "done"),
@@ -139,19 +153,39 @@ defmodule Testor.Approvals do
     })
   end
 
-  defp expire(approvals) do
-    now = System.system_time(:second)
+  defp expired(%{"status" => "pending", "expires" => expires} = approval, now) when expires <= now,
+    do: Map.put(approval, "status", "expired")
 
-    Map.new(approvals, fn
-      {id, %{"status" => "pending", expires: expires} = approval} when expires <= now ->
-        {id, Map.put(approval, "status", "expired")}
+  defp expired(approval, _now), do: approval
 
-      entry ->
-        entry
-    end)
+  # A principal as JSON holds it, and back (role per project included).
+  defp principal_doc(principal) do
+    %{
+      "sub" => principal[:sub],
+      "scopes" => principal[:scopes] || [],
+      "via" => to_string(principal[:via]),
+      "projects" => principal[:projects],
+      "projectRoles" =>
+        principal[:project_roles] &&
+          Enum.map(principal[:project_roles], &Map.new(&1, fn {k, v} -> {to_string(k), v} end))
+    }
   end
 
-  defp public(approval), do: Map.drop(approval, [:principal, :base, :expires])
+  defp principal(doc) do
+    roles =
+      doc["projectRoles"] &&
+        Enum.map(doc["projectRoles"], &%{pattern: &1["pattern"], role: &1["role"], scopes: &1["scopes"]})
+
+    %{
+      sub: doc["sub"],
+      scopes: doc["scopes"],
+      via: String.to_existing_atom(doc["via"]),
+      projects: doc["projects"],
+      project_roles: roles
+    }
+  end
+
+  defp public(approval), do: Map.drop(approval, ["principal", "base", "expires"])
   defp now_iso, do: iso(System.system_time(:second))
   defp iso(seconds), do: seconds |> DateTime.from_unix!() |> DateTime.to_iso8601()
 end

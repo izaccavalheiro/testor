@@ -4,10 +4,19 @@ metadata:
   name: {{ include "testor.fullname" . }}
   labels: {{- include "testor.labels" . | nindent 4 }}
 spec:
+  {{- if gt (int .Values.replicas) 1 }}
+  {{- if not .Values.database.existingSecret }}{{ fail "replicas > 1 needs database.existingSecret (the queue and claims in PostgreSQL)" }}{{ end }}
+  {{- if not (has "ReadWriteMany" .Values.persistence.accessModes) }}{{ fail "replicas > 1 needs persistence.accessModes [ReadWriteMany] (one home for every replica)" }}{{ end }}
+  # Several testors on one home and one database (Testor.Cluster).
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: RollingUpdate
+  {{- else }}
   # One process owns the files on the volume: never two at once.
   replicas: 1
   strategy:
     type: Recreate
+  {{- end }}
   selector:
     matchLabels: {{- include "testor.selector" . | nindent 6 }}
   template:
@@ -56,6 +65,9 @@ spec:
             - { name: TESTOR_ALLOWED_HOSTS, value: {{ include "testor.allowedHosts" . | quote }} }
             - { name: TESTOR_TRUSTED_PROXIES, value: {{ join "," .Values.trustedProxies | quote }} }
             - { name: TESTOR_ANONYMOUS, value: {{ .Values.anonymous | quote }} }
+            # Each replica's name: its own audit trail (audit.<instance>.jsonl).
+            - name: TESTOR_INSTANCE
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
             {{- with .Values.database.existingSecret }}
             # The job queue in PostgreSQL (Testor.Jobs.Postgres).
             - name: TESTOR_DATABASE_URL

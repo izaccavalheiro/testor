@@ -2,7 +2,10 @@
 
 Status: in progress. Done (0.10): an archive of signed runs to S3-compatible storage
 (`Testor.Archive`, SigV4 without a dependency); the job queue in PostgreSQL
-(`Testor.Jobs.Postgres`, behind the same calls as the files' `Testor.Jobs.FileStore`).
+(`Testor.Jobs.Postgres`, behind the same calls as the files' `Testor.Jobs.FileStore`); several
+testors on one shared home and one PostgreSQL (`Testor.Cluster`: claims for what must happen
+once, shared approvals, an audit trail per testor). S3 as the primary store would drop the
+shared volume.
 
 Today the run index is in ETS, filled by scanning `runs/*.json` every 300 ms, and logs,
 screenshots and artifacts are files. That keeps the install a single binary, and limits it to

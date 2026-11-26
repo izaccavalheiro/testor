@@ -14,7 +14,7 @@ defmodule Testor.ApprovalsTest do
 
   setup do
     Guard.reset()
-    :sys.replace_state(Approvals, fn _ -> %{} end)
+    Approvals.reset()
     config(%{"tools" => ["delete_run", "cancel_run"], "ttlMinutes" => 10})
     hash = Password.hash(@password, 1000)
 
@@ -32,7 +32,7 @@ defmodule Testor.ApprovalsTest do
     on_exit(fn ->
       Store.delete(id)
       File.rm(Path.join(Config.data_dir(), "config.json"))
-      :sys.replace_state(Approvals, fn _ -> %{} end)
+      Approvals.reset()
       Application.delete_env(:testor, :auth)
     end)
 
@@ -93,7 +93,7 @@ defmodule Testor.ApprovalsTest do
     assert Store.get(run)
 
     expired = ask(run)
-    :sys.replace_state(Approvals, &put_in(&1, [expired["id"], :expires], 0))
+    Approvals.expire(expired["id"])
     assert [%{"status" => "expired"} | _] = Approvals.list("expired")
     assert Approvals.decide(expired["id"], %{sub: "ada", scopes: ["operate"]}, :approve) == {:error, :decided}
 
@@ -104,6 +104,19 @@ defmodule Testor.ApprovalsTest do
              Approvals.decide(late["id"], %{sub: "ada", scopes: ["operate"]}, :approve)
 
     assert Approvals.get("approval-nope") == nil
+
+    # Another testor sharing the queue decided first: it claimed the decision.
+    raced = ask(run)
+    assert Testor.Cluster.claim("approval", raced["id"])
+    assert Approvals.decide(raced["id"], %{sub: "ada", scopes: ["operate"]}, :approve) == {:error, :decided}
+
+    # An agent with a role per project: approved, it acts with its roles again.
+    roles = [%{pattern: "web", role: "operator", scopes: ["read", "operate"]}]
+    agent = Map.merge(@agent, %{projects: ["web"], project_roles: roles})
+    with_roles = call("cancel_run", %{"id" => run}, agent)["structuredContent"]["approval"]
+
+    assert {:ok, %{"status" => "failed"}} =
+             Approvals.decide(with_roles["id"], %{sub: "ada", scopes: ["operate"]}, :approve)
   end
 
   test "who may see an approval; tools that need none; the default time", %{run: run} do
