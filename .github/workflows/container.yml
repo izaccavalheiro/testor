@@ -127,9 +127,10 @@ jobs:
         run: |
           mkdir -p digests
           echo "${{ steps.push.outputs.digest }}" > "digests/${{ matrix.image }}-${{ matrix.arch }}"
+      # Named image last: a pattern digest-testor-* would take testor-agent's digests too.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          name: digest-${{ matrix.arch }}-${{ matrix.image }}
           path: digests/*
           retention-days: 1
 
@@ -150,7 +151,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: digest-${{ matrix.image }}-*
+          pattern: digest-*-${{ matrix.image }}
           path: digests
           merge-multiple: true
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -174,6 +175,9 @@ jobs:
           IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           TAGS: ${{ steps.meta.outputs.tags }}
         run: |
+          # One digest per platform of this image, no other image's.
+          ls digests
+          [ "$(ls digests | wc -l)" -eq 2 ] || { echo "expected 2 digests of ${{ matrix.image }}"; exit 1; }
           refs=$(for f in digests/*; do printf '%s@%s ' "$IMAGE" "$(cat "$f")"; done)
           args=$(for t in $TAGS; do printf -- '-t %s ' "$t"; done)
           docker buildx imagetools create $args $refs
