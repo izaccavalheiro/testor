@@ -15,7 +15,8 @@ defmodule Testor.Blob do
       parts) or a binary. `:ok` or `{:error, why}`.
     * `get(cfg, key, dest)`: `dest` is `{:file, path}` (written whole, then renamed into place)
       or `:binary` (`{:ok, data}`). `:not_found` when there is no such object.
-    * `head(cfg, key)`: `{:ok, %{size: bytes}}` or `:not_found`.
+    * `head(cfg, key)`: `{:ok, %{size: bytes, sha256: base64 | nil}}` (the checksum S3 keeps,
+      when it has a whole object's) or `:not_found`.
     * `list(cfg, prefix)`: `{:ok, [%{key, size}]}`, every object whose key starts with
       `prefix`, sorted by key.
     * `delete(cfg, keys)`: `{:ok, deleted, kept}`; `kept` are the keys the store refused to

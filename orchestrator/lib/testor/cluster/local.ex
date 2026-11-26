@@ -12,6 +12,14 @@ defmodule Testor.Cluster.Local do
   def claim(kind, key), do: :ets.insert_new(@claims, {{kind, to_string(key)}})
   def put(kind, id, doc), do: :ets.insert(@docs, {{kind, id}, doc}) && :ok
 
+  def put_new(kind, id, doc), do: :ets.insert_new(@docs, {{kind, id}, doc})
+
+  def delete(kind, id) do
+    there = :ets.member(@docs, {kind, id})
+    :ets.delete(@docs, {kind, id})
+    there
+  end
+
   def get(kind, id) do
     case :ets.lookup(@docs, {kind, id}) do
       [{_, doc}] -> doc

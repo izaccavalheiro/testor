@@ -5,10 +5,13 @@ metadata:
   labels: {{- include "testor.labels" . | nindent 4 }}
 spec:
   {{- if and .Values.tls.existingSecret .Values.tls.acme }}{{ fail "tls.existingSecret and tls.acme: choose one source of certificates" }}{{ end }}
+  {{- $s3 := .Values.storage.s3.bucket }}
+  {{- if and (not .Values.persistence.enabled) (not $s3) }}{{ fail "persistence.enabled: false needs storage.s3 (else the runs go with the pod)" }}{{ end }}
   {{- if gt (int .Values.replicas) 1 }}
   {{- if not .Values.database.existingSecret }}{{ fail "replicas > 1 needs database.existingSecret (the queue and claims in PostgreSQL)" }}{{ end }}
-  {{- if not (has "ReadWriteMany" .Values.persistence.accessModes) }}{{ fail "replicas > 1 needs persistence.accessModes [ReadWriteMany] (one home for every replica)" }}{{ end }}
-  # Several testors on one home and one database (Testor.Cluster).
+  {{- if and (not $s3) (not (has "ReadWriteMany" .Values.persistence.accessModes)) }}{{ fail "replicas > 1 needs storage.s3, or persistence.accessModes [ReadWriteMany] (one home for every replica)" }}{{ end }}
+  {{- if and $s3 (not .Values.keys.existingSecret) }}{{ fail "replicas > 1 with storage.s3 needs keys.existingSecret (the keys every replica signs with)" }}{{ end }}
+  # Several testors on one database: one home (Testor.Cluster), or none (Testor.Storage.Shared).
   replicas: {{ .Values.replicas }}
   strategy:
     type: RollingUpdate
@@ -23,9 +26,12 @@ spec:
   template:
     metadata:
       labels: {{- include "testor.selector" . | nindent 8 }}
-      {{- with .Values.podAnnotations }}
-      annotations: {{- toYaml . | nindent 8 }}
-      {{- end }}
+      annotations:
+        # A change of config.json rolls the pods: it is read when testor starts.
+        checksum/config: {{ include "testor.config" . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "testor.fullname" . }}
       automountServiceAccountToken: false
@@ -80,6 +86,26 @@ spec:
             - name: TESTOR_DATABASE_URL
               valueFrom: { secretKeyRef: { name: {{ . }}, key: url } }
             {{- end }}
+            {{- if or .Values.config .Values.storage.s3.bucket }}
+            # config.json from the chart (templates/configmap.yaml).
+            - { name: TESTOR_CONFIG_FILE, value: /etc/testor/config.json }
+            {{- end }}
+            {{- with .Values.storage.s3.existingSecret }}
+            # The bucket's credentials (docs/storage.md); else IRSA or workload identity.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ . }}, key: access-key-id } }
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: {{ . }}, key: secret-access-key } }
+            {{- end }}
+            {{- with .Values.keys.existingSecret }}
+            # One set of keys for every replica: tokens, sessions and attestations hold on each.
+            - name: TESTOR_TOKEN_KEY
+              valueFrom: { secretKeyRef: { name: {{ . }}, key: token-key } }
+            - name: TESTOR_SIGNING_KEY
+              valueFrom: { secretKeyRef: { name: {{ . }}, key: signing-key } }
+            - name: TESTOR_JWT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ . }}, key: jwt-secret } }
+            {{- end }}
             {{- if .Values.tls.existingSecret }}
             - { name: TESTOR_TLS_CERT, value: /tls/tls.crt }
             - { name: TESTOR_TLS_KEY, value: /tls/tls.key }
@@ -107,13 +133,25 @@ spec:
           volumeMounts:
             - { name: data, mountPath: /data }
             - { name: tmp, mountPath: /tmp }
+            {{- if or .Values.config .Values.storage.s3.bucket }}
+            - { name: config, mountPath: /etc/testor, readOnly: true }
+            {{- end }}
             {{- if .Values.tls.existingSecret }}
             - { name: tls, mountPath: /tls, readOnly: true }
             {{- end }}
       volumes:
         - name: data
+          {{- if .Values.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim | default (include "testor.fullname" .) }}
+          {{- else }}
+          # A cache of the bucket: cacheMB of stored runs, and the runs in progress.
+          emptyDir: { sizeLimit: {{ add (int .Values.storage.s3.cacheMB) 2048 }}Mi }
+          {{- end }}
+        {{- if or .Values.config .Values.storage.s3.bucket }}
+        - name: config
+          configMap: { name: {{ include "testor.fullname" . }}-config }
+        {{- end }}
         - name: tmp
           emptyDir: { sizeLimit: 256Mi }
         {{- if .Values.tls.existingSecret }}

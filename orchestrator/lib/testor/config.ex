@@ -53,9 +53,12 @@ defmodule Testor.Config do
     end)
   end
 
-  @doc "config.json in the data folder as written, `%{}` when there is none or it is not an object."
+  @doc "Where config.json is: `TESTOR_CONFIG_FILE`, else the data folder's."
+  def config_file, do: Application.get_env(:testor, :config_file) || Path.join(data_dir(), "config.json")
+
+  @doc "config.json as written, `%{}` when there is none or it is not an object."
   def user do
-    with {:ok, text} <- File.read(Path.join(data_dir(), "config.json")),
+    with {:ok, text} <- File.read(config_file()),
          {:ok, map} when is_map(map) <- JSON.decode(strip_bom(text)) do
       map
     else

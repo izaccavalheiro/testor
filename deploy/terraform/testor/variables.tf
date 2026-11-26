@@ -65,7 +65,7 @@ variable "image" {
 }
 
 variable "replicas" {
-  description = "Testors serving one team. More than one needs database_secret and a ReadWriteMany volume."
+  description = "Testors serving one team. More than one needs database_secret, and storage_s3 with keys_secret or a ReadWriteMany volume."
   type        = number
   default     = 1
 
@@ -110,9 +110,45 @@ variable "tls_acme" {
   }
 }
 
-variable "persistence" {
-  description = "testor's home volume."
+variable "storage_s3" {
+  description = "Runs kept in an S3-compatible bucket (docs/storage.md): bucket, region, and optionally endpoint, path_style, prefix, public_endpoint, encryption, kms_key_id, presign, cache_mb, existing_secret (access-key-id, secret-access-key; else IRSA or workload identity through service_account_annotations)."
   type = object({
+    bucket          = string
+    region          = string
+    endpoint        = optional(string, "")
+    path_style      = optional(bool, false)
+    prefix          = optional(string, "")
+    public_endpoint = optional(string, "")
+    encryption      = optional(string, "")
+    kms_key_id      = optional(string, "")
+    presign         = optional(bool, true)
+    cache_mb        = optional(number, 2048)
+    existing_secret = optional(string, "")
+  })
+  default = null
+
+  validation {
+    condition     = var.storage_s3 == null || contains(["", "AES256", "aws:kms"], try(var.storage_s3.encryption, ""))
+    error_message = "storage_s3.encryption is AES256 or aws:kms."
+  }
+}
+
+variable "keys_secret" {
+  description = "A Secret with token-key, signing-key (base64 Ed25519 seeds) and jwt-secret: one set of keys for replicas that share no volume."
+  type        = string
+  default     = ""
+}
+
+variable "service_account_annotations" {
+  description = "Annotations of testor's service account: an IAM role (eks.amazonaws.com/role-arn) or workload identity for the bucket."
+  type        = map(string)
+  default     = {}
+}
+
+variable "persistence" {
+  description = "testor's home volume; enabled = false makes it an emptyDir (a cache of the bucket), only with storage_s3."
+  type = object({
+    enabled        = optional(bool, true)
     size           = optional(string, "10Gi")
     storage_class  = optional(string, "")
     access_modes   = optional(list(string), ["ReadWriteOnce"])

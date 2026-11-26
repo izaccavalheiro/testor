@@ -19,6 +19,13 @@ defmodule Testor.ClusterTest do
     assert Cluster.get("note", "nope") == nil
     assert Cluster.list("note") |> Enum.map(& &1["n"]) |> Enum.sort() == [1, 2]
 
+    # Saved only when there is none; removed once.
+    assert Cluster.put_new("note", "c", %{"n" => 3})
+    refute Cluster.put_new("note", "c", %{"n" => 4})
+    assert Cluster.get("note", "c") == %{"n" => 3}
+    assert Cluster.delete("note", "c")
+    refute Cluster.delete("note", "c")
+
     assert Cluster.clear() == :ok
     assert Cluster.list("note") == []
     assert Cluster.claim("test", key)

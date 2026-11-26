@@ -245,5 +245,10 @@ defmodule Testor.AgentSigningTest do
 
     assert AgentKeys.get("bot2") == nil
     assert AgentKeys.decode(nil) == {:error, :bad_key}
+
+    # A pin without a key in it holds the place: another key is not pinned over it.
+    Testor.Files.write_json(AgentKeys.file(), %{"bot3" => %{"keyid" => "x"}})
+    {_, pem} = key
+    assert AgentKeys.pin("bot3", pem) == {:error, :mismatch}
   end
 end

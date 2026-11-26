@@ -9,20 +9,18 @@ defmodule Testor.AgentKeys do
   Runs an agent sends are then signed by it (`Testor.Remote.attest/3`): evidence of what the
   agent ran that does not depend on testor.
   """
-  alias Testor.{Config, Files}
+  alias Testor.Config
 
   # secp256r1 (P-256).
   @p256 {1, 2, 840, 10045, 3, 1, 7}
 
   def file, do: Path.join(Config.secrets_dir(), "agent-keys.json")
 
+  # Where the pins are: agent-keys.json, or PostgreSQL for testors that share no volume.
+  defp pins, do: if(Testor.Storage.shared?(), do: Testor.AgentKeys.Shared, else: Testor.AgentKeys.Local)
+
   @doc "The pinned agents: `%{name => %{\"publicKey\", \"keyid\", \"pinnedAt\"}}`."
-  def all do
-    case Files.read_json(file()) do
-      {:ok, keys} -> keys
-      :error -> %{}
-    end
-  end
+  def all, do: pins().all()
 
   @doc "The key pinned to `agent`, decoded for `:public_key.verify/4`, or nil."
   def get(agent) do
@@ -40,39 +38,26 @@ defmodule Testor.AgentKeys do
   """
   def pin(agent, pem) when is_binary(pem) do
     with {:ok, _key} <- decode(pem) do
-      :global.trans({__MODULE__, self()}, fn ->
-        keys = all()
+      entry = %{
+        "publicKey" => pem,
+        "keyid" => keyid(pem),
+        "pinnedAt" => DateTime.utc_now() |> DateTime.to_iso8601()
+      }
 
-        case keys[agent] do
-          nil ->
-            entry = %{
-              "publicKey" => pem,
-              "keyid" => keyid(pem),
-              "pinnedAt" => DateTime.utc_now() |> DateTime.to_iso8601()
-            }
-
-            File.mkdir_p!(Path.dirname(file()))
-            Files.write_json(file(), Map.put(keys, agent, entry))
-            File.chmod(file(), 0o600)
-            :ok
-
-          %{"publicKey" => pinned} ->
-            if normalize(pinned) == normalize(pem), do: :ok, else: {:error, :mismatch}
-        end
-      end)
+      case pins().put_new(agent, entry) do
+        :ok -> :ok
+        {:exists, %{"publicKey" => pinned}} when is_binary(pinned) -> same(pinned, pem)
+        {:exists, _} -> {:error, :mismatch}
+      end
     end
   end
 
   def pin(_agent, _pem), do: {:error, :bad_key}
 
+  defp same(pinned, pem), do: if(normalize(pinned) == normalize(pem), do: :ok, else: {:error, :mismatch})
+
   @doc "Forgets `agent`'s key: its next lease pins the key it presents."
-  def forget(agent) do
-    :global.trans({__MODULE__, self()}, fn ->
-      keys = all()
-      Files.write_json(file(), Map.delete(keys, agent))
-      Map.has_key?(keys, agent)
-    end)
-  end
+  def forget(agent), do: pins().delete(agent)
 
   @doc "A P-256 public key from its SPKI PEM: `{:ok, key}` or `{:error, :bad_key}`."
   def decode(pem) when is_binary(pem) do

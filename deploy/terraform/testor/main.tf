@@ -10,7 +10,25 @@ locals {
     auth         = { existingSecret = var.admin_secret }
     database     = { existingSecret = var.database_secret }
     tls          = merge({ existingSecret = var.tls_secret }, var.tls_acme == null ? {} : { acme = var.tls_acme })
+    storage = var.storage_s3 == null ? {} : {
+      s3 = {
+        bucket         = var.storage_s3.bucket
+        region         = var.storage_s3.region
+        endpoint       = var.storage_s3.endpoint
+        pathStyle      = var.storage_s3.path_style
+        prefix         = var.storage_s3.prefix
+        publicEndpoint = var.storage_s3.public_endpoint
+        encryption     = var.storage_s3.encryption
+        kmsKeyId       = var.storage_s3.kms_key_id
+        presign        = var.storage_s3.presign
+        cacheMB        = var.storage_s3.cache_mb
+        existingSecret = var.storage_s3.existing_secret
+      }
+    }
+    keys           = { existingSecret = var.keys_secret }
+    serviceAccount = { annotations = var.service_account_annotations }
     persistence = {
+      enabled       = var.persistence.enabled
       size          = var.persistence.size
       storageClass  = var.persistence.storage_class
       accessModes   = var.persistence.access_modes
@@ -81,8 +99,18 @@ resource "helm_release" "this" {
     }
 
     precondition {
-      condition     = var.replicas == 1 || var.persistence.existing_claim != "" || contains(var.persistence.access_modes, "ReadWriteMany")
-      error_message = "replicas > 1 needs a volume every replica mounts: persistence.access_modes = [\"ReadWriteMany\"] or an existing_claim."
+      condition     = var.replicas == 1 || var.storage_s3 != null || var.persistence.existing_claim != "" || contains(var.persistence.access_modes, "ReadWriteMany")
+      error_message = "replicas > 1 needs storage_s3, or a volume every replica mounts: persistence.access_modes = [\"ReadWriteMany\"] or an existing_claim."
+    }
+
+    precondition {
+      condition     = var.replicas == 1 || var.storage_s3 == null || var.keys_secret != ""
+      error_message = "replicas > 1 with storage_s3 needs keys_secret: the keys every replica signs and checks with."
+    }
+
+    precondition {
+      condition     = var.persistence.enabled || var.storage_s3 != null
+      error_message = "persistence.enabled = false needs storage_s3, else the runs go with the pod."
     }
   }
 }

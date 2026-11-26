@@ -1,0 +1,10 @@
+{{- if or .Values.config .Values.storage.s3.bucket }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "testor.fullname" . }}-config
+  labels: {{- include "testor.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {{- include "testor.config" . | nindent 4 }}
+{{- end }}

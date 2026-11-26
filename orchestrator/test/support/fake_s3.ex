@@ -186,7 +186,9 @@ defmodule Testor.Test.FakeS3 do
       nil ->
         send_resp(conn, 404, "<Error><Code>NoSuchKey</Code></Error>")
 
-      %{data: data} ->
+      %{data: data, headers: headers} ->
+        sum = List.keyfind(headers, "x-amz-checksum-sha256", 0)
+        conn = if sum, do: put_resp_header(conn, "x-amz-checksum-sha256", elem(sum, 1)), else: conn
         type = conn.query_params["response-content-type"]
         conn = if type, do: put_resp_content_type(conn, type, nil), else: conn
         send_resp(conn, 200, data)

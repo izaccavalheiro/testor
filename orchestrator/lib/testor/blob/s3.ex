@@ -207,10 +207,18 @@ defmodule Testor.Blob.S3 do
 
   @impl true
   def head(cfg, key) do
-    case request(cfg, :head, key, "", [], nil, empty()) do
-      {:ok, 200, headers, _} -> {:ok, %{size: String.to_integer(header(headers, "content-length") || "0")}}
-      {:ok, 404, _, _} -> :not_found
-      other -> failure(other)
+    case request(cfg, :head, key, "", [{"x-amz-checksum-mode", "ENABLED"}], nil, empty()) do
+      {:ok, 200, headers, _} ->
+        # A whole object's SHA-256 (base64); a multipart one's is of its parts' ("...-3"): none.
+        sum = header(headers, "x-amz-checksum-sha256")
+        size = String.to_integer(header(headers, "content-length") || "0")
+        {:ok, %{size: size, sha256: if(sum && not String.contains?(sum, "-"), do: sum)}}
+
+      {:ok, 404, _, _} ->
+        :not_found
+
+      other ->
+        failure(other)
     end
   end
 

@@ -35,6 +35,15 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   PostgreSQL, testors share no volume: the run index is the table `testor_runs`, live logs go
   as segments announced over `LISTEN`/`NOTIFY`, and so do runs' changes and the dashboard's
   job and approval events. SigV4 and AWS credentials are `Testor.Aws` now.
+- **Moving a home into a bucket** (`Testor.Storage.CLI`): `migrate` copies a home's runs, audit
+  trail and pinned keys into the bucket and the index, resumably (objects compared by SHA-256);
+  `verify` reads every stored run's attestation and signed objects again; `export` copies a
+  bucket back into a home. The Helm chart takes `storage.s3`, `config` (config.json as a
+  ConfigMap, `TESTOR_CONFIG_FILE`), `keys.existingSecret` and `persistence.enabled: false`,
+  and runs several replicas without a ReadWriteMany volume; so does the Terraform module
+  (`storage_s3`, `keys_secret`, `service_account_annotations`). `TESTOR_SIGNING_KEY` signs
+  attestations in place of `signing.key`; agents' pinned keys are kept in PostgreSQL for
+  testors that share no volume.
 - **Heavy jobs** ([docs/heavy-jobs.md](docs/heavy-jobs.md)): timeouts (a command's, a job's
   shorter one, `execution.defaultTimeout`, `run.ps1 -TimeoutSeconds`, `TIMEOUT`), a memory guard
   that ends a run before the OOM killer does, `TESTOR_CPUS` and `TESTOR_MEMORY_MB` from the

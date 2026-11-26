@@ -13,6 +13,8 @@ defmodule Testor.Attestation do
 
   The key is `signing.key` in the secrets folder (`TESTOR_SECRETS_DIR`, else the data folder):
   the 32-byte Ed25519 seed in base64, created on first use, readable by its owner only.
+  `TESTOR_SIGNING_KEY` (the same base64 seed) replaces the file, for testors that share no
+  volume and sign with one key.
   `GET /api/v1/attestation/key` gives the public key (PEM) and its id (SHA-256 of it).
 
   What a signature proves: that this testor saw these results and files when the run ended,
@@ -39,15 +41,28 @@ defmodule Testor.Attestation do
 
   @doc "`{public, seed}` of the signing key, created on first use. Raises when it is not valid."
   def keypair do
-    path = key_file()
+    {where, text} =
+      case System.get_env("TESTOR_SIGNING_KEY") do
+        seed when seed not in [nil, ""] -> {"TESTOR_SIGNING_KEY", seed}
+        _ -> {key_file(), read_key(key_file())}
+      end
+
+    case Base.decode64(String.trim(text)) do
+      {:ok, seed} when byte_size(seed) == 32 ->
+        {public, _} = :crypto.generate_key(:eddsa, :ed25519, seed)
+        {public, seed}
+
+      _ ->
+        raise "#{where} is not a base64 Ed25519 seed of 32 bytes"
+    end
+  end
+
+  defp read_key(path) do
     if not File.exists?(path), do: create_key(path)
 
-    with {:ok, text} <- File.read(path),
-         {:ok, seed} when byte_size(seed) == 32 <- Base.decode64(String.trim(text)) do
-      {public, _} = :crypto.generate_key(:eddsa, :ed25519, seed)
-      {public, seed}
-    else
-      _ -> raise "#{path} is not a base64 Ed25519 seed of 32 bytes"
+    case File.read(path) do
+      {:ok, text} -> text
+      {:error, _} -> ""
     end
   end
 

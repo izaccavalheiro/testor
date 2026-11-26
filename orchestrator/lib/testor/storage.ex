@@ -114,8 +114,9 @@ defmodule Testor.Storage do
         do: {key, local_path(key)}
   end
 
+  @doc false
   # The run's keys in the bucket, each area listed once.
-  defp stored_keys(id) do
+  def stored_keys(id, adapter \\ adapter(), cfg \\ blob_cfg()) do
     prefixes = [
       "runs/#{id}.",
       "logs/#{id}.",
@@ -126,7 +127,7 @@ defmodule Testor.Storage do
     ]
 
     Enum.reduce_while(prefixes, {:ok, []}, fn prefix, {:ok, acc} ->
-      case adapter().list(blob_cfg(), prefix) do
+      case adapter.list(cfg, prefix) do
         {:ok, objects} -> {:cont, {:ok, acc ++ objects}}
         error -> {:halt, error}
       end

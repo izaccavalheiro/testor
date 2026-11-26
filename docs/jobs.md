@@ -192,7 +192,7 @@ database** (`TESTOR_DATABASE_URL`).
   default its host name; the chart gives each pod its name): a chain has one writer.
 - The Helm chart: `replicas: 3`, `persistence.accessModes: [ReadWriteMany]` with a storage
   class that offers it, and `database.existingSecret`; it refuses more than one replica
-  without them.
+  without them. Or no shared volume at all: runs in a bucket ([storage](storage.md)).
 
 Live event streams come from the testor a browser is connected to, which watches the shared
 home like the others.

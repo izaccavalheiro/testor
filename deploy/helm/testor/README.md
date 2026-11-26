@@ -41,7 +41,11 @@ helm upgrade testor deploy/helm/testor --reuse-values \
 
 | Value | Default | |
 | ----- | ------- | - |
-| `replicas` | `1` | testors serving one team; more than one needs `database.existingSecret` and `persistence.accessModes: [ReadWriteMany]` |
+| `replicas` | `1` | testors serving one team; more than one needs `database.existingSecret`, and `storage.s3` with `keys.existingSecret` or `persistence.accessModes: [ReadWriteMany]` |
+| `config` | `{}` | config.json as a ConfigMap (`TESTOR_CONFIG_FILE`) instead of the file in the volume |
+| `storage.s3` | | runs in a bucket ([docs/storage.md](../../../docs/storage.md)): `bucket`, `region`, `endpoint`, `pathStyle`, `prefix`, `publicEndpoint`, `encryption`, `kmsKeyId`, `presign`, `cacheMB`, and `existingSecret` (`access-key-id`, `secret-access-key`) unless `serviceAccount.annotations` give IRSA or workload identity |
+| `keys.existingSecret` | | a Secret with `token-key`, `signing-key` (base64 Ed25519 seeds) and `jwt-secret`: one set of keys for replicas that share no volume |
+| `persistence.enabled` | `true` | `false` (with `storage.s3`): the home is an emptyDir, a cache of the bucket |
 | `database.existingSecret` | | a Secret with `url`: the job queue in PostgreSQL (`TESTOR_DATABASE_URL`) |
 | `agents.enabled` | `false` | a Deployment of agent pods (`runner/agent.ps1`), sending their runs to this testor |
 | `agents.image` | `ghcr.io/izaccavalheiro/testor-agent` | an image built FROM it with your projects' tools |

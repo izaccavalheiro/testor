@@ -1,4 +1,5 @@
-# testor's state is files on one volume: one replica, replaced (not rolled) on upgrade.
+# testor's state is files on one volume: one replica, replaced (not rolled) on upgrade. With
+# storage.s3 the runs are in a bucket instead, and the volume is a cache.
 image:
   repository: ghcr.io/izaccavalheiro/testor
   # Defaults to the chart's appVersion. Prefer a digest in production: digest: sha256:...
@@ -22,9 +23,42 @@ auth:
   existingSecret: ""
   adminUser: admin
 
-# Testors serving one team: more than one needs database.existingSecret and a volume every
-# replica mounts (persistence.accessModes: [ReadWriteMany]: EFS, Filestore, Azure Files, NFS).
+# Testors serving one team: more than one needs database.existingSecret, and either storage.s3
+# (no shared volume; keys.existingSecret too) or a volume every replica mounts
+# (persistence.accessModes: [ReadWriteMany]: EFS, Filestore, Azure Files, NFS).
 replicas: 1
+
+# config.json (retention, execution, archive...; docs/configuration in the repository) from the
+# chart, as a ConfigMap (TESTOR_CONFIG_FILE), instead of the file in the volume. Set whenever
+# storage.s3 is: the storage section below is added to it.
+config: {}
+
+# Runs kept in an S3-compatible bucket (docs/storage.md): AWS S3, MinIO, R2, Ceph, GCS.
+storage:
+  s3:
+    bucket: ""
+    region: ""
+    endpoint: ""        # not AWS: the server's URL
+    pathStyle: false    # MinIO and most compatibles: true
+    prefix: ""
+    publicEndpoint: ""  # the URL browsers reach the bucket by (presigned links)
+    encryption: ""      # AES256, or aws:kms with kmsKeyId
+    kmsKeyId: ""
+    presign: true
+    cacheMB: 2048
+    # A Secret with the keys access-key-id and secret-access-key; leave it empty for IAM roles
+    # for service accounts or workload identity (serviceAccount.annotations).
+    existingSecret: ""
+
+# Keys every replica signs and checks with, for testors that share no volume: a Secret with
+# token-key (a base64 Ed25519 seed: TESTOR_TOKEN_KEY), signing-key (the same: TESTOR_SIGNING_KEY)
+# and jwt-secret (32 characters or more: TESTOR_JWT_SECRET).
+keys:
+  existingSecret: ""
+
+serviceAccount:
+  # e.g. eks.amazonaws.com/role-arn: arn:aws:iam::111122223333:role/testor (the bucket's role)
+  annotations: {}
 
 # The job queue in PostgreSQL: a Secret with a key "url",
 # postgres://testor:<password>@<host>:5432/testor?sslmode=verify-full. Jobs then outlive the
@@ -43,6 +77,8 @@ tls:
   acme: {}
 
 persistence:
+  # false: the home is an emptyDir (a cache of the bucket), only with storage.s3.
+  enabled: true
   size: 10Gi
   storageClass: ""
   accessModes: [ReadWriteOnce]

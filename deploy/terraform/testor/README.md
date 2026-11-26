@@ -27,13 +27,16 @@ Requirements: Terraform 1.5 or later, the `hashicorp/helm` provider 3.x.
 | `chart_path` | | a local chart instead of the published one |
 | `chart_repository`, `chart_version` | | the OCI chart; the version defaults to the module's own |
 | `image` | `image` | `repository`, `tag` or `digest` (`sha256:...`), `pullPolicy` |
-| `replicas` | `replicas` | more than one needs `database_secret` and a ReadWriteMany volume (checked before apply) |
+| `replicas` | `replicas` | more than one needs `database_secret`, and `storage_s3` with `keys_secret` or a ReadWriteMany volume (checked before apply) |
+| `storage_s3` | `storage.s3` | runs in a bucket ([docs/storage.md](../../../docs/storage.md)); the home is then a cache |
+| `keys_secret` | `keys.existingSecret` | one set of keys for replicas that share no volume |
+| `service_account_annotations` | `serviceAccount.annotations` | an IAM role or workload identity for the bucket |
 | `allowed_hosts` | `allowedHosts` | |
 | `admin_secret` | `auth.existingSecret` | |
 | `database_secret` | `database.existingSecret` | |
 | `tls_secret` | `tls.existingSecret` | built-in TLS from a Secret (cert-manager) |
 | `tls_acme` | `tls.acme` | or certificates testor orders from an ACME CA: `domains`, `email`, `httpPort`... |
-| `persistence` | `persistence` | `size`, `storage_class`, `access_modes`, `existing_claim` |
+| `persistence` | `persistence` | `enabled` (false: an emptyDir, with `storage_s3`), `size`, `storage_class`, `access_modes`, `existing_claim` |
 | `ingress` | `ingress` | `enabled`, `class_name`, `host`, `tls_secret`, `annotations` |
 | `network_policy` | `networkPolicy` | `enabled`, `ingress_from`, `egress_to` |
 | `agents` | `agents` | `enabled`, `token_secret`, `labels`, `projects`, `autoscaling` (KEDA) |
