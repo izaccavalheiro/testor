@@ -88,11 +88,22 @@ defmodule Testor.Attestation do
 
   @doc "Attests run `id` in the background: hashing a run's artifacts can take a while."
   def attest_later(id) do
-    # Then copied to object storage, signed, when an archive is set up (Testor.Archive).
+    # Signed over every file of the run, some of which other testors may have taken in
+    # (Testor.Storage); then stored in the bucket, and archived when an archive is set up
+    # (Testor.Archive).
     Task.Supervisor.start_child(Testor.TaskSupervisor, fn ->
+      Testor.Storage.gather(id, :all)
       safe_attest(id)
+      store(id)
       Testor.Archive.maybe(id)
     end)
+  end
+
+  defp store(id) do
+    case Testor.Storage.publish(id) do
+      {:error, why} -> Logger.error("storage: #{id} could not be stored: #{why}")
+      _ -> :ok
+    end
   end
 
   @doc "`attest/1`, logging why it failed instead of raising."

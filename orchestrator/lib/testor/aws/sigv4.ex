@@ -1,4 +1,4 @@
-defmodule Testor.Archive.SigV4 do
+defmodule Testor.Aws.SigV4 do
   @moduledoc """
   AWS Signature Version 4 (header-signed requests), as S3 and its compatibles (MinIO, R2, GCS's
   interoperability API) take them: `authorize/8` gives the headers that sign a request.
@@ -52,6 +52,45 @@ defmodule Testor.Archive.SigV4 do
       "AWS4-HMAC-SHA256 Credential=#{creds.key}/#{scope}, SignedHeaders=#{names}, Signature=#{signature}"
 
     Enum.reject(signed, fn {k, _} -> k == "host" end) ++ [{"authorization", authorization}]
+  end
+
+  @doc """
+  A presigned URL (query-string authentication): `uri` with the `X-Amz-*` parameters that let
+  whoever holds it make one `method` request until `expires` seconds after `now`. Only `host`
+  is signed, and the payload is not; `uri`'s own query (`response-content-disposition`...) is
+  signed with them.
+  """
+  def presign(method, %URI{} = uri, creds, region, service, now, expires) do
+    amz_date = Calendar.strftime(now, "%Y%m%dT%H%M%SZ")
+    date = String.slice(amz_date, 0, 8)
+    host = if uri.port in [nil, 80, 443], do: uri.host, else: "#{uri.host}:#{uri.port}"
+    scope = "#{date}/#{region}/#{service}/aws4_request"
+
+    params =
+      URI.query_decoder(uri.query || "")
+      |> Enum.to_list()
+      |> Kernel.++([
+        {"X-Amz-Algorithm", "AWS4-HMAC-SHA256"},
+        {"X-Amz-Credential", "#{creds.key}/#{scope}"},
+        {"X-Amz-Date", amz_date},
+        {"X-Amz-Expires", Integer.to_string(expires)},
+        {"X-Amz-SignedHeaders", "host"}
+      ])
+      |> Kernel.++(if creds[:token], do: [{"X-Amz-Security-Token", creds.token}], else: [])
+
+    query =
+      params
+      |> Enum.map(fn {k, v} -> {encode(k), encode(v)} end)
+      |> Enum.sort()
+      |> Enum.map_join("&", fn {k, v} -> "#{k}=#{v}" end)
+
+    canonical =
+      Enum.join([method, canonical_path(uri.path), query, "host:#{host}\n", "host", "UNSIGNED-PAYLOAD"], "\n")
+
+    to_sign = Enum.join(["AWS4-HMAC-SHA256", amz_date, scope, hex(:crypto.hash(:sha256, canonical))], "\n")
+    key = Enum.reduce([date, region, service, "aws4_request"], "AWS4" <> creds.secret, &hmac(&2, &1))
+    signature = key |> hmac(to_sign) |> hex()
+    URI.to_string(%{uri | query: query <> "&X-Amz-Signature=" <> signature})
   end
 
   # Each segment URI-encoded once (S3 does not double-encode), slashes kept.

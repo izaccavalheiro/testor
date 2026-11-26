@@ -53,6 +53,8 @@ defmodule Testor.Views do
 
       run ->
         live = if run["status"] == "running", do: RunTracker.snapshot(id)
+        # A stored run's log, reports and attestations, fetched when this home lacks them.
+        if live == nil, do: Testor.Storage.local(id)
 
         {specs, log} =
           case live do

@@ -177,6 +177,7 @@ defmodule Testor.Query do
   Returns `%{text, size, truncated, matches}`.
   """
   def log(id, tail, grep, context) do
+    Testor.Storage.local(id)
     log = Files.tail(Config.log_file(id), tail)
 
     case grep do

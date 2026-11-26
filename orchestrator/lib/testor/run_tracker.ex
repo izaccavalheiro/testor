@@ -9,7 +9,7 @@ defmodule Testor.RunTracker do
   a snapshot up to some offset drops the events it already has.
   """
   use GenServer, restart: :transient
-  alias Testor.{Config, Events, Files, OS, SpecParser, Store}
+  alias Testor.{Config, Events, Files, OS, SpecParser, Storage, Store}
 
   @tick 250
   @alive_every 12
@@ -35,6 +35,7 @@ defmodule Testor.RunTracker do
 
   @impl true
   def init(id) do
+    send(self(), :catch_up)
     send(self(), :tick)
 
     {:ok,
@@ -68,6 +69,12 @@ defmodule Testor.RunTracker do
   end
 
   @impl true
+  # A run another testor follows: its log so far, from the bucket (Testor.Storage.Shared).
+  def handle_info(:catch_up, st) do
+    if Storage.shared?() and not origin?(Store.get(st.id)), do: Storage.Shared.catch_up(st.id)
+    {:noreply, st}
+  end
+
   def handle_info(:tick, st) do
     st = read(st, false)
     run = Store.get(st.id)
@@ -77,8 +84,7 @@ defmodule Testor.RunTracker do
         stop(st)
 
       # A remote run's process is on its agent's machine: its job's lease watches it instead.
-      st.ticks > 0 and rem(st.ticks, @alive_every) == 0 and not is_binary(run["remote"]) and
-          not OS.alive?(run["pid"]) ->
+      st.ticks > 0 and rem(st.ticks, @alive_every) == 0 and origin?(run) and not OS.alive?(run["pid"]) ->
         # run.ps1 writes its final record before its PowerShell exits: re-read it first. Settling
         # leaves a run that has ended alone.
         Store.refresh(st.id)
@@ -87,13 +93,24 @@ defmodule Testor.RunTracker do
 
       true ->
         st = publish(st, false)
+        follow(run, st, false)
         Process.send_after(self(), :tick, @tick)
         {:noreply, %{st | ticks: st.ticks + 1}}
     end
   end
 
+  # A local run's process is on this machine; an agent's is not (nor one another testor runs).
+  defp origin?(run),
+    do: is_map(run) and not is_binary(run["remote"]) and run["origin"] in [nil, Testor.Cluster.instance()]
+
+  # A local run's log, sent on to the other testors as it grows (Testor.Storage.Shared).
+  defp follow(run, st, flush) do
+    if Storage.shared?() and origin?(run), do: Storage.Shared.follow(st.id, st.read, flush)
+  end
+
   defp stop(st) do
     st = st |> read(true) |> publish(true)
+    follow(Store.get(st.id), st, true)
     Store.drop_live(st.id)
     {:stop, :normal, st}
   end

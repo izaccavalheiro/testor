@@ -176,6 +176,7 @@ defmodule Testor.Gates do
   # {:ok, signed record} when testor's attestation holds and signs this run, passed, at this commit.
   defp attested(run, commit) do
     {public, _} = Attestation.keypair()
+    Testor.Storage.local(run["id"])
 
     with {:ok, text} <- File.read(Attestation.file(run["id"])),
          {:ok, envelope} <- JSON.decode(text),

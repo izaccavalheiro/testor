@@ -12,7 +12,7 @@ defmodule Testor.Queue.SQS do
   and a short long poll (`waitSeconds`, 1 by default: agents ask again).
   """
   @behaviour Testor.Queue
-  alias Testor.Archive.SigV4
+  alias Testor.Aws.SigV4
 
   @doc false
   def config(raw) do
@@ -118,7 +118,7 @@ defmodule Testor.Queue.SQS do
     hash = SigV4.hex(:crypto.hash(:sha256, payload))
     extra = [{"content-type", "application/x-amz-json-1.0"}, {"x-amz-target", "AmazonSQS." <> action}]
 
-    with {:ok, creds} <- Testor.Archive.credentials(cfg.region) do
+    with {:ok, creds} <- Testor.Aws.credentials(cfg.region) do
       signed =
         SigV4.authorize("POST", uri, extra, hash, creds, cfg.region, "sqs", DateTime.utc_now(),
           content_hash: false

@@ -8,7 +8,19 @@ defmodule Testor.Events do
 
   def subscribe(topic), do: Registry.register(@registry, topic, nil)
 
+  @doc """
+  Sends an event to this testor's subscribers; the dashboard's `job` and `approval` events go
+  to the other testors too when they share no volume (`Testor.Storage.Shared`).
+  """
   def broadcast(topic, name, data) do
+    relay? = topic == "global" and name in ["job", "approval"]
+    if relay? and Testor.Storage.shared?(), do: Testor.Storage.Shared.relay(topic, name, data)
+
+    local(topic, name, data)
+  end
+
+  @doc "Sends an event to this testor's subscribers only."
+  def local(topic, name, data) do
     Registry.dispatch(@registry, topic, fn entries ->
       for {pid, _} <- entries, do: send(pid, {:event, name, data})
     end)
