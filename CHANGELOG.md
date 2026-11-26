@@ -21,6 +21,11 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   badge; `report.junit.xml` and `report.ctrf.json` export a run's results; hotspots
   (`/api/v1/projects/<p>/hotspots`, MCP `find_hotspots`) rank the costliest spec files. XML is
   read with OTP's xmerl, entities refused.
+- **Job queues on a broker** ([docs/queues.md](docs/queues.md)): `execution.queue` dispatches
+  jobs through SQS FIFO queues or NATS JetStream (a client of NATS's protocol, no dependency),
+  chosen by labels, while records stay in the store and agents keep leasing through testor;
+  `queue` in `/api/health`, `testor_queue_depth` and `testor_queue_errors_total`, and a KEDA
+  trigger of your own for the chart's agents. RabbitMQ is not built (see the design).
 - **Heavy jobs** ([docs/heavy-jobs.md](docs/heavy-jobs.md)): timeouts (a command's, a job's
   shorter one, `execution.defaultTimeout`, `run.ps1 -TimeoutSeconds`, `TIMEOUT`), a memory guard
   that ends a run before the OOM killer does, `TESTOR_CPUS` and `TESTOR_MEMORY_MB` from the

@@ -36,6 +36,7 @@ const FILES = {
   "docs/mutation.md": ["reference/mutation.md", "Mutation testing", 9],
   "docs/result-formats.md": ["reference/result-formats.md", "Result formats", 10],
   "docs/heavy-jobs.md": ["reference/heavy-jobs.md", "Heavy jobs", 11],
+  "docs/queues.md": ["reference/queues.md", "Job queues on a broker", 12],
   "VERSIONING.md": ["project/versioning.md", "Versioning and releases", 1],
   "ROADMAP.md": ["project/roadmap.md", "Roadmap", 2],
   "CHANGELOG.md": ["project/changelog.md", "Changelog", 3],

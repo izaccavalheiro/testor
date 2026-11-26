@@ -34,6 +34,9 @@ end
 ExUnit.after_suite(fn _ -> File.rm_rf(root) end)
 # With TESTOR_DATABASE_URL the job queue is in PostgreSQL (CI's PostgreSQL job): its own
 # tests run, those of the files backend do not.
+# Real brokers (test/brokers_test.exs) only where TESTOR_BROKERS=1 starts them.
+brokers = if System.get_env("TESTOR_BROKERS") == "1", do: [], else: [:brokers]
+
 if Testor.Jobs.Postgres.enabled?(),
-  do: ExUnit.start(exclude: [:files]),
-  else: ExUnit.start(exclude: [:postgres])
+  do: ExUnit.start(exclude: [:files | brokers]),
+  else: ExUnit.start(exclude: [:postgres | brokers])

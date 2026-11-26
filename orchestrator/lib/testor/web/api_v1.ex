@@ -412,6 +412,11 @@ defmodule Testor.Web.ApiV1 do
         {:error, :disabled} ->
           error(conn, 403, "execution_disabled", "jobs are off: set execution.enabled in config.json")
 
+        {:error, :queue_unavailable} ->
+          conn
+          |> put_resp_header("retry-after", "10")
+          |> error(503, "queue_unavailable", "the job queue's broker did not take the job; try again")
+
         {:error, message} ->
           error(conn, 400, "bad_request", message)
       end

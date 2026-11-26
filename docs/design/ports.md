@@ -11,6 +11,12 @@ Today the run index is in ETS, filled by scanning `runs/*.json` every 300 ms, an
 screenshots and artifacts are files. That keeps the install a single binary, and limits it to
 one node with a local disk.
 
+**Queues (0.17):** `Testor.Queue` is the queue port: SQS FIFO (`Testor.Queue.SQS`) and NATS
+JetStream (`Testor.Queue.NATS`, a client of its text protocol) dispatch jobs while their
+records stay in the store ([queues](../queues.md)). **RabbitMQ: not built.** AMQP needs a
+binary-protocol client, which means a heavy dependency (`amqp_client`, `rabbit_common`); it
+would come only on request, as an optional dependency. PostgreSQL, SQS and NATS cover the need.
+
 Each concern becomes an Elixir behaviour with today's code as its default adapter:
 
 | Port | Default (no dependency) | Adapters |

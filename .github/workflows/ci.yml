@@ -122,6 +122,35 @@ jobs:
       - name: Tests with the job queue in PostgreSQL (100% coverage), in partitions at once
         run: ./test/partitions.ps1
 
+  brokers:
+    name: Job queue on real brokers (ElasticMQ, NATS JetStream)
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      TESTOR_BROKERS: "1"
+      ELASTICMQ: softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c # 1.7.1
+      NATS: nats@sha256:0764f1952d72e92e35ad8b152da0f9652a49cb1186b6445fdd45131d81ad6d7e # 2.12
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20"
+      - name: Start the brokers
+        run: |
+          docker run -d --name elasticmq -p 127.0.0.1:9324:9324 "$ELASTICMQ"
+          docker run -d --name nats -p 127.0.0.1:4222:4222 "$NATS" -js
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:9324/ && break; sleep 1; done
+      - name: Dependencies
+        run: mix deps.get
+      - name: The queue contract on each broker
+        run: mix test --only brokers
+
   powershell:
     name: PowerShell scripts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
