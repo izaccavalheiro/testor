@@ -9,7 +9,7 @@ locals {
     replicas     = var.replicas
     auth         = { existingSecret = var.admin_secret }
     database     = { existingSecret = var.database_secret }
-    tls          = { existingSecret = var.tls_secret }
+    tls          = merge({ existingSecret = var.tls_secret }, var.tls_acme == null ? {} : { acme = var.tls_acme })
     persistence = {
       size          = var.persistence.size
       storageClass  = var.persistence.storage_class
@@ -49,7 +49,7 @@ locals {
   local_chart = var.chart_path != null
   fullname    = strcontains(var.name, "testor") ? var.name : "${var.name}-testor"
   port        = try(var.values.service.port, 6767)
-  scheme      = var.tls_secret != "" ? "https" : "http"
+  scheme      = var.tls_secret != "" || var.tls_acme != null ? "https" : "http"
 }
 
 resource "helm_release" "this" {
@@ -70,6 +70,11 @@ resource "helm_release" "this" {
   timeout         = var.timeout
 
   lifecycle {
+    precondition {
+      condition     = var.tls_secret == "" || var.tls_acme == null
+      error_message = "tls_secret and tls_acme: choose one source of certificates."
+    }
+
     precondition {
       condition     = var.replicas == 1 || var.database_secret != ""
       error_message = "replicas > 1 needs database_secret: testors share the job queue, claims and approvals through PostgreSQL."

@@ -111,6 +111,16 @@ defmodule Testor.AcmeTest do
                })
     end
 
+    test "or TESTOR_ACME, the same object as JSON" do
+      on_exit(fn -> System.delete_env("TESTOR_ACME") end)
+      System.put_env("TESTOR_ACME", ~s({"domains": ["#{@domain}"]}))
+      assert %{domains: [@domain]} = Acme.config(%{})
+      System.put_env("TESTOR_ACME", "{nope")
+      assert capture_log(fn -> assert Acme.config(%{}) == nil end) =~ "not an object"
+      System.put_env("TESTOR_ACME", "")
+      assert Acme.config(%{}) == nil
+    end
+
     test "the certificate files win over it" do
       Application.put_env(:testor, :tls_cert, "c.pem")
       Application.put_env(:testor, :tls_key, "k.pem")

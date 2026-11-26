@@ -26,7 +26,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- join "," (concat $hosts .Values.allowedHosts) -}}
 {{- end -}}
 
-{{- define "testor.scheme" -}}{{ if .Values.tls.existingSecret }}HTTPS{{ else }}HTTP{{ end }}{{- end -}}
+{{- define "testor.scheme" -}}{{ if or .Values.tls.existingSecret .Values.tls.acme }}HTTPS{{ else }}HTTP{{ end }}{{- end -}}
 
 {{- define "testor.agentSelector" -}}
 app.kubernetes.io/name: {{ .Chart.Name }}-agent

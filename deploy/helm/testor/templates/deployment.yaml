@@ -4,6 +4,7 @@ metadata:
   name: {{ include "testor.fullname" . }}
   labels: {{- include "testor.labels" . | nindent 4 }}
 spec:
+  {{- if and .Values.tls.existingSecret .Values.tls.acme }}{{ fail "tls.existingSecret and tls.acme: choose one source of certificates" }}{{ end }}
   {{- if gt (int .Values.replicas) 1 }}
   {{- if not .Values.database.existingSecret }}{{ fail "replicas > 1 needs database.existingSecret (the queue and claims in PostgreSQL)" }}{{ end }}
   {{- if not (has "ReadWriteMany" .Values.persistence.accessModes) }}{{ fail "replicas > 1 needs persistence.accessModes [ReadWriteMany] (one home for every replica)" }}{{ end }}
@@ -61,6 +62,9 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - { name: http, containerPort: 6767, protocol: TCP }
+            {{- with .Values.tls.acme.httpPort }}
+            - { name: acme-http, containerPort: {{ . }}, protocol: TCP }
+            {{- end }}
           env:
             - { name: TESTOR_ALLOWED_HOSTS, value: {{ include "testor.allowedHosts" . | quote }} }
             - { name: TESTOR_TRUSTED_PROXIES, value: {{ join "," .Values.trustedProxies | quote }} }
@@ -76,6 +80,10 @@ spec:
             {{- if .Values.tls.existingSecret }}
             - { name: TESTOR_TLS_CERT, value: /tls/tls.crt }
             - { name: TESTOR_TLS_KEY, value: /tls/tls.key }
+            {{- end }}
+            {{- with .Values.tls.acme }}
+            # Certificates from ACME (Testor.Acme).
+            - { name: TESTOR_ACME, value: {{ toJson . | quote }} }
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

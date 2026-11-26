@@ -99,6 +99,17 @@ variable "tls_secret" {
   default     = ""
 }
 
+variable "tls_acme" {
+  description = "Certificates testor orders itself from an ACME CA (tls.acme: domains, email, directory, httpPort, ...). Not with tls_secret."
+  type        = any
+  default     = null
+
+  validation {
+    condition     = var.tls_acme == null || can(length(var.tls_acme.domains) > 0)
+    error_message = "tls_acme needs domains: the names the certificate covers."
+  }
+}
+
 variable "persistence" {
   description = "testor's home volume."
   type = object({

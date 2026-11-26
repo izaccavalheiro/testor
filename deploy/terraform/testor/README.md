@@ -32,6 +32,7 @@ Requirements: Terraform 1.5 or later, the `hashicorp/helm` provider 3.x.
 | `admin_secret` | `auth.existingSecret` | |
 | `database_secret` | `database.existingSecret` | |
 | `tls_secret` | `tls.existingSecret` | built-in TLS from a Secret (cert-manager) |
+| `tls_acme` | `tls.acme` | or certificates testor orders from an ACME CA: `domains`, `email`, `httpPort`... |
 | `persistence` | `persistence` | `size`, `storage_class`, `access_modes`, `existing_claim` |
 | `ingress` | `ingress` | `enabled`, `class_name`, `host`, `tls_secret`, `annotations` |
 | `network_policy` | `networkPolicy` | `enabled`, `ingress_from`, `egress_to` |

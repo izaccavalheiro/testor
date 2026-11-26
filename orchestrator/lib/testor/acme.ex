@@ -48,12 +48,24 @@ defmodule Testor.Acme do
 
   # --- configuration -------------------------------------------------------------------------
 
-  @doc "The settings of `tls.acme`, `nil` when it is off or not valid (logged)."
+  @doc """
+  The settings of `tls.acme` (else of `TESTOR_ACME`, the same object as JSON: the Helm chart
+  sets it), `nil` when it is off or not valid (logged).
+  """
   def config(user \\ Config.user()) do
-    case get_in(user, ["tls", "acme"]) do
+    case get_in(user, ["tls", "acme"]) || from_env(System.get_env("TESTOR_ACME")) do
       %{} = acme -> validate(acme)
       nil -> nil
       _ -> invalid("tls.acme is not an object")
+    end
+  end
+
+  defp from_env(json) when json in [nil, ""], do: nil
+
+  defp from_env(json) do
+    case JSON.decode(json) do
+      {:ok, value} -> value
+      {:error, _} -> :not_json
     end
   end
 
