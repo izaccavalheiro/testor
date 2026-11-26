@@ -332,7 +332,7 @@ defmodule Testor.Store do
 
   defp on_finish(run) do
     id = run["id"]
-    specs = Files.log_specs(id)
+    specs = Testor.Reports.run_specs(id)
     shots = Files.screenshots(id, specs)
     artifacts = Files.artifacts(id)
     Logger.info("store: #{id} #{run["status"]} in #{run["durationMs"]} ms")
@@ -345,6 +345,11 @@ defmodule Testor.Store do
     if artifacts != [], do: Stats.refresh_artifacts()
   end
 
+  defp compact_spec(spec) do
+    base = %{"file" => spec["file"], "status" => spec["status"], "durationMs" => spec["durationMs"] || 0}
+    if (spec["retries"] || 0) > 0, do: Map.put(base, "retries", spec["retries"]), else: base
+  end
+
   @doc false
   def with_shot_counts(specs, shots) do
     Enum.map(specs, fn spec ->
@@ -355,16 +360,26 @@ defmodule Testor.Store do
   # Adds the spec summary (and the screenshot count, for records without one) and saves it.
   defp finalize(state, run) do
     id = run["id"]
-    specs = Files.log_specs(id)
+    # What its report files say first (Testor.Reports): test results, which then are its spec
+    # table, a mutation score, coverage. Without test reports, the specs its log printed.
+    reports = Testor.Reports.summarize(id)
+    log_specs = Files.log_specs(id)
+    specs = if reports["specsFrom"], do: Testor.Reports.run_specs(id), else: log_specs
+    log_summary = SpecParser.summary(log_specs)
 
-    # Each spec file's outcome is kept with the record: flaky specs are found across runs
-    # (Testor.Query.flaky/2) without reading every log again.
-    # And what its report files (or its log's summary) say: a mutation score (Testor.Reports).
+    # Each spec file's outcome (and time, retries) is kept with the record: flaky specs and
+    # hotspots are found across runs (Testor.Query) without reading every log again.
     run =
       run
       |> Map.put("summary", SpecParser.summary(specs))
-      |> Map.put("specs", Enum.map(specs, &%{"file" => &1["file"], "status" => &1["status"]}))
-      |> Map.merge(Testor.Reports.summarize(id))
+      |> Map.put("specs", Enum.map(specs, &compact_spec/1))
+      |> Map.merge(reports)
+      |> then(
+        &if(reports["specsFrom"] && log_summary["specs"] > 0 && log_summary != &1["summary"],
+          do: Map.put(&1, "logSummary", log_summary),
+          else: &1
+        )
+      )
 
     run =
       Map.put_new_lazy(run, "screenshots", fn ->

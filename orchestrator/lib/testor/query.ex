@@ -105,6 +105,56 @@ defmodule Testor.Query do
     |> Enum.sort_by(&{-&1["failed"], &1["file"]})
   end
 
+  @doc """
+  The spec files that cost a project most, over its last `limit` finished runs (of `kind`):
+  `mostFailing` (failures, failure rate), `slowest` (mean and longest time) and `mostRetried`
+  (retries CTRF reports give), 20 of each. Read from the records' spec outcomes, like `flaky/2`.
+  """
+  def hotspots(project, kind \\ nil, limit \\ 200) do
+    rows =
+      Store.all()
+      |> Enum.filter(fn run ->
+        run["project"] == project and (kind == nil or run["kind"] == kind) and run["status"] != "running" and
+          is_list(run["specs"])
+      end)
+      |> Enum.take(limit)
+      |> Enum.flat_map(fn run ->
+        for %{"file" => file} = spec <- run["specs"], do: {{run["kind"], file}, spec}
+      end)
+      |> Enum.group_by(&elem(&1, 0), &elem(&1, 1))
+      |> Enum.map(fn {{kind, file}, specs} ->
+        times = for %{"durationMs" => ms} <- specs, is_integer(ms), do: ms
+        failed = Enum.count(specs, &(&1["status"] == "failed"))
+
+        %{
+          "file" => file,
+          "kind" => kind,
+          "runs" => length(specs),
+          "failed" => failed,
+          "failureRate" => Float.round(failed / length(specs), 3),
+          "meanMs" => if(times == [], do: nil, else: div(Enum.sum(times), length(times))),
+          "maxMs" => if(times == [], do: nil, else: Enum.max(times)),
+          "retries" => specs |> Enum.map(&(&1["retries"] || 0)) |> Enum.sum()
+        }
+      end)
+
+    %{
+      "runs" => min(limit, rows |> Enum.map(& &1["runs"]) |> Enum.max(fn -> 0 end)),
+      "mostFailing" =>
+        rows
+        |> Enum.filter(&(&1["failed"] > 0))
+        |> Enum.sort_by(&{-&1["failed"], -&1["failureRate"], &1["file"]})
+        |> Enum.take(20),
+      "slowest" =>
+        rows |> Enum.filter(& &1["meanMs"]) |> Enum.sort_by(&{-&1["meanMs"], &1["file"]}) |> Enum.take(20),
+      "mostRetried" =>
+        rows
+        |> Enum.filter(&(&1["retries"] > 0))
+        |> Enum.sort_by(&{-&1["retries"], &1["file"]})
+        |> Enum.take(20)
+    }
+  end
+
   @doc "The latest run of each project and task, with the statuses of up to 10 runs before it."
   def projects do
     Store.all()

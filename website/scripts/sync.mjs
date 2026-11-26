@@ -34,6 +34,7 @@ const FILES = {
   "docs/attestation.md": ["reference/attestation.md", "Run attestations", 7],
   "docs/jobs.md": ["reference/jobs.md", "Jobs and agents", 8],
   "docs/mutation.md": ["reference/mutation.md", "Mutation testing", 9],
+  "docs/result-formats.md": ["reference/result-formats.md", "Result formats", 10],
   "VERSIONING.md": ["project/versioning.md", "Versioning and releases", 1],
   "ROADMAP.md": ["project/roadmap.md", "Roadmap", 2],
   "CHANGELOG.md": ["project/changelog.md", "Changelog", 3],

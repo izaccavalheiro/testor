@@ -235,7 +235,7 @@ defmodule Testor.ReportsTest do
       assert capture_log(fn ->
                assert %{"mutation" => %{"score" => 40.0, "source" => "log"}} =
                         Reports.summarize(bad, "Final mutation score of 40.00")
-             end) =~ "is not a mutation report"
+             end) =~ "m.json could not be read (not JSON)"
 
       Application.put_env(:testor, :report_max_bytes, 10)
       big = with_reports([{"m.json", JSON.encode!(report())}])

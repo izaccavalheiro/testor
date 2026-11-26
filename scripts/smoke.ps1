@@ -206,6 +206,21 @@ try {
   $badge = Invoke-WebRequest "$base/api/v1/projects/demo/badge.svg?metric=mutation"
   Check "mutation: a score badge" ($badge.Content -match "50\.0%")
 
+  # A Jest run with jest-junit: its spec table comes from the report, not the log.
+  & "$testorHome/run.ps1" -Project demo -Kind jest -Reports "junit.xml" -Body {
+    Set-Content -LiteralPath junit.xml -Value ('<testsuites><testsuite name="sum"><testcase classname="sum" name="adds" time="0.01" file="src/sum.test.js"/>' +
+      '<testcase classname="sum" name="fails" time="0.02" file="src/sum.test.js"><failure message="no"/></testcase></testsuite></testsuites>')
+    "Tests: 1 failed, 1 passed, 2 total"
+  } | Out-Null
+  $deadline = (Get-Date).AddSeconds(20)
+  do {
+    Start-Sleep -Milliseconds 500
+    $jest = @((Invoke-RestMethod "$base/api/state").history) | Where-Object kind -eq "jest" | Select-Object -First 1
+  } until (($jest -and $jest.specsFrom) -or (Get-Date) -gt $deadline)
+  Check "junit: the spec table from the report" ($jest.specsFrom -eq "reports" -and $jest.summary.tests -eq 2 -and $jest.summary.failed -eq 1) "($($jest.summary | ConvertTo-Json -Compress))"
+  $exported = Invoke-WebRequest "$base/api/v1/runs/$($jest.id)/report.junit.xml"
+  Check "junit: exported again" ($exported.Content -match 'testcase name="fails"')
+
   # Cancelling kills the run's whole process tree, on every OS.
   $hidden = if ($IsWindows) { @{ WindowStyle = "Hidden" } } else { @{} }
   $slowErr = Join-Path $work "slow.err"

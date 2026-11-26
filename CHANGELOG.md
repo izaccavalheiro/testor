@@ -15,6 +15,12 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   Stryker log's summary, into a signed `mutation` summary, shows the score, a table per file
   and the surviving mutants, a live bar while it runs, and a `?metric=mutation` badge; release
   gates take `minMutationScore` and `maxSurvivors`.
+- **Universal result formats** ([docs/result-formats.md](docs/result-formats.md)): JUnit XML,
+  TRX, CTRF and TAP reports give the spec table (`specsFrom`), flaky detection and gates of any
+  framework; LCOV, Cobertura and Istanbul give `coverage`, a `minCoverage` gate and a coverage
+  badge; `report.junit.xml` and `report.ctrf.json` export a run's results; hotspots
+  (`/api/v1/projects/<p>/hotspots`, MCP `find_hotspots`) rank the costliest spec files. XML is
+  read with OTP's xmerl, entities refused.
 - **Commands as objects** in `agent.json` (`command`, `reports`, `artifacts`, `preserve`), a
   plain string still working; preserved caches survive isolated workspaces; `KEEP` takes
   paths, `PRESERVE` and `CLEAN=1` in `remote.yml`, and `"clean": true` on a job.

@@ -170,7 +170,11 @@ defmodule Testor.Web.OpenAPI do
         "parameters" => [
           %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},
           %{"name" => "kind", "in" => "query", "schema" => %{"type" => "string"}},
-          %{"name" => "metric", "in" => "query", "schema" => %{"type" => "string", "enum" => ["mutation"]}}
+          %{
+            "name" => "metric",
+            "in" => "query",
+            "schema" => %{"type" => "string", "enum" => ["mutation", "coverage"]}
+          }
         ],
         "get" =>
           op("runs", "The latest result as an SVG badge (public for config.json's publicBadges)", %{

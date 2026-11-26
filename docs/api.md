@@ -106,6 +106,17 @@ URL) or `OTEL_EXPORTER_OTLP_ENDPOINT` (`/v1/traces` is added), `OTEL_EXPORTER_OT
 
 Spans are sent once, in the background; a collector that cannot be reached is logged.
 
+## Reports
+
+A run's report files ([mutation testing](mutation.md), [result formats](result-formats.md)):
+
+| Route | Gives |
+| ----- | ----- |
+| `GET /api/v1/runs/<id>` | also `mutation` (files, surviving mutants) and `coverage` (files) when the run had such reports |
+| `GET /api/v1/runs/<id>/report.junit.xml`, `.../report.ctrf.json` | the run's spec table for another tool |
+| `GET /api/v1/projects/<p>/hotspots?kind=&limit=` | the spec files that fail, take and retry most |
+| `PUT /api/v1/agent/jobs/<id>/files/reports/<file>` | an agent's report files (20 at most, 50 MB each) |
+
 ## Badges
 
 `GET /api/v1/projects/<project>/badge.svg?kind=` is the project's latest result (of `kind`
