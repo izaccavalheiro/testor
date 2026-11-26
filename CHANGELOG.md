@@ -7,6 +7,15 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.12.2 - 2026-11-26
+
+### Fixed
+
+- The orchestrator's image is published under the version's tags again. 0.12.1's manifest job
+  took testor-agent's digests as well as its own, so `ghcr.io/izaccavalheiro/testor:0.12.1`
+  was never tagged and `:0.12` and `:latest` stayed on 0.12.0. The 0.12.1 Helm chart's default
+  image does not exist: use 0.12.2 (the agent's 0.12.1 image and the release archives are fine).
+
 ## 0.12.1 - 2026-11-26
 
 ### Changed
