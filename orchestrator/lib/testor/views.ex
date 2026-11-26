@@ -72,6 +72,8 @@ defmodule Testor.Views do
           "specs" => Store.with_shot_counts(specs, shots),
           "screenshots" => shots,
           "artifacts" => Files.artifacts(id),
+          # The files and surviving mutants of its mutation report (Testor.Reports), or nil.
+          "mutation" => Testor.Reports.mutation_detail(id),
           "log" => log.text,
           "logBytes" => log.size,
           "truncated" => log.truncated

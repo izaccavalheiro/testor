@@ -75,7 +75,13 @@ defmodule Testor.Store do
     :ets.new(@live, [:named_table, :public, read_concurrency: true])
 
     Enum.each(
-      [Config.runs_dir(), Config.logs_dir(), Config.shots_dir(), Config.artifacts_dir()],
+      [
+        Config.runs_dir(),
+        Config.logs_dir(),
+        Config.shots_dir(),
+        Config.artifacts_dir(),
+        Config.reports_dir()
+      ],
       &File.mkdir_p!/1
     )
 
@@ -163,6 +169,7 @@ defmodule Testor.Store do
         File.rm(Testor.Archive.manifest(id))
         File.rm_rf(Path.join(Config.shots_dir(), id))
         File.rm_rf(Path.join(Config.artifacts_dir(), id))
+        Testor.Reports.delete(id)
         {:reply, :ok, forget(state, id)}
     end
   end
@@ -352,10 +359,12 @@ defmodule Testor.Store do
 
     # Each spec file's outcome is kept with the record: flaky specs are found across runs
     # (Testor.Query.flaky/2) without reading every log again.
+    # And what its report files (or its log's summary) say: a mutation score (Testor.Reports).
     run =
       run
       |> Map.put("summary", SpecParser.summary(specs))
       |> Map.put("specs", Enum.map(specs, &%{"file" => &1["file"], "status" => &1["status"]}))
+      |> Map.merge(Testor.Reports.summarize(id))
 
     run =
       Map.put_new_lazy(run, "screenshots", fn ->

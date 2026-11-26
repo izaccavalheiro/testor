@@ -149,7 +149,7 @@ defmodule Testor.Web.ApiV1 do
     # Badges are fetched through caching proxies (GitHub's camo): always ask again.
     |> put_resp_header("cache-control", "no-cache, max-age=0")
     |> put_resp_header("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'")
-    |> send_resp(200, Testor.Badge.svg(project, conn.query_params["kind"]))
+    |> send_resp(200, Testor.Badge.svg(project, conn.query_params["kind"], conn.query_params["metric"]))
   end
 
   # DORA's four metrics of the runs of the task that delivers the project (Testor.Dora).
@@ -600,6 +600,9 @@ defmodule Testor.Web.ApiV1 do
   defp remote_reply({:error, :other_run}, conn), do: error(conn, 409, "other_run", "the job has another run")
   defp remote_reply({:error, :no_run}, conn), do: error(conn, 409, "no_run", "send the run's record first")
   defp remote_reply({:error, :too_large}, conn), do: error(conn, 413, "too_large", "over the run's limit")
+
+  defp remote_reply({:error, :too_many}, conn),
+    do: error(conn, 409, "too_many", "a run keeps #{Testor.Reports.max_files()} reports at most")
 
   defp remote_reply({:error, {:offset, size}}, conn) do
     conn

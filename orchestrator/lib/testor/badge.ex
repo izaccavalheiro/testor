@@ -6,6 +6,9 @@ defmodule Testor.Badge do
   A badge needs the `read` scope like the rest of the API, unless config.json lists the project
   in `publicBadges` (`["web", "docs"]`): its badge then answers without credentials, as a
   public repository's CI badge does. It shows one word (passed, failed...), nothing else.
+
+  `?metric=mutation` shows the latest mutation score instead (`87.5%`, of the latest run that
+  has one): green from 80, orange from 60, red below.
   """
   alias Testor.{Config, Store}
 
@@ -25,8 +28,28 @@ defmodule Testor.Badge do
     end
   end
 
-  @doc "The badge of `project`'s latest run (of `kind` when given)."
-  def svg(project, kind) do
+  @doc "The badge of `project`'s latest run (of `kind` when given), or its mutation score."
+  def svg(project, kind, metric \\ nil)
+
+  def svg(project, kind, "mutation") do
+    score =
+      Enum.find_value(Store.all(), fn run ->
+        run["project"] == project and (kind == nil or run["kind"] == kind) and
+          get_in(run, ["mutation", "score"])
+      end)
+
+    {message, color} =
+      cond do
+        not is_number(score) -> {"no score", "#757575"}
+        score >= 80 -> {"#{score}%", "#2e7d32"}
+        score >= 60 -> {"#{score}%", "#e65100"}
+        true -> {"#{score}%", "#c62828"}
+      end
+
+    render("mutation", message, color)
+  end
+
+  def svg(project, kind, _metric) do
     latest =
       Enum.find(Store.all(), &(&1["project"] == project and (kind == nil or &1["kind"] == kind)))
 

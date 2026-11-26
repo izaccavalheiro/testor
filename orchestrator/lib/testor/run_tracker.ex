@@ -48,6 +48,7 @@ defmodule Testor.RunTracker do
        ticks: 0,
        specs_sig: nil,
        live: nil,
+       mutation: nil,
        # Monotonic time can be negative on the BEAM: nil means "never sent".
        live_at: nil
      }}
@@ -133,7 +134,17 @@ defmodule Testor.RunTracker do
       tail =
         (st.tail ++ Enum.reject(clean, &(String.trim(&1) == ""))) |> Enum.take(-6)
 
-      %{st | emitted: to, parser: SpecParser.feed(st.parser, clean), tail: tail}
+      # A mutation run's progress line, the latest one (Testor.Reports.Mutation).
+      mutation =
+        clean |> Enum.map(&Testor.Reports.Mutation.progress/1) |> Enum.reject(&is_nil/1) |> List.last()
+
+      %{
+        st
+        | emitted: to,
+          parser: SpecParser.feed(st.parser, clean),
+          tail: tail,
+          mutation: mutation || st.mutation
+      }
     end
   end
 
@@ -161,6 +172,8 @@ defmodule Testor.RunTracker do
       "logTail" => st.tail,
       "logBytes" => st.emitted
     }
+
+    live = if st.mutation, do: Map.put(live, "mutationProgress", st.mutation), else: live
 
     Store.put_live(st.id, live)
     now = System.monotonic_time(:millisecond)

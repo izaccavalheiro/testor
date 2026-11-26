@@ -133,7 +133,7 @@ defmodule Testor.Web.OpenAPI do
         "post" =>
           op(
             "jobs",
-            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref?}",
+            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref?, clean?}",
             %{"type" => "object"}
           )
       },
@@ -169,7 +169,8 @@ defmodule Testor.Web.OpenAPI do
       "/projects/{project}/badge.svg" => %{
         "parameters" => [
           %{"name" => "project", "in" => "path", "required" => true, "schema" => %{"type" => "string"}},
-          %{"name" => "kind", "in" => "query", "schema" => %{"type" => "string"}}
+          %{"name" => "kind", "in" => "query", "schema" => %{"type" => "string"}},
+          %{"name" => "metric", "in" => "query", "schema" => %{"type" => "string", "enum" => ["mutation"]}}
         ],
         "get" =>
           op("runs", "The latest result as an SVG badge (public for config.json's publicBadges)", %{

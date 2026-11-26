@@ -160,7 +160,11 @@ defmodule Testor.Remote do
     log = if Files.entry(Config.log_file(run_id)) != :skip, do: [{"log", Config.log_file(run_id)}], else: []
 
     areas =
-      for {area, dir} <- [{"screenshots", Config.shots_dir()}, {"artifacts", Config.artifacts_dir()}],
+      for {area, dir} <- [
+            {"screenshots", Config.shots_dir()},
+            {"artifacts", Config.artifacts_dir()},
+            {"reports", Config.reports_dir()}
+          ],
           file <- Files.walk(Path.join(dir, run_id)),
           do: {area <> "/" <> String.replace(file.rel, "\\", "/"), file.full}
 
@@ -176,13 +180,16 @@ defmodule Testor.Remote do
   end
 
   @doc """
-  Writes a screenshot or artifact (`area`: `"screenshots"` or `"artifacts"`) of job `id`'s run
+  Writes a screenshot, artifact or report (`area`: `"screenshots"`, `"artifacts"` or
+  `"reports"`) of job `id`'s run
   at the path `segments`: `{:ok, bytes}` or `{:error, reason}`.
   """
   def put_file(id, agent, area, segments, data) do
     with {:ok, run_id} <- bound_run(id, agent),
          {:ok, root} <- area_root(area, run_id),
          true <- safe?(segments) || {:error, :bad_path},
+         # Reports are files of their own, no folders.
+         true <- (area != "reports" or length(segments) == 1) || {:error, :bad_path},
          path = Path.join([root | segments]),
          true <- (area != "screenshots" or Files.image_type(path) != nil) || {:error, :not_an_image},
          :ok <- fits(area, root, path, byte_size(data)) do
@@ -219,6 +226,7 @@ defmodule Testor.Remote do
 
   defp area_root("screenshots", run_id), do: {:ok, Path.join(Config.shots_dir(), run_id)}
   defp area_root("artifacts", run_id), do: {:ok, Path.join(Config.artifacts_dir(), run_id)}
+  defp area_root("reports", run_id), do: {:ok, Testor.Reports.dir(run_id)}
   defp area_root(_area, _run_id), do: {:error, :bad_path}
 
   defp safe?(segments) do
@@ -233,4 +241,13 @@ defmodule Testor.Remote do
   end
 
   defp fits("screenshots", _root, _path, _bytes), do: :ok
+
+  # Reports: #{Testor.Reports.max_files()} at most, each within the cap Testor.Reports reads.
+  defp fits("reports", root, path, bytes) do
+    cond do
+      bytes > Testor.Reports.max_bytes() -> {:error, :too_large}
+      not File.exists?(path) and length(Files.ls(root)) >= Testor.Reports.max_files() -> {:error, :too_many}
+      true -> :ok
+    end
+  end
 end

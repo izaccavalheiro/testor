@@ -335,8 +335,15 @@ defmodule Testor.Jobs do
       params["traceparent"] != nil and Testor.Tracing.parse(params["traceparent"]) == :error ->
         {:error, "traceparent is a W3C trace context (00-<trace id>-<span id>-<flags>)"}
 
+      params["clean"] not in [nil, true, false] ->
+        {:error, "clean is true or false"}
+
       true ->
-        job = build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
+        job =
+          build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
+          # The agent drops the project's preserved caches first (agent.json's "preserve").
+          |> then(&if(params["clean"] == true, do: Map.put(&1, "clean", true), else: &1))
+
         {:ok, Map.merge(job, Testor.Tracing.job_fields(params["traceparent"]))}
     end
   end

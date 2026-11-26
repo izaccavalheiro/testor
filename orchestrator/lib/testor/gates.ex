@@ -17,7 +17,9 @@ defmodule Testor.Gates do
       `passed`;
     * with `requireAgentSignature`, its agent signed it too (`agentAttested`, checked when
       testor received it);
-    * with `maxAgeHours`, it ended within that time.
+    * with `maxAgeHours`, it ended within that time;
+    * with `minMutationScore` (a percentage) and `maxSurvivors`, its signed mutation summary
+      (`Testor.Reports`) reaches that score and leaves at most that many mutants alive.
 
   The answer is `pass` and the reason of each check that fails, for a pipeline to stop on, or
   for a policy engine (OPA) to take as its input.
@@ -115,7 +117,29 @@ defmodule Testor.Gates do
         "its latest run ended more than #{gate["maxAgeHours"]} hours ago"
 
       true ->
-        attested(run, commit) || agent_signed(gate, run)
+        case attested(run, commit) do
+          {:ok, signed} -> agent_signed(gate, run) || mutation(gate, signed["mutation"])
+          reason -> reason
+        end
+    end
+  end
+
+  # The mutation thresholds, checked on the signed record's summary.
+  defp mutation(gate, summary) do
+    score = summary["score"]
+    survived = get_in(summary, ["counts", "survived"])
+    min = gate["minMutationScore"]
+    max = gate["maxSurvivors"]
+
+    cond do
+      min != nil and not (is_number(score) and score >= min) ->
+        "its mutation score #{if is_number(score), do: score, else: "(none)"} is below #{min}"
+
+      max != nil and not (is_integer(survived) and survived <= max) ->
+        "it left #{if is_integer(survived), do: survived, else: "an unknown number of"} mutants alive (at most #{max})"
+
+      true ->
+        nil
     end
   end
 
@@ -133,7 +157,7 @@ defmodule Testor.Gates do
     end
   end
 
-  # nil when testor's attestation holds and its signed record is this run, passed, at this commit.
+  # {:ok, signed record} when testor's attestation holds and signs this run, passed, at this commit.
   defp attested(run, commit) do
     {public, _} = Attestation.keypair()
 
@@ -148,7 +172,7 @@ defmodule Testor.Gates do
           "its attestation does not name this commit"
 
         true ->
-          nil
+          {:ok, signed}
       end
     else
       {:error, :enoent} -> "its latest run is not signed by testor"
@@ -177,12 +201,28 @@ defmodule Testor.Gates do
       raw["maxAgeHours"] != nil and not (is_number(raw["maxAgeHours"]) and raw["maxAgeHours"] > 0) ->
         {:error, "maxAgeHours is a number of hours"}
 
+      raw["minMutationScore"] != nil and not percentage?(raw["minMutationScore"]) ->
+        {:error, "minMutationScore is a percentage, 0 to 100"}
+
+      raw["maxSurvivors"] != nil and not (is_integer(raw["maxSurvivors"]) and raw["maxSurvivors"] >= 0) ->
+        {:error, "maxSurvivors is a number of mutants, 0 or more"}
+
       true ->
-        {:ok, Map.take(raw, ["project", "kinds", "requireAgentSignature", "maxAgeHours"])}
+        {:ok,
+         Map.take(raw, [
+           "project",
+           "kinds",
+           "requireAgentSignature",
+           "maxAgeHours",
+           "minMutationScore",
+           "maxSurvivors"
+         ])}
     end
   end
 
   defp check(_raw), do: {:error, "a gate is an object"}
+
+  defp percentage?(value), do: is_number(value) and value >= 0 and value <= 100
 
   defp name?(value), do: is_binary(value) and Regex.match?(@name, value)
 end
