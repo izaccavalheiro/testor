@@ -25,7 +25,7 @@ defmodule Testor.MixProject do
         ignore_modules:
           [Testor.OS, Testor.Device, Testor.Device.Unix, ~r/^Testor\.Test\./] ++
             if(System.get_env("TESTOR_DATABASE_URL") in [nil, ""],
-              do: [Testor.Jobs.Postgres, Testor.Cluster.Postgres],
+              do: [Testor.Jobs.Postgres, Testor.Cluster.Postgres, Testor.Storage.Shared],
               else: [Testor.Jobs.FileStore, Testor.Cluster.Local]
             )
       ],

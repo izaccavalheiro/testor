@@ -14,6 +14,12 @@ defmodule Testor.Audit do
   `audit-<time>.jsonl` and the chain goes on in a new file. Testors sharing a home
   (`Testor.Cluster`) each keep `audit.<instance>.jsonl`, and `GET /api/v1/audit` shows the trail
   of the testor that answers.
+
+  With runs kept in a bucket (`Testor.Storage`), the trail goes there too, every #{10} s and
+  before a file is renamed: the lines written since as one object,
+  `audit/<instance>/<yyyy-mm-dd>/<milliseconds>.jsonl`, so a trail outlives the testor's disk
+  (and, with Object Lock, the bucket keeps it as its retention says). A testor that starts on
+  an empty home continues the chain from the last line in the bucket.
   """
   use GenServer
   require Logger
@@ -21,6 +27,7 @@ defmodule Testor.Audit do
 
   @genesis String.duplicate("0", 64)
   @max_bytes 16 * 1024 * 1024
+  @ship_ms 10_000
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   # Testors sharing a home each write a trail of their own: a chain has one writer.
@@ -111,7 +118,14 @@ defmodule Testor.Audit do
 
   @impl true
   def init(nil) do
-    {:ok, %{prev: last_hash()}}
+    if Testor.Storage.s3?(), do: Process.send_after(self(), :ship, @ship_ms)
+    {:ok, %{prev: last_hash(), sent: Testor.Files.size(file())}}
+  end
+
+  @impl true
+  def handle_info(:ship, state) do
+    Process.send_after(self(), :ship, @ship_ms)
+    {:noreply, ship(state)}
   end
 
   @impl true
@@ -121,6 +135,8 @@ defmodule Testor.Audit do
 
   @impl true
   def handle_call(:flush, _from, state), do: {:reply, :ok, state}
+
+  def handle_call(:ship, _from, state), do: {:reply, :ok, ship(state)}
 
   defp append(state, event, fields) do
     state = rotate(state)
@@ -147,24 +163,73 @@ defmodule Testor.Audit do
 
   defp rotate(state) do
     if Testor.Files.size(file()) > Application.get_env(:testor, :audit_max_bytes, @max_bytes) do
+      state = ship(state)
       stamp = Calendar.strftime(DateTime.utc_now(), "%Y%m%d-%H%M%S")
       File.rename!(file(), String.replace_suffix(file(), ".jsonl", "-#{stamp}.jsonl"))
+      %{state | sent: 0}
+    else
+      state
     end
-
-    state
   end
 
-  # The chain continues from the last line written, across restarts.
-  defp last_hash do
-    case File.read(file()) do
-      {:ok, text} ->
-        case text |> String.split("\n", trim: true) |> List.last() do
-          nil -> @genesis
-          line -> hash(line)
-        end
+  @doc "Sends the lines written since the last time to the bucket now (tests)."
+  def ship_now, do: GenServer.call(__MODULE__, :ship)
+
+  # The lines not in the bucket yet, as one object; they stay to send next time if it fails.
+  defp ship(state) do
+    size = Testor.Files.size(file())
+
+    with true <- Testor.Storage.s3?() and size > state.sent,
+         {:ok, io} <- File.open(file(), [:read, :binary]),
+         {:ok, data} <- read_close(io, state.sent, size - state.sent),
+         :ok <- Testor.Blob.S3.put(Testor.Storage.config(), segment_key(), data) do
+      %{state | sent: size}
+    else
+      {:error, why} ->
+        Logger.warning("audit: the trail could not be sent to the bucket: #{inspect(why)}")
+        state
 
       _ ->
-        @genesis
+        state
+    end
+  end
+
+  defp read_close(io, from, length) do
+    result = Testor.Files.read_at(io, from, length)
+    File.close(io)
+    result
+  end
+
+  defp segment_key do
+    now = DateTime.utc_now()
+    ms = now |> DateTime.to_unix(:millisecond) |> Integer.to_string() |> String.pad_leading(13, "0")
+    "audit/#{Testor.Cluster.instance()}/#{Date.to_iso8601(DateTime.to_date(now))}/#{ms}.jsonl"
+  end
+
+  # The chain continues from the last line written, across restarts: the bucket's, on a home
+  # that has none.
+  defp last_hash do
+    text =
+      case File.read(file()) do
+        {:ok, text} -> text
+        _ -> last_shipped()
+      end
+
+    case text |> String.split("\n", trim: true) |> List.last() do
+      nil -> @genesis
+      line -> hash(line)
+    end
+  end
+
+  defp last_shipped do
+    cfg = Testor.Storage.config()
+
+    with true <- Testor.Storage.s3?(),
+         {:ok, [_ | _] = objects} <- Testor.Blob.S3.list(cfg, "audit/#{Testor.Cluster.instance()}/"),
+         {:ok, text} <- Testor.Blob.S3.get(cfg, List.last(objects).key, :binary) do
+      text
+    else
+      _ -> ""
     end
   end
 end

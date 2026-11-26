@@ -124,6 +124,7 @@ defmodule Testor.Web.ApiV1 do
   get "/runs/:id/attestation" do
     with_id(conn, id, fn conn ->
       conn = fetch_query_params(conn)
+      Testor.Storage.local(id)
 
       file =
         if conn.query_params["by"] == "agent", do: Remote.agent_file(id), else: Testor.Attestation.file(id)
@@ -620,6 +621,8 @@ defmodule Testor.Web.ApiV1 do
           error(conn, 404, "not_found", "no such run")
 
         run ->
+          Testor.Storage.local(id)
+
           conn
           |> put_resp_content_type(type)
           |> put_resp_header(
@@ -661,6 +664,13 @@ defmodule Testor.Web.ApiV1 do
   defp remote_reply({:error, reason}, conn)
        when reason in [:bad_run_id, :bad_status, :bad_path, :not_an_image, :malformed, :not_this_run],
        do: error(conn, 400, "bad_request", "not accepted: #{reason}")
+
+  # The bucket refused or could not be reached (Testor.Storage): the agent sends it again.
+  defp remote_reply({:error, why}, conn) when is_binary(why) do
+    conn
+    |> put_resp_header("retry-after", "5")
+    |> error(503, "storage_unavailable", "the run's files cannot be stored now: try again")
+  end
 
   defp remote_reply(error, conn), do: agent_reply(error, conn)
 

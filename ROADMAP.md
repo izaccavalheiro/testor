@@ -38,8 +38,10 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
 ### 0.13: other backends
 
-- [Storage, queue and event ports](docs/design/ports.md): S3-compatible object storage as the
-  primary store (no shared volume), RabbitMQ, NATS or SQS for jobs.
+- [Storage, queue and event ports](docs/design/ports.md): SQS and NATS for jobs
+  ([queues](docs/queues.md)); S3-compatible object storage as the primary store, the run index
+  and live events in PostgreSQL, no shared volume ([storage](docs/storage.md)); migration, the
+  chart's `storage.s3` and content-addressed snapshots next.
 - Signed links bound to the viewer and minutes long.
 
 ### Later

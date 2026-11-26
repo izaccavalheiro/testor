@@ -177,8 +177,8 @@ defmodule Testor.Files do
   def screenshots(id, specs \\ []) do
     prefix = Testor.Auth.file_prefix(id)
 
-    Path.join(Config.shots_dir(), id)
-    |> walk()
+    id
+    |> Testor.Storage.listing("screenshots")
     |> Enum.filter(&image_type(&1.rel))
     |> Enum.sort_by(& &1.rel)
     |> Enum.map(fn file ->
@@ -208,13 +208,16 @@ defmodule Testor.Files do
   """
   def artifacts(id) do
     base_url = Testor.Auth.file_prefix(id) <> "/artifacts/" <> encode(id)
-    list_artifacts(Path.join(Config.artifacts_dir(), id), base_url)
+    id |> Testor.Storage.listing("artifacts") |> artifact_entries(base_url)
   end
 
   @doc false
-  def list_artifacts(root, base_url) do
-    root
-    |> collect_artifacts(root)
+  def list_artifacts(root, base_url), do: root |> walk() |> artifact_entries(base_url)
+
+  defp artifact_entries(files, base_url) do
+    files
+    |> Enum.map(&%{&1 | rel: String.replace(&1.rel, "\\", "/")})
+    |> group_artifacts()
     |> Enum.sort_by(& &1.rel)
     |> Enum.take(@max_artifacts)
     |> Enum.map(fn entry ->
@@ -229,44 +232,52 @@ defmodule Testor.Files do
     end)
   end
 
-  defp collect_artifacts(dir, root) do
-    case File.ls(dir) do
-      {:ok, names} ->
-        if dir != root and "index.html" in names do
-          files = walk(dir)
-          rel = Path.relative_to(dir, root)
+  # A folder below the root that holds an index.html is one report: the highest such folder
+  # takes in every file under it.
+  defp group_artifacts(files) do
+    reports =
+      for file <- files,
+          Path.basename(file.rel) == "index.html",
+          (dir = Path.dirname(file.rel)) != ".",
+          into: MapSet.new(),
+          do: dir
 
-          [
-            %{
-              rel: rel,
-              target: Path.join(rel, "index.html"),
-              kind: "report",
-              size: files |> Enum.map(& &1.size) |> Enum.sum(),
-              files: length(files),
-              mtime: files |> Enum.map(& &1.mtime) |> Enum.max(fn -> nil end)
+    {singles, grouped} =
+      Enum.reduce(files, {[], %{}}, fn file, {singles, grouped} ->
+        case Enum.find(ancestors(file.rel), &MapSet.member?(reports, &1)) do
+          nil ->
+            entry = %{
+              rel: file.rel,
+              target: file.rel,
+              kind: artifact_kind(file.rel),
+              size: file.size,
+              files: 1,
+              mtime: file.mtime
             }
-          ]
-        else
-          Enum.flat_map(names, fn name ->
-            full = Path.join(dir, name)
 
-            case entry(full) do
-              {:file, size, mtime} ->
-                rel = Path.relative_to(full, root)
-                [%{rel: rel, target: rel, kind: artifact_kind(rel), size: size, files: 1, mtime: mtime}]
+            {[entry | singles], grouped}
 
-              :dir ->
-                collect_artifacts(full, root)
-
-              :skip ->
-                []
-            end
-          end)
+          dir ->
+            {singles, Map.update(grouped, dir, [file], &[file | &1])}
         end
+      end)
 
-      _ ->
-        []
-    end
+    singles ++
+      for {dir, list} <- grouped do
+        %{
+          rel: dir,
+          target: dir <> "/index.html",
+          kind: "report",
+          size: list |> Enum.map(& &1.size) |> Enum.sum(),
+          files: length(list),
+          mtime: list |> Enum.map(& &1.mtime) |> Enum.reject(&is_nil/1) |> Enum.max(fn -> nil end)
+        }
+      end
+  end
+
+  # "a/b/c.txt" -> ["a", "a/b"]: the folders above a file, highest first.
+  defp ancestors(rel) do
+    rel |> String.split("/") |> Enum.drop(-1) |> Enum.scan(&(&2 <> "/" <> &1))
   end
 
   defp encode(segment), do: URI.encode(segment, &URI.char_unreserved?/1)
