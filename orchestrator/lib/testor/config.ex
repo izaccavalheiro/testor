@@ -10,7 +10,13 @@ defmodule Testor.Config do
     # Jobs (Testor.Jobs): off until enabled; an agent's lease lasts leaseSeconds without a
     # heartbeat, and a job is tried maxAttempts times when its agents stop answering.
     # warmSeconds: how long a queued job waits for the agent that ran its project last.
-    "execution" => %{"enabled" => false, "leaseSeconds" => 30, "maxAttempts" => 3, "warmSeconds" => 2},
+    "execution" => %{
+      "enabled" => false,
+      "leaseSeconds" => 30,
+      "maxAttempts" => 3,
+      "warmSeconds" => 2,
+      "watchIdleMinutes" => 15
+    },
     # Content-addressed snapshots (Testor.Snapshots) and the incremental state (Testor.States).
     "snapshots" => %{"maxFiles" => 100_000, "maxFileMB" => 256, "maxMB" => 4096, "keepDays" => 14},
     "state" => %{"maxMB" => 16, "keepDays" => 30, "defaultBranch" => "main"}

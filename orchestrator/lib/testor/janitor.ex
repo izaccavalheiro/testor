@@ -74,7 +74,7 @@ defmodule Testor.Janitor do
 
     # 3. Snapshots not sent again, contents no snapshot names, branches' old state.
     snapshots = Testor.Snapshots.sweep(now)
-    states = Testor.States.sweep(now)
+    states = Testor.States.sweep(now) + Testor.ResultCache.sweep(now)
 
     result = %{
       "at" => now_iso(),

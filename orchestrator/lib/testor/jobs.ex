@@ -73,7 +73,10 @@ defmodule Testor.Jobs do
         {:error, "no queue takes jobs with the labels #{Enum.join(labels, ", ")} (execution.queue.queues)"}
 
       true ->
-        with {:ok, source} <- snapshot(params) do
+        with {:ok, source} <- snapshot(params),
+             {:ok, source} <- exec_claim(params, source, who) do
+          source = cached(params, source)
+
           case GenServer.call(__MODULE__, {:enqueue, params, source, who}) do
             {:ok, job} when cfg != nil -> dispatch(cfg, queue, job)
             other -> other
@@ -82,23 +85,92 @@ defmodule Testor.Jobs do
     end
   end
 
-  # A job's snapshot, read before it is queued: its id, and the branch and commit it is of.
-  defp snapshot(%{"snapshot" => id, "project" => project}) when is_binary(id) and is_binary(project) do
+  # A job's snapshot, read before it is queued: its id, the branch and commit it is of, and with
+  # select.affected the files that changed since its base.
+  defp snapshot(%{"snapshot" => id, "project" => project} = params)
+       when is_binary(id) and is_binary(project) do
     with {:ok, hex} <- Testor.Snapshots.parse_id(id),
          true <- name?(project),
          {:ok, manifest} <- Testor.Snapshots.manifest(project, hex) do
-      {:ok, Map.take(manifest, ["branch", "commit"]) |> Map.put("snapshot", id)}
+      source = Map.take(manifest, ["branch", "commit"]) |> Map.put("snapshot", id)
+
+      case params["select"] do
+        %{"affected" => a} when a in [true, "then-all"] ->
+          case Testor.Snapshots.changed(project, hex, manifest["branch"]) do
+            {:ok, paths} -> {:ok, Map.put(source, "changed", paths)}
+            :none -> {:ok, source}
+          end
+
+        _ ->
+          {:ok, source}
+      end
     else
       _ -> {:error, "snapshot is the id of a snapshot of this project (sha256:<hex>)"}
     end
   end
 
   defp snapshot(%{"snapshot" => nil}), do: {:ok, %{}}
+  defp snapshot(%{"watch" => true}), do: {:error, "a watch session runs a snapshot"}
 
   defp snapshot(%{"snapshot" => _}),
     do: {:error, "snapshot is the id of a snapshot of this project (sha256:<hex>)"}
 
   defp snapshot(_params), do: {:ok, %{}}
+
+  # Exec mode: a job that carries its argv, with a claim testor signs (its job-token key) of who
+  # asked and the argv's hash, which the agent checks against its own list of subjects.
+  defp exec_claim(%{"argv" => argv} = params, source, who) when is_list(argv) do
+    case argv?(argv) && Testor.Auth.settings() do
+      false ->
+        # new_job/2 says what is wrong with it.
+        {:ok, source}
+
+      %{job_token_keys: %{signing: signing}} ->
+        now = System.system_time(:second)
+
+        claims = %{
+          "iss" => "testor",
+          "sub" => "user:" <> who,
+          "project" => params["project"],
+          "argv_sha256" => argv_hash(argv),
+          "iat" => now,
+          "exp" => now + 86_400,
+          "jti" => Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)
+        }
+
+        {:ok, Map.put(source, "claim", Testor.Auth.JobTokens.sign(claims, signing))}
+
+      _ ->
+        {:error, "exec mode needs jobTokens in auth.json: their key signs who asked"}
+    end
+  end
+
+  defp exec_claim(_params, source, _who), do: {:ok, source}
+
+  @doc "The SHA-256 of an argv, as the exec claim holds it: of its arguments joined by NUL (UTF-8)."
+  def argv_hash(argv), do: :crypto.hash(:sha256, Enum.join(argv, <<0>>)) |> Base.encode16(case: :lower)
+
+  # A result the cache holds for this job (Testor.ResultCache): the job is answered with it.
+  defp cached(%{"snapshot" => _} = params, %{"snapshot" => _} = source) do
+    with false <- params["cache"] == false or params["clean"] == true or params["watch"] == true,
+         {:ok, select} <- Testor.Select.check(params["select"]),
+         probe = %{
+           "snapshot" => source["snapshot"],
+           "project" => params["project"],
+           "kind" => params["kind"],
+           "argv" => params["argv"],
+           "select" => select,
+           "labels" => Enum.uniq(params["labels"] || [])
+         },
+         {:ok, hit} <- Testor.ResultCache.lookup(probe) do
+      run = (get(hit["job"]) || %{})["runId"]
+      Map.put(source, "cached", Map.put(hit, "runId", run))
+    else
+      _ -> source
+    end
+  end
+
+  defp cached(_params, source), do: source
 
   # The broker's message for a new job; a job the broker refused is not left queued.
   defp dispatch(cfg, queue, job) do
@@ -177,6 +249,7 @@ defmodule Testor.Jobs do
     case GenServer.call(__MODULE__, {:finish, id, agent, result}) do
       {:ok, job} ->
         broker(job["dispatch"], fn cfg, queue, receipt -> cfg.adapter.ack(cfg, queue, receipt) end)
+        Testor.ResultCache.record(job, result, job["status"])
         {:ok, public(job)}
 
       error ->
@@ -230,6 +303,12 @@ defmodule Testor.Jobs do
   @doc "Sweeps leases as at `now` (Unix seconds); the timer does it every few seconds."
   def sweep_now(now), do: GenServer.call(__MODULE__, {:sweep, now})
 
+  @doc "A watch session's new snapshot, from its client: `{:ok, job}` or `{:error, :not_found | :ended}`."
+  def watch_change(id, snapshot), do: GenServer.call(__MODULE__, {:watch, id, snapshot})
+
+  @doc "A watch session's client is still there."
+  def watch_seen(id), do: GenServer.call(__MODULE__, {:watch, id, nil})
+
   @doc "Job `id` as stored, without the run reads link to it (tests)."
   def stored(id), do: GenServer.call(__MODULE__, {:stored, id})
 
@@ -269,7 +348,7 @@ defmodule Testor.Jobs do
   def handle_call({:enqueue, params, source, who}, _from, state) do
     with true <- settings()["enabled"] == true || {:error, :disabled},
          {:ok, job} <- new_job(params, who),
-         job = Map.merge(job, source) do
+         job = with_source(job, source) do
       Logger.info("jobs: #{job["id"]} queued (#{job["project"]} #{job["kind"]}) by #{who}")
       transact(state, :none, fn _ -> {{:ok, job}, [job]} end)
     else
@@ -282,13 +361,18 @@ defmodule Testor.Jobs do
     :ets.insert(@warm, {{:seen, who}, now, labels})
 
     transact(state, :open, fn jobs ->
-      busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
+      busy =
+        for {_, %{"status" => s, "project" => p} = j} <- jobs,
+            s in @active,
+            into: MapSet.new(),
+            do: {p, j["workspace"]}
 
       candidate =
         jobs
         |> Map.values()
         |> Enum.filter(
-          &(&1["status"] == "queued" and not MapSet.member?(busy, &1["project"]) and allow.(&1["project"]))
+          &(&1["status"] == "queued" and not MapSet.member?(busy, {&1["project"], &1["workspace"]}) and
+              allow.(&1["project"]))
         )
         |> Enum.filter(&Enum.all?(&1["labels"], fn label -> label in labels end))
         |> Enum.reject(&warm_elsewhere?(&1, who, now))
@@ -311,12 +395,16 @@ defmodule Testor.Jobs do
   # A job a broker's message names: leased when it is still queued and this agent may take it.
   def handle_call({:lease_id, agent, labels, allow, id, dispatch}, _from, state) do
     transact(state, :open, fn jobs ->
-      busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
+      busy =
+        for {_, %{"status" => s, "project" => p} = j} <- jobs,
+            s in @active,
+            into: MapSet.new(),
+            do: {p, j["workspace"]}
 
       case Map.get(jobs, id) do
         %{"status" => "queued"} = job ->
           if allow.(job["project"]) and Enum.all?(job["labels"], &(&1 in labels)) and
-               not MapSet.member?(busy, job["project"]) do
+               not MapSet.member?(busy, {job["project"], job["workspace"]}) do
             job = take(job, agent) |> Map.put("dispatch", dispatch)
             {{:ok, job}, [job]}
           else
@@ -425,14 +513,32 @@ defmodule Testor.Jobs do
 
   def handle_call({:sweep, now}, _from, state) do
     {:reply, _, state} = sweep(state, now)
-    {:reply, :ok, state}
+    {:reply, :ok, end_idle(state, now)}
+  end
+
+  def handle_call({:watch, id, snapshot}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      case Map.get(jobs, id) do
+        %{"watch" => true, "status" => s} = job when s not in @over ->
+          job = Map.put(job, "lastSeen", System.os_time(:second))
+          job = if snapshot, do: Map.merge(job, %{"snapshot" => snapshot, "seq" => job["seq"] + 1}), else: job
+          {{:ok, job}, [job]}
+
+        %{"watch" => true} ->
+          {{:error, :ended}, []}
+
+        _ ->
+          {{:error, :not_found}, []}
+      end
+    end)
   end
 
   @impl true
   def handle_info(:sweep, state) do
     Process.send_after(self(), :sweep, @sweep_ms)
-    {:reply, _, state} = sweep(state, System.os_time(:second))
-    {:noreply, state}
+    now = System.os_time(:second)
+    {:reply, _, state} = sweep(state, now)
+    {:noreply, end_idle(state, now)}
   end
 
   # Jobs whose agent stopped renewing its lease go back to the queue, or expire after the
@@ -479,6 +585,19 @@ defmodule Testor.Jobs do
       do: Task.start(fn -> Enum.each(gone, &broker(&1, fn cfg, q, r -> cfg.adapter.ack(cfg, q, r) end)) end)
 
     {:reply, runs, state}
+  end
+
+  # Watch sessions whose client stopped calling for execution.watchIdleMinutes (15) end.
+  defp end_idle(state, now) do
+    idle = settings()["watchIdleMinutes"] * 60
+
+    {:reply, ids, state} =
+      transact(state, :open, fn jobs ->
+        {for({id, %{"watch" => true, "lastSeen" => seen}} <- jobs, now - seen > idle, do: id), []}
+      end)
+
+    if is_list(ids) and ids != [], do: Task.start(fn -> Enum.each(ids, &cancel/1) end)
+    state
   end
 
   # Runs `fun` on the jobs `scope` names in the backend, saves those it changed, and tells
@@ -529,8 +648,16 @@ defmodule Testor.Jobs do
   end
 
   defp new_job(params, who) do
+    case Testor.Select.check(params["select"]) do
+      {:ok, select} -> new_job(params, select, who)
+      error -> error
+    end
+  end
+
+  defp new_job(params, select, who) do
     labels = params["labels"] || []
     ref = params["ref"]
+    argv = params["argv"]
 
     cond do
       not name?(params["project"]) ->
@@ -557,12 +684,38 @@ defmodule Testor.Jobs do
       seconds(params["timeout"]) == :error ->
         {:error, "timeout is seconds (1 to 86400) or 90s, 45m, 2h"}
 
+      params["workspace"] != nil and not name?(params["workspace"]) ->
+        {:error, "workspace is a name: letters, digits, _ . -"}
+
+      Enum.any?(["failFast", "cache"], &(params[&1] not in [nil, true, false])) ->
+        {:error, "failFast and cache are true or false"}
+
+      params["watch"] not in [nil, true] ->
+        {:error, "watch is true"}
+
+      argv != nil and not argv?(argv) ->
+        {:error, "argv is a list of 1 to 100 arguments (4000 bytes each, no NUL)"}
+
+      select["affected"] && params["snapshot"] == nil ->
+        {:error, "select.affected needs a snapshot (its changes are counted from the branch's last one)"}
+
       true ->
         job =
           build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
           # The agent drops the project's preserved caches first (agent.json's "preserve").
           |> then(&if(params["clean"] == true, do: Map.put(&1, "clean", true), else: &1))
           |> put_timeout(params["timeout"] || settings()["defaultTimeout"])
+          |> put_if("select", select)
+          |> put_if("argv", argv)
+          |> put_if("workspace", params["workspace"])
+          |> put_if("failFast", if(params["failFast"] == true, do: true))
+          |> put_if("cache", if(params["cache"] == false, do: false))
+          |> then(
+            &if(params["watch"] == true,
+              do: Map.merge(&1, %{"watch" => true, "seq" => 0, "lastSeen" => System.os_time(:second)}),
+              else: &1
+            )
+          )
 
         {:ok, Map.merge(job, Testor.Tracing.job_fields(params["traceparent"]))}
     end
@@ -587,6 +740,29 @@ defmodule Testor.Jobs do
   end
 
   defp order(job), do: {job["createdAt"], job["id"]}
+
+  # What enqueue/2 read before the job was made: its snapshot, the changed files, the exec
+  # claim, a cached result (the job is then over at once).
+  defp with_source(job, source) do
+    {changed, source} = Map.pop(source, "changed")
+    {hit, source} = Map.pop(source, "cached")
+    job = Map.merge(job, source)
+    job = if changed, do: put_in(job, ["select", "changed"], changed), else: job
+
+    case hit do
+      nil ->
+        job
+
+      hit ->
+        Map.merge(job, %{
+          "status" => hit["status"],
+          "exitCode" => hit["exitCode"],
+          "cached" => %{"job" => hit["job"]},
+          "endedAt" => now_iso()
+        })
+        |> put_if("runId", hit["runId"])
+    end
+  end
 
   # The longest the run may take, as data: the agent's own timeout for the task caps it
   # (execution.defaultTimeout when the job names none).
@@ -615,6 +791,11 @@ defmodule Testor.Jobs do
   def seconds(_), do: :error
 
   defp name?(value), do: is_binary(value) and Regex.match?(@name, value)
+
+  defp argv?(argv) do
+    is_list(argv) and length(argv) in 1..100 and
+      Enum.all?(argv, &(is_binary(&1) and byte_size(&1) in 1..4000 and not String.contains?(&1, <<0>>)))
+  end
 
   @doc "Whether `value` is a git branch, tag or commit as a job may name it."
   def ref?(value), do: is_binary(value) and Regex.match?(@ref, value)

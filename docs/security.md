@@ -49,6 +49,7 @@ A running testor reads `auth.json` and the key again within a second: no restart
 | `viewer` | `read` | read runs, logs, specs, screenshots, artifacts, device stats, maintenance scans |
 | `operator` | `read operate` | also cancel and delete runs, run the janitor, start a maintenance scan |
 | `admin` | `read operate maintain execute` | also delete maintenance targets, and queue and cancel jobs |
+| `exec-admin` | `read operate maintain execute exec` | also send commands to agents that accept them ([exec mode](handoff.md#exec-mode)); given by choice only |
 | `agent` | `agent` | only take jobs and report on them (`runner/agent.ps1`) |
 
 A token carries a subset of its user's scopes (`scope` when it is requested) and is checked
@@ -418,6 +419,15 @@ so none can be swapped for another; manifests' paths are relative, normalized an
 workspace and replaces any link on the way. Incremental state is data the next run reads: it is
 kept per project and branch, written only by the agent holding a job of that project, and
 capped in size, so another project's job cannot poison it.
+
+A job's `select` (files, test names) is data the agent appends to its own command as separate
+arguments, never through a shell; paths follow the snapshot rules. Exec mode is the one way a
+job carries a command (`argv`), and it takes three opt-ins: the agent's `exec.subjects`, the
+`exec` scope (the `exec-admin` role only), and a claim testor signs with its job-token key of who
+asked and the argv's hash, which the agent checks. It runs in the container executor unless the
+agent says otherwise, in a workspace copy of its own, and every exec job is audited
+([handoff](handoff.md#exec-mode)). The result cache is per project and keyed by everything the
+owner declared as an input.
 
 testor can also be that identity: with `jobTokens` in `auth.json`, the agent holding a job's
 lease gets an OpenID Connect token for it (RS256, `sub` = `project:<p>:kind:<k>`, 15 minutes by

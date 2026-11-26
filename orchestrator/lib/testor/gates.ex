@@ -69,7 +69,7 @@ defmodule Testor.Gates do
   end
 
   defp check_kind(gate, kind, commit, now) do
-    case latest(gate["project"], kind, commit) do
+    case latest(gate["project"], kind, commit, gate["scoped"] == true) do
       nil ->
         %{
           "kind" => kind,
@@ -94,17 +94,20 @@ defmodule Testor.Gates do
 
   # The finished run of project and kind at `commit`, from a clean tree, started last (ids hold
   # the second and random characters: two of one second do not sort by time).
-  defp latest(project, kind, commit) do
+  defp latest(project, kind, commit, scoped) do
     Store.all()
     |> Enum.filter(fn run ->
       source = run["source"] || %{}
 
       run["project"] == project and run["kind"] == kind and run["status"] != "running" and
-        source["dirty"] != true and same_commit?(source["commit"], commit)
+        source["dirty"] != true and same_commit?(source["commit"], commit) and (scoped or full?(run))
     end)
     # ISO 8601 times in UTC sort as text.
     |> Enum.max_by(&(&1["startedAt"] || ""), fn -> nil end)
   end
+
+  @doc "Whether a run tested the whole suite: not a scoped run (`select`) nor a watch session's."
+  def full?(run), do: run["select"] == nil and run["session"] == nil
 
   defp same_commit?(recorded, commit),
     do: is_binary(recorded) and String.starts_with?(String.downcase(recorded), commit)
@@ -212,8 +215,8 @@ defmodule Testor.Gates do
       not (is_list(raw["kinds"]) and raw["kinds"] != [] and Enum.all?(raw["kinds"], &name?/1)) ->
         {:error, "kinds is a list of task names"}
 
-      raw["requireAgentSignature"] not in [nil, true, false] ->
-        {:error, "requireAgentSignature is true or false"}
+      raw["requireAgentSignature"] not in [nil, true, false] or raw["scoped"] not in [nil, true, false] ->
+        {:error, "requireAgentSignature and scoped are true or false"}
 
       raw["maxAgeHours"] != nil and not (is_number(raw["maxAgeHours"]) and raw["maxAgeHours"] > 0) ->
         {:error, "maxAgeHours is a number of hours"}
@@ -233,6 +236,7 @@ defmodule Testor.Gates do
            "project",
            "kinds",
            "requireAgentSignature",
+           "scoped",
            "maxAgeHours",
            "minMutationScore",
            "maxSurvivors",

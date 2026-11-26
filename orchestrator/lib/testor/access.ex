@@ -163,6 +163,7 @@ defmodule Testor.Access do
       ["shots", id | _] -> run_or_none(id)
       ["artifacts", id | _] -> run_or_none(id)
       ["api", "v1", "jobs", id | _] -> job_or_none(id)
+      ["api", "v1", "watches", id | _] -> job_or_none(id)
       ["api", "v1", "projects", project | _] -> project
       _ -> :none
     end

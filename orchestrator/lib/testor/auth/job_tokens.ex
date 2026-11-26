@@ -112,7 +112,8 @@ defmodule Testor.Auth.JobTokens do
 
   def issue(_settings, _job, _agent, _audience, _now), do: {:error, :off}
 
-  defp sign(claims, %{kid: kid, key: key}) do
+  @doc "Signs `claims` (RS256) with a key of the ring: a compact JWS."
+  def sign(claims, %{kid: kid, key: key}) do
     header = JSON.encode!(%{"alg" => "RS256", "typ" => "JWT", "kid" => kid})
     input = b64(header) <> "." <> b64(JSON.encode!(claims))
     input <> "." <> b64(:public_key.sign(input, :sha256, key))

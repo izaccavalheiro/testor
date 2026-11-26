@@ -44,7 +44,8 @@ defmodule Testor.MCP.Tools do
       "title" => "Get a test run",
       "description" =>
         "One run: its record (status, exit code, duration, summary), every spec file with its result, " <>
-          "the failed spec files, and links to its screenshots and artifacts (reports, coverage, videos).",
+          "the failed spec files, a digest of its failures (fenced: it quotes the run), and links to its " <>
+          "screenshots and artifacts (reports, coverage, videos).",
       "inputSchema" => %{"type" => "object", "properties" => %{"id" => @id}, "required" => ["id"]},
       "scope" => "read"
     },
@@ -310,7 +311,9 @@ defmodule Testor.MCP.Tools do
              "failedSpecs" => specs |> Enum.filter(&(&1["status"] == "failed")) |> Enum.map(& &1["file"]),
              "screenshots" => Enum.map(snapshot["screenshots"], &absolute(&1, base)),
              "artifacts" => Enum.map(snapshot["artifacts"], &absolute(&1, base)),
-             "logBytes" => snapshot["logBytes"]
+             "logBytes" => snapshot["logBytes"],
+             # Failures in a few lines: test names and messages come from the run, so fenced.
+             "digest" => id |> Testor.Digest.get() |> Testor.Digest.text() |> then(&untrusted(id, &1))
            }}
       end
     end

@@ -341,6 +341,7 @@ role, and keep the `execute` scope (which queues jobs) to people who may use tho
 | `labels` | labels the agent must have |
 | `ref` | git branch, tag or commit to check out first |
 | `snapshot`, `branch`, `commit` | a snapshot to run instead of a ref, and what it was taken from ([snapshots](snapshots.md)) |
+| `select`, `workspace`, `failFast`, `cache`, `argv`, `claim`, `cached`, `watch` | scoped and affected runs, the worktree, the result cache, exec mode, watch sessions ([handoff](handoff.md)) |
 | `status` | `queued`, `leased`, `running`, `passed`, `failed`, `cancelled`, `expired` |
 | `requestedBy`, `agent` | who asked for it, which agent holds it |
 | `attempts`, `leaseUntil` | tries so far, when the current lease ends (Unix seconds) |

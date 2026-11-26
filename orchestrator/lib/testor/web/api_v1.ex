@@ -212,21 +212,52 @@ defmodule Testor.Web.ApiV1 do
     json(conn, 200, Testor.Attestation.public_key())
   end
 
+  # One character per line of the log, `o` (stdout) or `e` (stderr): how a client replays it.
+  get "/runs/:id/streams" do
+    with_id(conn, id, fn conn ->
+      conn = fetch_query_params(conn)
+      from_offset(conn, streams_file(id))
+    end)
+  end
+
+  get "/runs/:id/digest" do
+    with_id(conn, id, fn conn ->
+      conn = fetch_query_params(conn)
+
+      case Testor.Digest.get(id) do
+        nil ->
+          error(conn, 404, "not_found", "no such run")
+
+        digest ->
+          if conn.query_params["format"] == "text",
+            do: conn |> put_resp_content_type("text/plain") |> send_resp(200, Testor.Digest.text(digest)),
+            else: json(conn, 200, digest)
+      end
+    end)
+  end
+
+  # With ?offset= (bytes), the log from there as it is: what a client following the run reads
+  # next; else its tail, or the lines matching ?grep=.
   get "/runs/:id/log" do
     with_id(conn, id, fn conn ->
       conn = fetch_query_params(conn)
       params = conn.query_params
-      tail = int(params["tail"], 512 * 1024, 1, Testor.Query.max_tail())
-      context = int(params["context"], 0, 0, 20)
-      log = Query.log(id, tail, params["grep"], context)
 
-      conn
-      |> put_resp_header("x-log-size", to_string(log.size))
-      |> put_resp_header("x-log-truncated", to_string(log.truncated))
-      |> then(&if(log.matches, do: put_resp_header(&1, "x-log-matches", to_string(log.matches)), else: &1))
-      |> put_resp_header("cache-control", "no-store")
-      |> put_resp_content_type("text/plain")
-      |> send_resp(200, log.text)
+      if Map.has_key?(params, "offset") do
+        from_offset(conn, Testor.Config.log_file(id))
+      else
+        tail = int(params["tail"], 512 * 1024, 1, Testor.Query.max_tail())
+        context = int(params["context"], 0, 0, 20)
+        log = Query.log(id, tail, params["grep"], context)
+
+        conn
+        |> put_resp_header("x-log-size", to_string(log.size))
+        |> put_resp_header("x-log-truncated", to_string(log.truncated))
+        |> then(&if(log.matches, do: put_resp_header(&1, "x-log-matches", to_string(log.matches)), else: &1))
+        |> put_resp_header("cache-control", "no-store")
+        |> put_resp_content_type("text/plain")
+        |> send_resp(200, log.text)
+      end
     end)
   end
 
@@ -400,12 +431,36 @@ defmodule Testor.Web.ApiV1 do
   post "/jobs" do
     with {:ok, who} <- signed_in(conn),
          {:ok, params, conn} <- body_params(conn) do
-      case if(Testor.Access.permits?(conn.assigns.principal, params["project"], "execute"),
-             do: Jobs.enqueue(params, who),
-             else: {:error, :not_allowed}
-           ) do
+      principal = conn.assigns.principal
+
+      outcome =
+        cond do
+          not Testor.Access.permits?(principal, params["project"], "execute") ->
+            {:error, :not_allowed}
+
+          params["argv"] != nil and not Testor.Access.permits?(principal, params["project"], "exec") ->
+            {:error, :no_exec}
+
+          true ->
+            Jobs.enqueue(params, who)
+        end
+
+      case outcome do
         {:error, :not_allowed} ->
           error(conn, 403, "forbidden", "#{who} has no access to that project")
+
+        {:error, :no_exec} ->
+          error(conn, 403, "forbidden", "a job with argv (exec mode) needs the exec scope on its project")
+
+        {:ok, %{"argv" => argv} = job} ->
+          Testor.Audit.record("exec", %{
+            "who" => who,
+            "job" => job["id"],
+            "project" => job["project"],
+            "argv" => argv
+          })
+
+          json(conn, 201, job)
 
         {:ok, job} ->
           json(conn, 201, job)
@@ -545,6 +600,100 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # --- watch sessions (docs/handoff.md) -------------------------------------------------------
+  # A job that stays leased while its client sends the snapshots of its working tree.
+
+  post "/watches" do
+    with {:ok, who} <- signed_in(conn),
+         {:ok, params, conn} <- body_params(conn) do
+      params = Map.merge(params, %{"watch" => true, "kind" => params["kind"] || "watch"})
+
+      case Testor.Access.permits?(conn.assigns.principal, params["project"], "execute") &&
+             Jobs.enqueue(params, who) do
+        false ->
+          error(conn, 403, "forbidden", "#{who} has no access to that project")
+
+        {:ok, job} ->
+          json(conn, 201, job)
+
+        {:error, :disabled} ->
+          error(conn, 403, "execution_disabled", "jobs are off: set execution.enabled in config.json")
+
+        {:error, message} ->
+          error(conn, 400, "bad_request", "#{message}")
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
+  post "/watches/:id/changes" do
+    with_id(conn, id, fn conn ->
+      case body_params(conn) do
+        {:ok, %{"snapshot" => snapshot}, conn} when is_binary(snapshot) ->
+          with {:ok, hex} <- Testor.Snapshots.parse_id(snapshot),
+               %{"project" => project} <- Jobs.stored(id),
+               {:ok, _} <- Testor.Snapshots.manifest(project, hex) do
+            id |> Jobs.watch_change(snapshot) |> watch_reply(conn)
+          else
+            _ -> error(conn, 400, "bad_request", "snapshot is a stored snapshot of the session's project")
+          end
+
+        {:ok, _, conn} ->
+          error(conn, 400, "bad_request", "{snapshot}: the working tree's new snapshot")
+
+        {:error, conn} ->
+          conn
+      end
+    end)
+  end
+
+  post "/watches/:id/heartbeat" do
+    with_id(conn, id, fn conn -> id |> Jobs.watch_seen() |> watch_reply(conn) end)
+  end
+
+  delete "/watches/:id" do
+    with_id(conn, id, fn conn ->
+      case Jobs.cancel(id) do
+        {:ok, job} -> json(conn, 200, job)
+        _ -> error(conn, 404, "not_found", "no such session, or it has ended")
+      end
+    end)
+  end
+
+  # The agent of a watch session waits (?wait=, 25 s at most) for a change after ?after=.
+  get "/agent/jobs/:id/changes" do
+    with_agent(conn, id, fn conn, agent ->
+      conn = fetch_query_params(conn)
+      after_seq = int(conn.query_params["after"], 0, 0, 1_000_000_000)
+      deadline = System.monotonic_time(:millisecond) + int(conn.query_params["wait"], 0, 0, 25) * 1000
+
+      case wait_for_change(id, agent, after_seq, deadline) do
+        {:ok, job} -> json(conn, 200, %{"seq" => job["seq"], "snapshot" => job["snapshot"]})
+        :none -> send_resp(conn, 204, "")
+        error -> agent_reply(error, conn)
+      end
+    end)
+  end
+
+  post "/agent/jobs/:id/streams" do
+    with_agent(conn, id, fn conn, agent ->
+      conn = fetch_query_params(conn)
+      offset = int(conn.query_params["offset"], -1, -1, 1_000_000_000_000)
+
+      with {:ok, data, conn} <- read_body(conn, length: 262_144) |> whole_body(262_144),
+           true <-
+             offset >= 0 || {:error, error(conn, 400, "bad_request", "offset is the size before this chunk")} do
+        case Remote.append_streams(id, agent, offset, data) do
+          {:ok, size} -> json(conn, 200, %{"size" => size})
+          error -> remote_reply(error, conn)
+        end
+      else
+        {:error, conn} -> conn
+      end
+    end)
+  end
+
   # --- snapshots and incremental state (Testor.Snapshots, Testor.States) ---------------------
   # Sent by who may execute jobs (scope execute); read by agents, under /agent (scope agent).
 
@@ -662,6 +811,52 @@ defmodule Testor.Web.ApiV1 do
   end
 
   # --- helpers -------------------------------------------------------------------------------
+
+  defp streams_file(id), do: Path.join(Testor.Config.logs_dir(), id <> ".streams")
+
+  # A file from ?offset= (bytes), with its size in X-Log-Size; empty past its end.
+  defp from_offset(conn, path) do
+    offset = int(conn.query_params["offset"], 0, 0, 1_000_000_000_000)
+    size = Testor.Files.size(path)
+
+    data =
+      with true <- offset < size,
+           {:ok, file} <- File.open(path, [:read, :binary]) do
+        {:ok, bytes} = :file.pread(file, offset, min(size - offset, 4 * 1_048_576))
+        File.close(file)
+        bytes
+      else
+        _ -> ""
+      end
+
+    conn
+    |> put_resp_header("x-log-size", to_string(size))
+    |> put_resp_header("cache-control", "no-store")
+    |> put_resp_content_type("application/octet-stream")
+    |> send_resp(200, data)
+  end
+
+  defp wait_for_change(id, agent, after_seq, deadline) do
+    with {:ok, job} <- Jobs.held(id, agent) do
+      cond do
+        (job["seq"] || 0) > after_seq ->
+          {:ok, job}
+
+        System.monotonic_time(:millisecond) >= deadline ->
+          :none
+
+        true ->
+          Process.sleep(Application.get_env(:testor, :lease_poll_ms, 500))
+          wait_for_change(id, agent, after_seq, deadline)
+      end
+    end
+  end
+
+  defp watch_reply({:ok, job}, conn),
+    do: json(conn, 200, %{"id" => job["id"], "seq" => job["seq"], "status" => job["status"]})
+
+  defp watch_reply({:error, :ended}, conn), do: error(conn, 409, "ended", "the session has ended")
+  defp watch_reply({:error, :not_found}, conn), do: error(conn, 404, "not_found", "no such session")
 
   defp project_name(conn, project) do
     if Regex.match?(~r/^[A-Za-z0-9_.-]{1,100}$/, project) and String.trim(project, ".") != "",
@@ -909,6 +1104,7 @@ defmodule Testor.Web.ApiV1 do
            status: params["status"],
            project: params["project"],
            kind: params["kind"],
+           job: params["job"],
            q: blank_to_nil(params["q"]),
            before: params["before"],
            limit: int(params["limit"], 50, 1, 500)

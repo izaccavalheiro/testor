@@ -34,6 +34,7 @@ and password (HTTP Basic); programs use Basic or a Bearer token.
 | `viewer` | `read` | see runs, logs, specs, screenshots, artifacts, device stats, maintenance scans |
 | `operator` | `read operate` | also cancel and delete runs, run the janitor, start a maintenance scan |
 | `admin` | `read operate maintain` | also delete maintenance targets |
+| `exec-admin` | `read operate maintain execute exec` | also send commands to agents that accept them (exec mode) |
 
 A token carries a subset of its user's scopes, and is checked against the user on every
 request: removing a user, lowering a role or revoking takes effect at once. Only a password can

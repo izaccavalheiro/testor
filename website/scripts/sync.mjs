@@ -39,6 +39,7 @@ const FILES = {
   "docs/queues.md": ["reference/queues.md", "Job queues on a broker", 12],
   "docs/storage.md": ["reference/storage.md", "Runs in object storage", 13],
   "docs/snapshots.md": ["reference/snapshots.md", "Snapshots and incremental state", 14],
+  "docs/handoff.md": ["reference/handoff.md", "Handing test runs off", 15],
   "VERSIONING.md": ["project/versioning.md", "Versioning and releases", 1],
   "ROADMAP.md": ["project/roadmap.md", "Roadmap", 2],
   "CHANGELOG.md": ["project/changelog.md", "Changelog", 3],

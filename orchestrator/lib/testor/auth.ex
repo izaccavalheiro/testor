@@ -52,10 +52,13 @@ defmodule Testor.Auth do
     "viewer" => ["read"],
     "operator" => ["read", "operate"],
     "admin" => ["read", "operate", "maintain", "execute"],
+    # An admin who may also send commands to agents that accept them (exec mode,
+    # docs/handoff.md): given by choice, never by default.
+    "exec-admin" => ["read", "operate", "maintain", "execute", "exec"],
     # Runners' agents (runner/agent.ps1): they take jobs and report on them, nothing else.
     "agent" => ["agent"]
   }
-  @scopes ["read", "operate", "maintain", "execute", "agent"]
+  @scopes ["read", "operate", "maintain", "execute", "exec", "agent"]
   @min_ttl 60
   @default_ttl 3600
   @max_ttl 30 * 86_400

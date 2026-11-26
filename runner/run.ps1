@@ -94,6 +94,10 @@ $record = [ordered]@{
   } else { $null }
   # The job this run is for, when an agent started it (runner/agent.ps1).
   job        = if ($env:TESTOR_JOB_ID) { $env:TESTOR_JOB_ID } else { $null }
+  # A scoped run's selection (files, names, affected), and the watch session it reruns for:
+  # gates and commit statuses leave such runs out.
+  select     = if ($env:TESTOR_SELECT) { try { $env:TESTOR_SELECT | ConvertFrom-Json -AsHashtable } catch { $null } } else { $null }
+  session    = if ($env:TESTOR_SESSION) { $env:TESTOR_SESSION } else { $null }
   # The W3C trace this run belongs to (the agent gives a job's), for testor's spans.
   traceparent = if ("$env:TRACEPARENT" -match "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$") { $env:TRACEPARENT } else { $null }
 }
@@ -352,36 +356,47 @@ $global:LASTEXITCODE = 0
 $encoding = [Console]::OutputEncoding
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $log = $null
+# Beside the log, one character per line of it: o (stdout) or e (stderr), so a client following
+# the run (testor run) writes each line back to the stream it came from.
+$marks = $null
 try {
   $log = [IO.StreamWriter]::new($logFile, $false, [Text.UTF8Encoding]::new($false))
   $log.AutoFlush = $true
+  $marks = [IO.StreamWriter]::new([IO.Path]::ChangeExtension($logFile, ".streams"), $false, [Text.UTF8Encoding]::new($false))
+  $marks.AutoFlush = $true
 } catch { Write-Warning "testor: no log: $_" }
+function Write-Log([string]$line, [string]$stream) {
+  if (-not $log) { return }
+  $log.WriteLine($line)
+  if ($marks) { $marks.Write($stream * ([regex]::Matches($line, "`n").Count + 1)) }
+}
 try {
   # Every line goes to the log; stdout stays stdout and a native program's stderr goes back to
   # stderr as plain text, so callers that separate the two (rust:fmt | sed) are unaffected.
   & $Body 2>&1 | ForEach-Object {
     $note = $null
-    while ($shared.notes.TryDequeue([ref]$note)) { [Console]::Error.WriteLine($note); if ($log) { $log.WriteLine($note) } }
+    while ($shared.notes.TryDequeue([ref]$note)) { [Console]::Error.WriteLine($note); Write-Log $note "e" }
     if ($_ -is [Management.Automation.ErrorRecord] -and $_.Exception -is [Management.Automation.RemoteException]) {
       $line = $_.ToString()
       [Console]::Error.WriteLine($line)
-      if ($log) { $log.WriteLine((Hide-Secrets $line)) }
+      Write-Log (Hide-Secrets $line) "e"
     } else {
-      if ($log) { $log.WriteLine((Hide-Secrets $(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() }))) }
+      Write-Log (Hide-Secrets $(if ($_ -is [string]) { $_ } else { ($_ | Out-String).TrimEnd() })) "o"
       $_
     }
   }
 } catch {
   $failure = $_
-  if ($log) { $log.WriteLine("`n" + (Hide-Secrets ($_ | Out-String).TrimEnd())) }
+  Write-Log ("`n" + (Hide-Secrets ($_ | Out-String).TrimEnd())) "e"
 } finally {
   $shared.done = $true
   if ($lock) { $lock.Dispose() }
   if ($watcher) { try { $watcher.Stop(); $watcher.Dispose() } catch { } }
   $note = $null
-  while ($shared.notes.TryDequeue([ref]$note)) { [Console]::Error.WriteLine($note); if ($log) { $log.WriteLine($note) } }
+  while ($shared.notes.TryDequeue([ref]$note)) { [Console]::Error.WriteLine($note); Write-Log $note "e" }
   [Console]::OutputEncoding = $encoding
   if ($log) { $log.Dispose() }
+  if ($marks) { $marks.Dispose() }
   # Runs on success, on failure and on Ctrl+C; a killed session is marked aborted by the server.
   try {
     $ended = Get-Date

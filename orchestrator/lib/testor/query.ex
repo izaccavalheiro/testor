@@ -7,7 +7,7 @@ defmodule Testor.Query do
   alias Testor.{Config, Files, Store}
 
   @statuses ["running", "passed", "failed", "aborted", "cancelled"]
-  @fields ~w(id project kind command status exitCode startedAt endedAt durationMs summary warning error screenshots artifacts artifactsBytes actor attested agentAttested archived stored source job remote)
+  @fields ~w(id project kind command status exitCode startedAt endedAt durationMs summary warning error screenshots artifacts artifactsBytes actor attested agentAttested archived stored source job remote select session)
 
   def statuses, do: @statuses
 
@@ -39,6 +39,7 @@ defmodule Testor.Query do
           (opts[:status] == nil or run["status"] == opts[:status]) and
           (opts[:project] == nil or run["project"] == opts[:project]) and
           (opts[:kind] == nil or run["kind"] == opts[:kind]) and
+          (opts[:job] == nil or run["job"] == opts[:job]) and
           (q == nil or matches?(run, q)) and
           (opts[:allow] == nil or opts[:allow].(run["project"]))
       end)
