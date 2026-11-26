@@ -63,8 +63,10 @@ defmodule Testor.Snapshots do
 
         {adapter, cfg} = Storage.blob()
 
-        case adapter.put(cfg, manifest_key(project, hex), JSON.encode!(manifest)) do
-          :ok -> {:ok, %{"id" => "sha256:" <> hex, "missing" => [], "stored" => true}}
+        with :ok <- adapter.put(cfg, manifest_key(project, hex), JSON.encode!(manifest)),
+             :ok <- point(adapter, cfg, project, params["branch"], "sha256:" <> hex) do
+          {:ok, %{"id" => "sha256:" <> hex, "missing" => [], "stored" => true}}
+        else
           {:error, why} -> {:error, {:store, why}}
         end
       else
@@ -82,6 +84,64 @@ defmodule Testor.Snapshots do
       {:ok, manifest}
     else
       _ -> :not_found
+    end
+  end
+
+  # The branch's latest snapshot and the one before it: the base its changes are counted from.
+  defp point(_adapter, _cfg, _project, nil, _id), do: :ok
+
+  defp point(adapter, cfg, project, branch, id) do
+    case pointer(project, branch) do
+      %{"current" => ^id} ->
+        :ok
+
+      was ->
+        adapter.put(
+          cfg,
+          pointer_key(project, branch),
+          JSON.encode!(%{"current" => id, "previous" => was["current"]})
+        )
+    end
+  end
+
+  defp pointer_key(project, branch),
+    do: "snapshots/#{project}/branches/#{Base.url_encode64(branch, padding: false)}.json"
+
+  defp pointer(project, branch) do
+    {adapter, cfg} = Storage.blob()
+
+    with {:ok, data} <- adapter.get(cfg, pointer_key(project, branch), :binary),
+         {:ok, %{} = map} <- JSON.decode(data) do
+      map
+    else
+      _ -> %{}
+    end
+  end
+
+  @doc """
+  The files of snapshot `hex` that differ from its base (`branch`'s previous snapshot, else the
+  default branch's latest): `{:ok, paths}`, or `:none` when there is no base to compare with or
+  more than `Testor.Select.max_files/0` changed (a full run then).
+  """
+  def changed(project, hex, branch) do
+    id = "sha256:" <> hex
+    mine = if branch, do: pointer(project, branch), else: %{}
+    default = pointer(project, Testor.States.settings()["defaultBranch"])
+
+    base =
+      Enum.find(
+        [mine["current"], mine["previous"], default["current"], default["previous"]],
+        &(&1 && &1 != id)
+      )
+
+    with "sha256:" <> base_hex <- base,
+         {:ok, %{"files" => before}} <- manifest(project, base_hex),
+         {:ok, %{"files" => now}} <- manifest(project, hex) do
+      known = Map.new(before, &{&1["path"], &1["sha256"]})
+      paths = for file <- now, known[file["path"]] != file["sha256"], do: file["path"]
+      if length(paths) <= Testor.Select.max_files(), do: {:ok, paths}, else: :none
+    else
+      _ -> :none
     end
   end
 

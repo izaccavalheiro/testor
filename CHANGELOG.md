@@ -44,6 +44,19 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   (`storage_s3`, `keys_secret`, `service_account_annotations`). `TESTOR_SIGNING_KEY` signs
   attestations in place of `signing.key`; agents' pinned keys are kept in PostgreSQL for
   testors that share no volume.
+- **Handing test runs off** ([docs/handoff.md](docs/handoff.md)): `runner/testor.ps1 run` sends
+  the working tree as a snapshot, queues the job and follows it, stdout on stdout and stderr on
+  stderr (run.ps1 marks each log line's stream), exiting with the run's code; Ctrl+C cancels it.
+  Jobs take a `select` (files, test names) that agents pass as separate arguments (`argv` and
+  `select` in agent.json), or `affected` (`then-all`, `failFast`): testor counts the files changed
+  since the branch's last snapshot, and the agent runs the tool's own selection, the tests named
+  after the change, or a full run when a lockfile or configuration changed. A result cache
+  answers the same snapshot and inputs at once (`"cache"` in agent.json). Watch sessions
+  (`testor watch`, `/api/v1/watches`) feed a remote watch command each save. Agents run `slots`
+  jobs at once, one per project and workspace. Exec mode sends an argv to an agent that lists
+  its sender, with the `exec` scope (role `exec-admin`) and a claim testor signs. A failure
+  digest (`/api/v1/runs/:id/digest`, `--digest`, MCP `get_run`). `remote.yml`'s `MODE=agent`.
+  Gates and commit statuses leave scoped and session runs out unless a gate says `"scoped": true`.
 - **Snapshots and incremental state** ([docs/snapshots.md](docs/snapshots.md)): a job can run
   a content-addressed snapshot of a working tree (`runner/snapshot.ps1`, `SYNC=cas`) instead of
   a ref: testor keeps contents by SHA-256 (`POST /api/v1/projects/<p>/snapshots`,

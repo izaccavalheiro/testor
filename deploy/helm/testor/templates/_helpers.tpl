@@ -72,7 +72,7 @@ agents.profiles. Each has a name suffix, labels, resources, replicas, autoscalin
 {{- $a := .Values.agents -}}
 {{- $groups := list -}}
 {{- if $a.enabled -}}
-{{- $groups = append $groups (dict "suffix" "" "labels" $a.labels "resources" $a.resources "replicas" $a.replicas "autoscaling" $a.autoscaling "mode" "deployment" "shmSize" "" "workspaceSizeLimit" "" "scaleLabel" "" "persistence" $a.persistence) -}}
+{{- $groups = append $groups (dict "suffix" "" "labels" $a.labels "resources" $a.resources "replicas" $a.replicas "autoscaling" $a.autoscaling "mode" "deployment" "shmSize" "" "workspaceSizeLimit" "" "scaleLabel" "" "persistence" $a.persistence "slots" ($a.slots | default 1)) -}}
 {{- range $p := $a.profiles -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,30}[a-z0-9])?$" (toString $p.name)) }}{{ fail "agents.profiles[].name: a DNS label of 32 characters at most" }}{{ end -}}
 {{- if not $p.labels }}{{ fail (printf "agents.profiles %s: labels, which its jobs ask for" $p.name) }}{{ end -}}
@@ -83,7 +83,7 @@ agents.profiles. Each has a name suffix, labels, resources, replicas, autoscalin
 {{- $persistence := merge (dict) ($p.persistence | default dict) $a.persistence -}}
 {{- if and (eq $mode "job") ($p.persistence | default dict).enabled }}{{ fail (printf "agents.profiles %s: persistence is for agents that stay (mode: deployment), not a Job per run" $p.name) }}{{ end -}}
 {{- if eq $mode "job" }}{{ $_ := set $persistence "enabled" false }}{{ end -}}
-{{- $groups = append $groups (dict "suffix" (printf "-%s" $p.name) "labels" $p.labels "resources" ($p.resources | default $a.resources) "replicas" ($p.replicas | default 1) "autoscaling" $auto "mode" $mode "shmSize" ($p.shmSize | default "") "workspaceSizeLimit" ($p.workspaceSizeLimit | default "") "scaleLabel" ($auto.label | default (last $p.labels)) "persistence" $persistence) -}}
+{{- $groups = append $groups (dict "suffix" (printf "-%s" $p.name) "labels" $p.labels "resources" ($p.resources | default $a.resources) "replicas" ($p.replicas | default 1) "autoscaling" $auto "mode" $mode "shmSize" ($p.shmSize | default "") "workspaceSizeLimit" ($p.workspaceSizeLimit | default "") "scaleLabel" ($auto.label | default (last $p.labels)) "persistence" $persistence "slots" ($p.slots | default $a.slots | default 1)) -}}
 {{- end -}}
 {{- end -}}
 {{- toJson $groups -}}

@@ -187,6 +187,7 @@ defmodule Testor.Web.Auth do
       {"POST", ["api", "v1", "jobs", _, "cancel"]} -> "execute"
       {"POST", ["api", "v1", "projects", _, "snapshots"]} -> "execute"
       {"PUT", ["api", "v1", "blobs", _]} -> "execute"
+      {method, ["api", "v1", "watches" | _]} when method in ["POST", "DELETE"] -> "execute"
       {_, ["api", "v1", "agent" | _]} -> "agent"
       {"POST", ["api", "v1", "auth", "token"]} -> "read"
       {"POST", ["mcp"]} -> "read"

@@ -156,6 +156,9 @@ agents:
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { memory: 2Gi }
+  # Jobs a pod runs at once (agent.json's slots, capped by its CPUs and memory); KEDA counts
+  # queued jobs per slot. A profile may set its own.
+  slots: 1
   # Warm agents: a StatefulSet with a volume per pod for the agent's home (workspaces, the
   # snapshot cache, dependency caches, its key), kept across restarts; the queue prefers the pod
   # that ran a project last (execution.warmSeconds). A profile may set its own.

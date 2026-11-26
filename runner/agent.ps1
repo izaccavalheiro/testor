@@ -95,7 +95,9 @@
 param(
   [string]$Config = (Join-Path $PSScriptRoot "agent.json"),
   [switch]$Once,
-  [int]$Wait = 20
+  [int]$Wait = 20,
+  # One job, from a file, in a process of its own: how an agent with slots runs several.
+  [string]$JobFile
 )
 $ErrorActionPreference = "Stop"
 
@@ -177,6 +179,16 @@ function Send-Log($job, $state) {
       else { throw "the log was refused ($($answer.StatusCode))" }
     }
   } finally { $stream.Dispose() }
+  # The stream marks (o or e per line) follow: testor run replays stdout and stderr apart.
+  $marks = [IO.Path]::ChangeExtension($path, ".streams")
+  if (-not (Test-Path -LiteralPath $marks)) { return }
+  $text = [IO.File]::ReadAllText($marks)
+  if ($text.Length -le $state.marks) { return }
+  $answer = Invoke-WebRequest -Method Post -Uri "$base/api/v1/agent/jobs/$($job.id)/streams?offset=$($state.marks)" `
+    -Headers @{ Authorization = "Bearer $token" } -ContentType "application/octet-stream" -Body $text.Substring([int]$state.marks) `
+    -SkipHttpErrorCheck -SkipCertificateCheck:$skipCert -TimeoutSec 60
+  if ($answer.StatusCode -eq 200) { $state.marks = $text.Length }
+  elseif ($answer.StatusCode -eq 409 -and $answer.Headers["X-Log-Size"]) { $state.marks = [long]"$($answer.Headers['X-Log-Size'])" }
 }
 
 function Sync-Run($job, $state) {
@@ -257,7 +269,23 @@ function Resolve-Job($job) {
   if (-not $project) { return @{ error = "project $($job.project) is not in this agent's configuration" } }
   $entry = if ($project.commands) { $project.commands[$job.kind] } else { $null }
   $command = if ($entry -is [Collections.IDictionary]) { $entry.command } else { $entry }
-  if (-not $command -or $command -isnot [string]) { return @{ error = "task $($job.kind) of $($job.project) is not in this agent's configuration" } }
+  # A command as arguments ("argv"), run with no shell: a selection is appended to them.
+  $argv = if ($entry -is [Collections.IDictionary] -and $entry.argv) { @($entry.argv | ForEach-Object { "$_" }) } else { $null }
+  $execMode = $null
+  if ($job.argv) {
+    # Exec mode: the job carries its argv, which runs only if testor signed who asked and this
+    # agent lists them (docs/handoff.md).
+    $why = Test-ExecClaim $job
+    if ($why) { return @{ error = "exec refused: $why" } }
+    $execMode = $settings.exec
+    $argv = @($job.argv | ForEach-Object { "$_" }); $command = $null; $entry = @{}
+  }
+  if (-not $argv -and (-not $command -or $command -isnot [string])) { return @{ error = "task $($job.kind) of $($job.project) is not in this agent's configuration" } }
+  $selectMap = if ($entry -is [Collections.IDictionary]) { $entry.select } else { $null }
+  $affectedMap = if ($entry -is [Collections.IDictionary]) { $entry.affected } else { $null }
+  $scoped = $job.select -and ($job.select.files -or $job.select.names) -and -not $job.select.affected
+  if ($scoped -and -not $selectMap) { return @{ error = "task $($job.kind) of $($job.project) takes no selection (its select in agent.json)" } }
+  if ($job.watch -and $entry.rerun -notin @($null, "native", "restart")) { return @{ error = "rerun of $($job.project) $($job.kind) is native or restart" } }
   $lists = @{}
   foreach ($key in "reports", "artifacts", "preserve", "state") {
     $lists[$key] = @(if ($entry -is [Collections.IDictionary] -and $entry[$key]) { $entry[$key] } elseif ($key -eq "state" -and $project.state) { $project.state } else { @() })
@@ -276,6 +304,8 @@ function Resolve-Job($job) {
   if ($snapshot -and $project.snapshots -ne $true) { return @{ error = "this agent takes no snapshots of $($job.project) (snapshots: true)" } }
   $repository = $project.repository
   $workspace = if ($project.workspace) { Expand $project.workspace } elseif ($repository -or $snapshot) { Join-Path (Join-Path $home_ "workspaces") $job.project } else { $null }
+  # A job of another worktree (its "workspace") writes its snapshot beside: two run at once.
+  if ($snapshot -and $job.workspace) { $workspace = "$workspace@$($job.workspace)" }
   $git = ($project.git -eq $true -or [bool]$repository) -and -not $snapshot
   $clone = $repository -and $workspace -and -not $snapshot -and -not (Test-Path -LiteralPath $workspace)
   if (-not $workspace -or (-not $clone -and -not $snapshot -and -not (Test-Path -LiteralPath $workspace))) { return @{ error = "workspace of $($job.project) not found: $workspace" } }
@@ -294,6 +324,11 @@ function Resolve-Job($job) {
     return @{ error = "memoryGuard of $($job.project) is { warn, stop }: percentages, warn <= stop" }
   }
   $container = $null
+  if ($execMode -and $execMode.executor -ne "none") {
+    # Exec runs in the project's container executor unless the agent says "executor": "none".
+    if (-not $project.executor.container) { return @{ error = "exec of $($job.project) runs in a container: its executor.container in agent.json" } }
+  }
+  if ($execMode) { $isolate = "copy" }
   if ($project.executor) {
     $container = $project.executor.container
     if (-not $container -or "$($container.image)" -notmatch "^[\w./:-]+@sha256:[0-9a-f]{64}$") { return @{ error = "executor of $($job.project): container.image is pinned by digest (name@sha256:...)" } }
@@ -302,7 +337,137 @@ function Resolve-Job($job) {
   @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null }; isolate = $isolate
      reports = $lists.reports; artifacts = $lists.artifacts; preserve = $lists.preserve; state = $lists.state
      timeout = $timeout; guard = if ($guard) { "$($guard.warn),$($guard.stop)" } else { "" }; limits = $project.limits -eq "auto"
-     container = $container; exclusive = ($entry -is [Collections.IDictionary] -and $entry.exclusive -eq $true) }
+     container = $container; exclusive = ($entry -is [Collections.IDictionary] -and $entry.exclusive -eq $true)
+     argv = $argv; select = $selectMap; affected = $affectedMap; rerun = $(if ($entry.rerun) { $entry.rerun } else { "native" })
+     fullRunOn = @($project.fullRunOn); cache = Get-CacheInputs $job $project $entry $container }
+}
+
+# --- selections, affected tests, exec mode, the result cache (docs/handoff.md) ---------------
+
+# The arguments a selection adds, as agent.json's select says: "append" (each path as an
+# argument) or a template whose "{}" each value fills (["-t", "{}"]).
+function Get-SelectionArgs($map, $files, $names) {
+  $out = [Collections.Generic.List[string]]::new()
+  foreach ($pair in @(@("files", $files), @("names", $names))) {
+    $how = $map[$pair[0]]
+    foreach ($value in @($pair[1])) {
+      if (-not $value) { continue }
+      if ($how -eq "append") { $out.Add("$value") }
+      elseif ($how) { foreach ($part in @($how)) { $out.Add(("$part").Replace("{}", "$value")) } }
+    }
+  }
+  # Each argument on its own: the caller collects them with @().
+  $out.ToArray()
+}
+
+# What always means a full run: lockfiles, test and build configuration, and fullRunOn.
+$fullRunOn = @("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock", "Cargo.lock", "Cargo.toml", "go.mod", "go.sum",
+  "poetry.lock", "uv.lock", "Pipfile.lock", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "conftest.py",
+  "package.json", "vitest.config.*", "vitest.workspace.*", "jest.config.*", "playwright.config.*", "tsconfig*.json", "*.csproj", "Directory.*.props")
+$testName = "(\.|_|-)(test|spec)s?\.[^.]+$|^test_[^/]+\.py$"
+
+# The test files a change affects, when the tool has no selection of its own: changed tests,
+# and tests named after a changed file (foo.ts: foo.test.ts, foo.spec.ts, test_foo.py, foo_test.go).
+function Find-AffectedTests([string]$root, $changed) {
+  $wanted = @{}
+  foreach ($path in $changed) {
+    $name = Split-Path -Leaf $path
+    if ($name -match $testName) { if (Test-Path -LiteralPath (Join-Path $root $path) -PathType Leaf) { $wanted[$path] = $true }; continue }
+    $stem = [IO.Path]::GetFileNameWithoutExtension($name)
+    if ($stem) { $wanted["?$stem"] = $true }
+  }
+  $stems = @($wanted.Keys | Where-Object { $_ -like "?*" -and $_.StartsWith("?") } | ForEach-Object { $_.Substring(1) })
+  if ($stems.Count) {
+    $skip = "node_modules|\.git|target|dist|build|\.venv|vendor"
+    $queue = [Collections.Generic.Queue[string]]::new(); $queue.Enqueue($root)
+    while ($queue.Count) {
+      $dir = $queue.Dequeue()
+      foreach ($item in @(Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue)) {
+        if ($item.PSIsContainer) { if ($item.Name -notmatch "^($skip)$" -and -not $item.LinkType) { $queue.Enqueue($item.FullName) }; continue }
+        if ($item.Name -notmatch $testName) { continue }
+        foreach ($stem in $stems) {
+          if ($item.Name -match "^$([regex]::Escape($stem))(\.|_|-)(test|spec)s?\." -or $item.Name -eq "test_$stem.py") {
+            $wanted[([IO.Path]::GetRelativePath($root, $item.FullName) -replace "\\", "/")] = $true
+          }
+        }
+      }
+    }
+  }
+  @($wanted.Keys | Where-Object { -not $_.StartsWith("?") } | Sort-Object)
+}
+
+# The runs a job makes: one; for select.affected, the affected tests (then, with "then-all",
+# the rest), or one full run when a change means one.
+function Get-Passes($job, $plan, [string]$runDir) {
+  $select = $job.select
+  if (-not $select) { return , @(@{ label = "all" }) }
+  if (-not $select.affected) { return , @(@{ label = "selected"; files = @($select.files); names = @($select.names); select = $select }) }
+  $changed = @($select.changed)
+  $full = @{ label = "all" }
+  if (-not $select.changed) { Log "$($job.id) affected: no base snapshot to compare with, a full run"; return , @($full) }
+  $patterns = $fullRunOn + @($plan.fullRunOn | Where-Object { $_ })
+  $trigger = $changed | Where-Object { $p = $_; $patterns | Where-Object { $p -like $_ -or (Split-Path -Leaf $p) -like $_ } } | Select-Object -First 1
+  if ($trigger) { Log "$($job.id) affected: $trigger changed, a full run"; return , @($full) }
+  $pass = if ($plan.affected) {
+    # The tool's own selection: vitest related, jest --findRelatedTests, pytest --testmon...
+    @{ label = "affected"; argv = @($plan.affected.argv | ForEach-Object { "$_" }); files = $changed; map = @{ files = $(if ($plan.affected.files) { $plan.affected.files } else { "append" }) } }
+  } elseif ($plan.select) {
+    $tests = @(Find-AffectedTests $runDir $changed)
+    if (-not $tests.Count) { Log "$($job.id) affected: no tests found for the change, a full run"; return , @($full) }
+    @{ label = "affected"; files = $tests }
+  } else { Log "$($job.id) affected: the task has no select in agent.json, a full run"; return , @($full) }
+  $pass.select = @{ affected = $select.affected; files = @($pass.files) }
+  if ($select.affected -eq "then-all") { return , @($pass, $full) }
+  , @($pass)
+}
+
+function ConvertFrom-Base64Url([string]$text) {
+  $text = $text.Replace("-", "+").Replace("_", "/")
+  [Convert]::FromBase64String($text + "=" * ((4 - $text.Length % 4) % 4))
+}
+
+# Why an exec job may not run here, or nothing: testor's signature over who asked and the argv
+# (its job-token key, from its JWKS), and that this agent lists who asked.
+function Test-ExecClaim($job) {
+  $exec = $settings.exec
+  if (-not $exec -or -not $exec.subjects) { return "this agent takes no commands (exec in agent.json)" }
+  $parts = "$($job.claim)" -split "\."
+  if ($parts.Count -ne 3) { return "the job has no signed claim" }
+  try {
+    $header = [Text.Encoding]::UTF8.GetString((ConvertFrom-Base64Url $parts[0])) | ConvertFrom-Json
+    $claims = [Text.Encoding]::UTF8.GetString((ConvertFrom-Base64Url $parts[1])) | ConvertFrom-Json
+    $jwks = Invoke-RestMethod -Uri "$base/.well-known/jwks.json" -SkipCertificateCheck:$skipCert -TimeoutSec 30
+    $key = @($jwks.keys | Where-Object { $_.kid -eq $header.kid -and $_.kty -eq "RSA" })[0]
+    if (-not $key -or $header.alg -ne "RS256") { return "the claim is not signed by a key testor publishes" }
+    $rsa = [Security.Cryptography.RSA]::Create()
+    $params = [Security.Cryptography.RSAParameters]::new()
+    $params.Modulus = ConvertFrom-Base64Url $key.n
+    $params.Exponent = ConvertFrom-Base64Url $key.e
+    $rsa.ImportParameters($params)
+    $signed = [Text.Encoding]::ASCII.GetBytes("$($parts[0]).$($parts[1])")
+    if (-not $rsa.VerifyData($signed, (ConvertFrom-Base64Url $parts[2]), [Security.Cryptography.HashAlgorithmName]::SHA256, [Security.Cryptography.RSASignaturePadding]::Pkcs1)) { return "the claim's signature does not hold" }
+  } catch { return "the claim could not be checked: $($_.Exception.Message)" }
+  $argvHash = ([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes((@($job.argv) -join [char]0))) | ForEach-Object { $_.ToString("x2") }) -join ""
+  if ($claims.argv_sha256 -ne $argvHash) { return "the claim is for another command" }
+  if ($claims.project -ne $job.project) { return "the claim is for another project" }
+  if ([long]$claims.exp -lt [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) { return "the claim has expired" }
+  if ($claims.sub -notin @($exec.subjects)) { return "$($claims.sub) is not in this agent's exec subjects" }
+  $null
+}
+
+# With "cache" on a project, the hash of everything it declares as an input of a command: the
+# entry, the values of its "inputs" variables, this agent's script, the platform, the image.
+$agentHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $PSCommandPath).Hash.ToLower()
+function Get-CacheInputs($job, $project, $entry, $container) {
+  if ($project.cache -notin @($true, "all") -or $job.watch -or $job.argv) { return $null }
+  $names = @($entry.inputs) + @($project.inputs) | Where-Object { $_ } | Sort-Object -Unique
+  $values = [ordered]@{}
+  foreach ($name in $names) { $values[$name] = [Environment]::GetEnvironmentVariable($name) }
+  $all = ConvertTo-Json -Compress -Depth 8 -InputObject @{ entry = $entry; env = $values; agent = $agentHash
+    platform = "$([Runtime.InteropServices.RuntimeInformation]::OSDescription) $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"
+    image = $container.image }
+  @{ inputs = ([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($all)) | ForEach-Object { $_.ToString("x2") }) -join ""
+     mode = $(if ($project.cache -eq "all") { "all" } else { "passed" }) }
 }
 
 # --- snapshots and state --------------------------------------------------------------------
@@ -323,7 +488,7 @@ function Sync-Snapshot($job, [string]$workspace) {
   $sep = [IO.Path]::DirectorySeparatorChar
   $root = [IO.Path]::GetFullPath($workspace).TrimEnd($sep) + $sep
   # What the last snapshot wrote here (kept beside the cache: the tree may hold any name).
-  $written = Join-Path (Join-Path $home_ "cas") "$($job.project).written.json"
+  $written = Join-Path (Join-Path $home_ "cas") "$($job.project)$(if ($job.workspace) { "@$($job.workspace)" }).written.json"
   $before = @{}
   if (Test-Path -LiteralPath $written) { try { $before = Get-Content -Raw -LiteralPath $written | ConvertFrom-Json -AsHashtable } catch { } }
   $files = @($manifest.files)
@@ -342,6 +507,7 @@ function Sync-Snapshot($job, [string]$workspace) {
     Move-Item -Force -LiteralPath $part -Destination $file
   }
   $after = @{}
+  $paths = [Collections.Generic.List[string]]::new()
   $folders = [Collections.Generic.HashSet[string]]::new()
   $count = 0
   foreach ($file in $files) {
@@ -370,14 +536,18 @@ function Sync-Snapshot($job, [string]$workspace) {
     }
     if ($item) { if ($item.PSIsContainer -and -not $item.LinkType) { Remove-Item -LiteralPath $target -Recurse -Force } else { $item.Delete() } }
     $source = Join-Path $cache $file.sha256
-    # Copied, not linked: a run that writes into a file must not change the cache.
-    Copy-Item -LiteralPath $source -Destination $target -Force
+    # Copied, not linked: a run that writes into a file must not change the cache; then renamed
+    # into place, so a tool watching the tree never reads half a file.
+    $part = "$target.testor-part"
+    Copy-Item -LiteralPath $source -Destination $part -Force
+    Move-Item -LiteralPath $part -Destination $target -Force
     (Get-Item -LiteralPath $source).LastWriteTimeUtc = [DateTime]::UtcNow
     if (-not $IsWindows) {
       [IO.File]::SetUnixFileMode($target, [IO.UnixFileMode]$(if ($file.mode -eq "755") { "UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute" } else { "UserRead, UserWrite, GroupRead, OtherRead" }))
     }
     $item = Get-Item -LiteralPath $target -Force
     $after[$path] = @{ sha256 = $file.sha256; size = $item.Length; ticks = $item.LastWriteTimeUtc.Ticks }
+    $paths.Add($path)
     $count++
   }
   # Files the last snapshot wrote and this one lacks; what runs made (dependencies, caches) stays.
@@ -385,10 +555,10 @@ function Sync-Snapshot($job, [string]$workspace) {
   foreach ($path in @($before.Keys)) {
     if ($after.ContainsKey($path)) { continue }
     $gone = [IO.Path]::GetFullPath([IO.Path]::Combine($workspace, $path))
-    if ($gone.StartsWith($root) -and (Test-Path -LiteralPath $gone -PathType Leaf)) { Remove-Item -LiteralPath $gone -Force; $deleted++ }
+    if ($gone.StartsWith($root) -and (Test-Path -LiteralPath $gone -PathType Leaf)) { Remove-Item -LiteralPath $gone -Force; $deleted++; $paths.Add($path) }
   }
   ConvertTo-Json -InputObject $after -Depth 3 -Compress | Set-Content -LiteralPath $written
-  @{ files = $files.Count; fetched = $missing.Count; written = $count; deleted = $deleted }
+  @{ files = $files.Count; fetched = $missing.Count; written = $count; deleted = $deleted; paths = $paths.ToArray() }
 }
 
 # Contents of the cache not used for two weeks go when the agent starts.
@@ -572,7 +742,8 @@ function Remove-Isolated([string]$workspace, [string]$dir) {
   }
   if (Test-Path -LiteralPath (Join-Path $workspace ".git")) { git -C $workspace worktree prune 2>$null }
 }
-if (Test-Path -LiteralPath $isolatedRoot) {
+# (Not in a slot's process: its siblings' workspaces are there.)
+if ((Test-Path -LiteralPath $isolatedRoot) -and -not $JobFile) {
   foreach ($left in @(Get-ChildItem -LiteralPath $isolatedRoot -Directory)) {
     try { Remove-Item -Recurse -Force -LiteralPath $left.FullName } catch { Log "could not remove $($left.FullName)" }
   }
@@ -664,33 +835,6 @@ function Invoke-Job($job) {
     }
   }
   $list = { param($paths) if ($paths.Count) { "@(" + (($paths | ForEach-Object { & $quote $_ }) -join ", ") + ")" } else { "@()" } }
-  $body = $plan.command
-  if ($plan.container) {
-    # In a container: a read-only root, the workspace mounted, /tmp a tmpfs, no network unless
-    # allowed, the limits as hard ones; no token, key or variable of the agent inside, only
-    # the job's secrets and the limits by name. Never privileged, nothing else mounted.
-    $c = $plan.container
-    $engine = Tool $(if ($tools.container) { "container" } else { "docker" })
-    $runtime = @("run", "--rm", "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-      "--network", $(if ($c.network) { $c.network } else { "none" }), "--cpus", "$($limits.cpus)", "--memory", "$($limits.memoryMb)m",
-      "-v", "$($runDir):/work", "-w", "/work", "-e", "TESTOR_CPUS", "-e", "TESTOR_MEMORY_MB")
-    foreach ($name in $secrets.vars.Keys) { $runtime += @("-e", $name) }
-    $shell = if ($c.shell) { @($c.shell) } else { @("sh", "-c") }
-    $body = "& $(& $quote $engine) " + (($runtime + @($c.image) + $shell + @($plan.command) | ForEach-Object { & $quote "$_" }) -join " ")
-  }
-  $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Artifacts $(& $list $plan.artifacts) -Reports $(& $list $plan.reports) -TimeoutSeconds $([long]$plan.timeout) -MemoryGuard $(& $quote $plan.guard) -Body { $body }"
-  $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
-  $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
-  $env:TESTOR_JOB_ID = $job.id
-  $env:TESTOR_ACTOR = "agent:$([Environment]::MachineName.ToLower()) for $($job.requestedBy)"
-  # The run gets the secrets in its environment, and run.ps1 writes their values as ***.
-  $maskBefore = $env:TESTOR_MASK
-  if ($idToken) {
-    $tokenFile = "$out.jwt"
-    [IO.File]::WriteAllText($tokenFile, $idToken.token)
-    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($tokenFile, [IO.UnixFileMode]"UserRead, UserWrite") }
-    $secrets.vars["TESTOR_ID_TOKEN"] = $idToken.token
-  }
   # Not secret: where the token is, and the identity's settings (a role to assume...); the job's
   # trace, which the run's spans join (and test tools that propagate W3C trace context).
   $plain = @{}
@@ -721,71 +865,179 @@ function Invoke-Job($job) {
       $plain["TESTOR_COMMITTED_AT"] = "$(git -C $runDir log -1 --format=%cI 2>$null)".Trim()
     }
   }
+  if ($job.watch) { $plain["TESTOR_SESSION"] = $job.id }
+  $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
+  $maskBefore = $env:TESTOR_MASK
   if ($idToken) {
+    $tokenFile = "$out.jwt"
+    [IO.File]::WriteAllText($tokenFile, $idToken.token)
+    if (-not $IsWindows) { [IO.File]::SetUnixFileMode($tokenFile, [IO.UnixFileMode]"UserRead, UserWrite") }
+    $secrets.vars["TESTOR_ID_TOKEN"] = $idToken.token
     $plain[$(if ($identity.file) { $identity.file } else { "TESTOR_ID_TOKEN_FILE" })] = $tokenFile
     if ($identity.env) { foreach ($name in $identity.env.Keys) { $plain[$name] = "$($identity.env[$name])" } }
   }
   $branch = if ($plain["TESTOR_BRANCH"] -and $plain["TESTOR_BRANCH"] -ne "HEAD") { $plain["TESTOR_BRANCH"] } else { $null }
   if ($plan.state.Count) { Restore-State $job $plan $runDir $branch }
-  foreach ($name in $plain.Keys) { [Environment]::SetEnvironmentVariable($name, $plain[$name]) }
-  foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $secrets.vars[$name]) }
-  if ($secrets.vars.Count) { $env:TESTOR_MASK = (@($maskBefore) + @($secrets.vars.Keys) | Where-Object { $_ }) -join "," }
-  try {
-    $process = Start-Process pwsh -PassThru -NoNewWindow -RedirectStandardOutput "$out.out" -RedirectStandardError "$out.err" `
-      -ArgumentList "-NoProfile", "-NonInteractive", "-EncodedCommand", $encoded
-    # Windows keeps the exit code only for a process whose handle was opened while it ran.
-    $null = $process.Handle
-  } finally {
-    Remove-Item Env:TESTOR_JOB_ID, Env:TESTOR_ACTOR -ErrorAction SilentlyContinue
-    foreach ($name in @($secrets.vars.Keys) + @($plain.Keys)) { [Environment]::SetEnvironmentVariable($name, $null) }
-    $env:TESTOR_MASK = $maskBefore
-  }
-  Log "$($job.id) running $($job.project) $($job.kind) (pid $($process.Id))"
 
+  # The runs this job makes, one after the other (docs/handoff.md): one; the affected tests,
+  # then the rest; a watch session's, started again on a change in restart mode.
+  $passes = [Collections.Generic.List[object]]::new()
+  foreach ($p in @(Get-Passes $job $plan $runDir)) { $passes.Add($p) }
+  $seq = [long]$(if ($job.seq) { $job.seq } else { 0 })
   $cancelledAt = $null
   $lost = $false
-  $state = @{ runId = $null; sent = [long]0; record = $null }
-  $beatAt = Get-Date
-  # Uploading, the run is sent every second; the lease is renewed every 10 s either way.
-  while (-not $process.WaitForExit($(if ($upload) { 1000 } else { 10000 }))) {
-    if ($upload) {
-      try { Sync-Run $job $state } catch { Log "$($job.id) could not send the run yet: $($_.Exception.Message)" }
+  $exitCode = 0
+  $index = 0
+  while ($index -lt $passes.Count) {
+    $pass = $passes[$index]
+    # The command: its arguments with the selection appended (never through a shell), or a
+    # string command, which reads the selection from TESTOR_SELECT_FILES and _NAMES.
+    $argv = if ($pass.argv) { $pass.argv } else { $plan.argv }
+    $map = if ($pass.map) { $pass.map } elseif ($plan.select) { $plan.select } else { @{ files = "append" } }
+    $selectFiles = $null
+    if ($argv) {
+      $words = @($argv) + @(Get-SelectionArgs $map $pass.files $pass.names)
+      $body = $null
+    } else {
+      $words = $null
+      $body = $plan.command
+      foreach ($kind in "files", "names") {
+        if (-not $pass[$kind]) { continue }
+        $file = "$out.select-$kind"
+        [IO.File]::WriteAllLines($file, [string[]]@($pass[$kind]))
+        $plain["TESTOR_SELECT_$($kind.ToUpper())"] = $file
+        $selectFiles = @($selectFiles) + $file
+      }
     }
-    if (-not $upload -or ((Get-Date) - $beatAt).TotalSeconds -ge 10) {
-      $beatAt = Get-Date
-      # The identity token is renewed at half its life, in the file the run reads.
-      if ($idToken -and ((Get-Date) - $idTokenAt).TotalSeconds -ge $idToken.expires_in / 2) {
+    if ($plan.container) {
+      # In a container: a read-only root, the workspace mounted, /tmp a tmpfs, no network unless
+      # allowed, the limits as hard ones; no token, key or variable of the agent inside, only
+      # the job's secrets and the limits by name. Never privileged, nothing else mounted.
+      $c = $plan.container
+      $engine = Tool $(if ($tools.container) { "container" } else { "docker" })
+      $runtime = @("run", "--rm", "--read-only", "--tmpfs", "/tmp", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+        "--network", $(if ($c.network) { $c.network } else { "none" }), "--cpus", "$($limits.cpus)", "--memory", "$($limits.memoryMb)m",
+        "-v", "$($runDir):/work", "-w", "/work", "-e", "TESTOR_CPUS", "-e", "TESTOR_MEMORY_MB")
+      foreach ($name in $secrets.vars.Keys) { $runtime += @("-e", $name) }
+      $inner = if ($words) { $words } else { @($(if ($c.shell) { @($c.shell) } else { @("sh", "-c") })) + @($plan.command) }
+      $body = "& $(& $quote $engine) " + (($runtime + @($c.image) + $inner | ForEach-Object { & $quote "$_" }) -join " ")
+    } elseif ($words) {
+      $body = "& " + (($words | ForEach-Object { & $quote "$_" }) -join " ")
+    }
+    if ($pass.select) { $plain["TESTOR_SELECT"] = ConvertTo-Json -InputObject $pass.select -Compress -Depth 4 } else { $plain.Remove("TESTOR_SELECT") }
+    $timeout = if ($job.watch) { 0 } else { [long]$plan.timeout }
+    # Encoded: Start-Process passes arguments without escaping their double quotes, which would
+    # break any command holding one.
+    $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Artifacts $(& $list $plan.artifacts) -Reports $(& $list $plan.reports) -TimeoutSeconds $timeout -MemoryGuard $(& $quote $plan.guard) -Body { $body }; exit `$LASTEXITCODE"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+    $env:TESTOR_JOB_ID = $job.id
+    $env:TESTOR_ACTOR = "agent:$([Environment]::MachineName.ToLower()) for $($job.requestedBy)"
+    # The run gets the secrets in its environment, and run.ps1 writes their values as ***.
+    foreach ($name in $plain.Keys) { [Environment]::SetEnvironmentVariable($name, $plain[$name]) }
+    foreach ($name in $secrets.vars.Keys) { [Environment]::SetEnvironmentVariable($name, $secrets.vars[$name]) }
+    if ($secrets.vars.Count) { $env:TESTOR_MASK = (@($maskBefore) + @($secrets.vars.Keys) | Where-Object { $_ }) -join "," }
+    try {
+      $process = Start-Process pwsh -PassThru -NoNewWindow -RedirectStandardOutput "$out.out" -RedirectStandardError "$out.err" `
+        -ArgumentList "-NoProfile", "-NonInteractive", "-EncodedCommand", $encoded
+      # Windows keeps the exit code only for a process whose handle was opened while it ran.
+      $null = $process.Handle
+    } finally {
+      Remove-Item Env:TESTOR_JOB_ID, Env:TESTOR_ACTOR -ErrorAction SilentlyContinue
+      foreach ($name in @($secrets.vars.Keys) + @($plain.Keys) + @("TESTOR_SELECT")) { [Environment]::SetEnvironmentVariable($name, $null) }
+      $env:TESTOR_MASK = $maskBefore
+    }
+    Log "$($job.id) running $($job.project) $($job.kind)$(if ($passes.Count -gt 1 -or $pass.label -ne 'all') { " ($($pass.label))" }) (pid $($process.Id))"
+
+    $restart = $null
+    $state = @{ runId = $null; sent = [long]0; marks = [long]0; record = $null }
+    $beatAt = Get-Date
+    # Uploading, the run is sent every second; the lease is renewed every 10 s either way; a
+    # watch session asks for its client's changes every second.
+    while (-not $process.WaitForExit($(if ($upload -or $job.watch) { 1000 } else { 10000 }))) {
+      if ($upload) {
+        try { Sync-Run $job $state } catch { Log "$($job.id) could not send the run yet: $($_.Exception.Message)" }
+      }
+      if ($job.watch -and -not $cancelledAt) {
         try {
-          $fresh = Request-IdToken $job $identity.audience
-          [IO.File]::WriteAllText($tokenFile, $fresh.token)
-          $idToken = $fresh; $idTokenAt = Get-Date
-        } catch { Log "$($job.id) could not renew its identity token: $($_.Exception.Message)" }
-      }
-      try {
-        $beat = Call "/agent/jobs/$($job.id)/heartbeat" @{}
-        if ($beat.cancel -and -not $cancelledAt) {
-          $cancelledAt = Get-Date
-          Log "$($job.id) cancel asked"
-          # On this machine run.ps1 ends its own tree when asked (cancel\<run id>).
-          if ($upload -and $state.runId) {
-            $null = New-Item -ItemType Directory -Force (Join-Path $home_ "cancel")
-            Set-Content -LiteralPath (Join-Path (Join-Path $home_ "cancel") $state.runId) -Value ""
+          $change = Invoke-RestMethod -Uri "$base/api/v1/agent/jobs/$($job.id)/changes?after=$seq&wait=0" -Headers @{ Authorization = "Bearer $token" } `
+            -SkipCertificateCheck:$skipCert -TimeoutSec 30
+          if ($change.seq) {
+            $seq = [long]$change.seq
+            $job.snapshot = $change.snapshot
+            $synced = Sync-Snapshot $job $plan.workspace
+            Log "$($job.id) change $seq`: $($synced.written) written, $($synced.deleted) deleted"
+            if ($plan.rerun -eq "restart" -and ($synced.written -or $synced.deleted)) {
+              $tests = if ($plan.select) { @(Find-AffectedTests $runDir $synced.paths) } else { @() }
+              $restart = if ($tests.Count) { @{ label = "rerun"; files = $tests; select = @{ affected = $true; files = $tests } } } else { @{ label = "rerun" } }
+              try { $process.Kill($true) } catch { }
+            }
           }
+        } catch { Log "$($job.id) could not read the session's changes: $($_.Exception.Message)" }
+      }
+      if (-not ($upload -or $job.watch) -or ((Get-Date) - $beatAt).TotalSeconds -ge 10) {
+        $beatAt = Get-Date
+        # The identity token is renewed at half its life, in the file the run reads.
+        if ($idToken -and ((Get-Date) - $idTokenAt).TotalSeconds -ge $idToken.expires_in / 2) {
+          try {
+            $fresh = Request-IdToken $job $identity.audience
+            [IO.File]::WriteAllText($tokenFile, $fresh.token)
+            $idToken = $fresh; $idTokenAt = Get-Date
+          } catch { Log "$($job.id) could not renew its identity token: $($_.Exception.Message)" }
         }
-      } catch {
-        # The lease is gone (expired, or the job ended): another agent may run it now.
-        Log "$($job.id) lost its lease ($($_.Exception.Message)); stopping the run"
-        $cancelledAt = (Get-Date).AddSeconds(-60)
-        $lost = $true
+        try {
+          $beat = Call "/agent/jobs/$($job.id)/heartbeat" @{}
+          if ($beat.cancel -and -not $cancelledAt) {
+            $cancelledAt = Get-Date
+            Log "$($job.id) cancel asked"
+            # On this machine run.ps1 ends its own tree when asked (cancel\<run id>).
+            if ($upload -and $state.runId) {
+              $null = New-Item -ItemType Directory -Force (Join-Path $home_ "cancel")
+              Set-Content -LiteralPath (Join-Path (Join-Path $home_ "cancel") $state.runId) -Value ""
+            }
+          }
+        } catch {
+          # The lease is gone (expired, or the job ended): another agent may run it now.
+          Log "$($job.id) lost its lease ($($_.Exception.Message)); stopping the run"
+          $cancelledAt = (Get-Date).AddSeconds(-60)
+          $lost = $true
+        }
+      }
+      # testor cancels the run itself (cancel\<run id>); if it is still there 10 s later, end it here.
+      if ($cancelledAt -and ((Get-Date) - $cancelledAt).TotalSeconds -ge 10) {
+        try { $process.Kill($true) } catch { }
       }
     }
-    # testor cancels the run itself (cancel\<run id>); if it is still there 10 s later, end it here.
-    if ($cancelledAt -and ((Get-Date) - $cancelledAt).TotalSeconds -ge 10) {
-      try { $process.Kill($true) } catch { }
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+    Remove-Item "$out.out", "$out.err" -ErrorAction SilentlyContinue
+    foreach ($file in @($selectFiles)) { if ($file) { Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue } }
+    foreach ($kind in "FILES", "NAMES") { $plain.Remove("TESTOR_SELECT_$kind") }
+    if ($upload -and -not $lost) {
+      try { Complete-Run $job $state ($null -ne $cancelledAt -or $null -ne $restart) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
     }
+    if ($cancelledAt -or $lost) { break }
+    if ($restart) { $passes[$index] = $restart; continue }
+    # A watch session in native mode runs until it is ended; one that stopped on its own waits
+    # for the next change.
+    if ($job.watch) {
+      try {
+        $change = Invoke-RestMethod -Uri "$base/api/v1/agent/jobs/$($job.id)/changes?after=$seq&wait=20" -Headers @{ Authorization = "Bearer $token" } `
+          -SkipCertificateCheck:$skipCert -TimeoutSec 60
+        if ($change.seq) {
+          $seq = [long]$change.seq; $job.snapshot = $change.snapshot
+          $synced = Sync-Snapshot $job $plan.workspace
+          $tests = if ($plan.rerun -eq "restart" -and $plan.select) { @(Find-AffectedTests $runDir $synced.paths) } else { @() }
+          $passes[$index] = if ($tests.Count) { @{ label = "rerun"; files = $tests; select = @{ affected = $true; files = $tests } } } else { @{ label = "rerun" } }
+        }
+        $null = Call "/agent/jobs/$($job.id)/heartbeat" @{}
+        continue
+      } catch { Log "$($job.id) the session ended: $($_.Exception.Message)"; break }
+    }
+    # With then-all and failFast, the rest is not run once the affected tests fail.
+    if ($exitCode -and $job.failFast) { break }
+    $index++
   }
-  $process.WaitForExit()
-  Remove-Item "$out.out", "$out.err", "$out.jwt" -ErrorAction SilentlyContinue
+  Remove-Item "$out.jwt" -ErrorAction SilentlyContinue
   if ($plan.state.Count -and -not $lost) { Save-State $job $plan $runDir $branch }
   if ($plan.isolate) {
     foreach ($path in $plan.preserve) {
@@ -799,17 +1051,54 @@ function Invoke-Job($job) {
     }
     Remove-Isolated $plan.workspace $runDir
   }
-  if ($upload -and -not $lost) {
-    try { Complete-Run $job $state ($null -ne $cancelledAt) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
-  }
   try {
-    $done = Call "/agent/jobs/$($job.id)/finish" @{ exitCode = $process.ExitCode }
-    Log "$($job.id) $($done.status) (exit $($process.ExitCode))"
-  } catch { Log "$($job.id) ended (exit $($process.ExitCode)) but could not report it: $($_.Exception.Message)" }
+    $finish = @{ exitCode = $exitCode }
+    if ($plan.cache -and -not $cancelledAt) { $finish.cache = $plan.cache }
+    $done = Call "/agent/jobs/$($job.id)/finish" $finish
+    Log "$($job.id) $($done.status) (exit $exitCode)"
+  } catch { Log "$($job.id) ended (exit $exitCode) but could not report it: $($_.Exception.Message)" }
+}
+
+# A job handed over by a parent agent with slots: run it, and nothing else.
+if ($JobFile) {
+  $job = Get-Content -Raw -LiteralPath $JobFile | ConvertFrom-Json
+  Remove-Item -LiteralPath $JobFile -ErrorAction SilentlyContinue
+  Invoke-Job $job
+  exit 0
 }
 
 Clear-Cas
-Log "taking jobs from $base (labels: $($labels -join ', '); projects: $(@($projects.Keys) -join ', '))"
+# Slots: jobs at once, each in a process of its own (an exclusive one alone), capped by the CPUs
+# and memory this agent may use (a slot per CPU and per GB).
+$limitsNow = Get-Limits
+$slots = [math]::Max(1, [math]::Min([int]$(if ($settings.slots) { $settings.slots } else { 1 }), [math]::Min($limitsNow.cpus, [math]::Max(1, [int]($limitsNow.memoryMb / 1024)))))
+Log "taking jobs from $base (labels: $($labels -join ', '); projects: $(@($projects.Keys) -join ', '); slots: $slots)"
+if ($slots -gt 1) {
+  $children = [Collections.Generic.List[object]]::new()
+  while ($true) {
+    foreach ($done in @($children | Where-Object { $_.HasExited })) { $null = $children.Remove($done) }
+    if ($children.Count -ge $slots) { Start-Sleep -Milliseconds 500; continue }
+    try {
+      $job = Call "/agent/lease" @{ labels = $labels; wait = $(if ($children.Count) { 2 } else { $Wait }); key = $publicKey; instance = [Environment]::MachineName.ToLower() }
+    } catch { Log "testor did not answer: $($_.Exception.Message)"; Start-Sleep -Seconds 5; continue }
+    if (-not $job) { continue }
+    $plan = Resolve-Job $job
+    if ($plan.exclusive) {
+      # Alone on this agent: the others end first, its lease kept meanwhile.
+      while (@($children | Where-Object { -not $_.HasExited }).Count) {
+        Start-Sleep -Seconds 2
+        try { $null = Call "/agent/jobs/$($job.id)/heartbeat" @{} } catch { }
+      }
+      Invoke-Job $job
+      continue
+    }
+    $file = Join-Path ([IO.Path]::GetTempPath()) "testor-job-$($job.id).json"
+    ConvertTo-Json -InputObject $job -Depth 10 | Set-Content -LiteralPath $file
+    $child = Start-Process pwsh -PassThru -NoNewWindow -ArgumentList "-NoProfile", "-NonInteractive", "-File", $PSCommandPath, "-Config", $Config, "-JobFile", $file
+    $null = $child.Handle
+    $children.Add($child)
+  }
+}
 do {
   try {
     $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait; key = $publicKey; instance = [Environment]::MachineName.ToLower() }

@@ -45,6 +45,10 @@
 # REPORTS (with KIND): files testor reads when the run ends, the same way (a mutation report:
 # reports/mutation/mutation.json); see docs/mutation.md.
 #
+# MODE=agent sends the same tasks to an agent through testor instead of SSH (testor run, see
+# docs/handoff.md): SERVER, KIND, CLI_ARGS as the files to run, NAMES, AFFECTED=1|then-all,
+# LABELS; sync then does nothing (testor run sends the tree).
+#
 # Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
 # ROOT (default: the git root of the directory `task` was called from), WORKSPACES
 # (test-run), HOME_DIR (<WORKSPACES>/.testor; both relative to the runner's home folder or
@@ -86,7 +90,7 @@ vars:
   # Caches a tool keeps between runs (Stryker's incremental file), paths relative to the project;
   # CLEAN=1 drops them before the sync.
   _PRESERVE: '{{range $i, $k := splitList " " (.PRESERVE | default "")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
-  _SYNC: '{{if eq (.SYNC | default "") "full"}}full{{else if eq (.SYNC | default "") "cas"}}cas{{else}}delta{{end}}'
+  _SYNC: '{{if eq (.MODE | default "") "agent"}}none{{else if eq (.SYNC | default "") "full"}}full{{else if eq (.SYNC | default "") "cas"}}cas{{else}}delta{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
   _PRELUDE: |
@@ -107,7 +111,14 @@ tasks:
   sync:
     run: once
     cmds:
+      # A task called from another gets only the vars given to it.
       - task: 'sync-{{._SYNC}}'
+        vars: { CLEAN: '{{.CLEAN}}', KIND: '{{.KIND}}', LABELS: '{{.LABELS}}' }
+
+  # MODE=agent: testor run sends the tree itself.
+  sync-none:
+    internal: true
+    cmds: []
 
   sync-cas:
     internal: true
@@ -258,6 +269,39 @@ tasks:
             }
 
   exec:
+    cmds:
+      - task: 'exec-{{if eq (.MODE | default "") "agent"}}agent{{else}}ssh{{end}}'
+        vars:
+          CMD: '{{.CMD}}'
+          KIND: '{{.KIND}}'
+          ARTIFACTS: '{{.ARTIFACTS}}'
+          REPORTS: '{{.REPORTS}}'
+          TIMEOUT: '{{.TIMEOUT}}'
+          MEMORY_GUARD: '{{.MEMORY_GUARD}}'
+          LOCK: '{{.LOCK}}'
+          ISOLATE: '{{.ISOLATE}}'
+          LABELS: '{{.LABELS}}'
+          NAMES: '{{.NAMES}}'
+          AFFECTED: '{{.AFFECTED}}'
+
+  # MODE=agent: the task goes to an agent through testor (runner/testor.ps1, docs/handoff.md):
+  # the agent's agent.json decides the command for KIND; CLI_ARGS scope it to files, NAMES to
+  # test names; output and exit code come back unchanged. Needs pwsh here, SERVER and a token
+  # in TESTOR_TOKEN.
+  exec-agent:
+    internal: true
+    # Files in CLI_ARGS are relative to where task was called.
+    dir: '{{.USER_WORKING_DIR}}'
+    requires:
+      vars: [SERVER, KIND]
+    cmds:
+      - cmd: >-
+          TESTOR_URL="{{.SERVER}}" pwsh -NoProfile -NonInteractive -File "{{.TASKFILE_DIR}}/../runner/testor.ps1" run
+          --root "{{._ROOT}}" --project "{{._PROJECT}}" --kind "{{.KIND}}"
+          {{if .LABELS}}--labels "{{.LABELS | trim | replace " " ","}}" {{end}}{{if .AFFECTED}}--affected{{if eq .AFFECTED "then-all"}}=then-all{{end}} {{end}}{{if .CLI_ARGS}}--files {{.CLI_ARGS}} {{end}}{{if .NAMES}}--names {{.NAMES}}{{end}}
+
+  exec-ssh:
+    internal: true
     requires:
       vars: [RUNNER, CMD]
     cmds:

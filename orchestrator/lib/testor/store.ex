@@ -177,6 +177,7 @@ defmodule Testor.Store do
       _ ->
         File.rm(Config.run_file(id))
         File.rm(Config.log_file(id))
+        File.rm(Path.join(Config.logs_dir(), id <> ".streams"))
         File.rm(Path.join(Config.cancel_dir(), id))
         File.rm(Path.join(Config.attestations_dir(), id <> ".dsse.json"))
         File.rm(Path.join(Config.attestations_dir(), id <> ".agent.dsse.json"))

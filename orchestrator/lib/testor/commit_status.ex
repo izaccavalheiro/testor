@@ -31,6 +31,7 @@ defmodule Testor.CommitStatus do
     with %{} = run <- Store.get(id),
          %{"commit" => commit} = source when is_binary(commit) <- run["source"],
          false <- source["dirty"] == true,
+         true <- Testor.Gates.full?(run),
          {:ok, target} <- target(run["project"]) do
       backoff = Application.get_env(:testor, :status_backoff, [1_000, 5_000])
       Task.Supervisor.start_child(Testor.TaskSupervisor, fn -> deliver(target, commit, run, backoff) end)

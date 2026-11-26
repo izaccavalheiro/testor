@@ -26,7 +26,8 @@ spec:
       metadata:
         serverAddress: {{ $a.prometheusServer }}
         query: sum(testor_jobs{status=~"queued|leased|running",{{ $sel }}}) or vector(0)
-        threshold: {{ $a.queuedPerAgent | quote }}
+        # Jobs per pod: one per slot.
+        threshold: {{ mul $a.queuedPerAgent (int $g.slots) | quote }}
     {{- end }}
 {{- else if eq $g.mode "job" }}
 ---
@@ -59,7 +60,8 @@ spec:
       metadata:
         serverAddress: {{ $a.prometheusServer }}
         query: sum(testor_jobs{status="queued",{{ $sel }}}) or vector(0)
-        threshold: {{ $a.queuedPerAgent | quote }}
+        # Jobs per pod: one per slot.
+        threshold: {{ mul $a.queuedPerAgent (int $g.slots) | quote }}
     {{- end }}
 {{- end }}
 {{- end }}

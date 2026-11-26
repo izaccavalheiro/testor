@@ -99,6 +99,7 @@ defmodule Testor.Web.OpenAPI do
               query("status", %{"enum" => Testor.Query.statuses()}),
               query("project", %{"type" => "string"}),
               query("kind", %{"type" => "string"}, "the task's name (test, lint, ...)"),
+              query("job", %{"type" => "string"}, "runs of this job"),
               query("q", %{"type" => "string"}, "substring of the project, kind or command"),
               query("before", %{"type" => "string"}, "the next page: the previous answer's `next`"),
               query("limit", %{"type" => "integer", "minimum" => 1, "maximum" => 500, "default" => 50})
@@ -139,7 +140,8 @@ defmodule Testor.Web.OpenAPI do
         "post" =>
           op(
             "jobs",
-            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref? or snapshot?, clean?}",
+            "Queue a job (scope execute; off until execution.enabled): {project, kind, labels?, ref? or snapshot?, " <>
+              "select?, workspace?, failFast?, cache?, clean?, argv? (scope exec)}",
             %{"type" => "object"}
           )
       },
@@ -276,6 +278,58 @@ defmodule Testor.Web.OpenAPI do
               "type" => "object"
             }
           )
+      },
+      "/runs/{id}/digest" => %{
+        "parameters" => [
+          %{"$ref" => "#/components/parameters/id"},
+          query("format", %{"enum" => ["json", "text"]}, "text: plain lines")
+        ],
+        "get" =>
+          op("runs", "Counts, each failure with its message, the project's first stack frames", %{
+            "type" => "object"
+          })
+      },
+      "/runs/{id}/streams" => %{
+        "parameters" => [
+          %{"$ref" => "#/components/parameters/id"},
+          query("offset", %{"type" => "integer"}, "from this byte")
+        ],
+        "get" => op("runs", "One character per log line: o (stdout) or e (stderr)", %{"type" => "string"})
+      },
+      "/watches" => %{
+        "post" =>
+          op("jobs", "Open a watch session {project, snapshot, labels?, workspace?} (scope execute)", %{
+            "type" => "object"
+          })
+      },
+      "/watches/{id}/changes" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" =>
+          op("jobs", "The working tree's new snapshot {snapshot} (scope execute)", %{"type" => "object"})
+      },
+      "/watches/{id}/heartbeat" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "post" => op("jobs", "Keep the session open (scope execute)", %{"type" => "object"})
+      },
+      "/watches/{id}" => %{
+        "parameters" => [%{"$ref" => "#/components/parameters/id"}],
+        "delete" => op("jobs", "End the session (scope execute)", %{"type" => "object"})
+      },
+      "/agent/jobs/{id}/changes" => %{
+        "parameters" => [
+          %{"$ref" => "#/components/parameters/id"},
+          query("after", %{"type" => "integer"}, "the last change seen"),
+          query("wait", %{"type" => "integer"}, "seconds to wait, 25 at most")
+        ],
+        "get" =>
+          op("agents", "A watch session's next snapshot: 200, or 204 (scope agent)", %{"type" => "object"})
+      },
+      "/agent/jobs/{id}/streams" => %{
+        "parameters" => [
+          %{"$ref" => "#/components/parameters/id"},
+          query("offset", %{"type" => "integer"}, "the size before")
+        ],
+        "post" => op("agents", "Append to the run's stream marks (scope agent)", %{"type" => "object"})
       },
       "/agent/lease" => %{
         "post" =>

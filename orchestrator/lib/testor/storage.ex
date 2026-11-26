@@ -102,6 +102,7 @@ defmodule Testor.Storage do
       [
         "runs/#{id}.json",
         "logs/#{id}.log",
+        "logs/#{id}.streams",
         "attestations/#{id}.dsse.json",
         "attestations/#{id}.agent.dsse.json"
       ] ++

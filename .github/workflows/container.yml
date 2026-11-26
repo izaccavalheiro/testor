@@ -13,7 +13,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "scripts/handoff-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -67,6 +67,9 @@ jobs:
 
       - name: Snapshots and incremental state (scripts/snapshot-e2e.sh)
         run: scripts/snapshot-e2e.sh testor:ci testor-agent:ci
+
+      - name: testor run, output and exit code unchanged (scripts/handoff-e2e.sh)
+        run: scripts/handoff-e2e.sh testor:ci testor-agent:ci
 
       - name: Two testors on one home and one PostgreSQL (scripts/cluster-e2e.sh)
         run: scripts/cluster-e2e.sh testor:ci testor-agent:ci
@@ -268,6 +271,10 @@ jobs:
             --set agents.autoscaling.keda=true --set 'agents.profiles[0].name=mutation-heavy' \
             --set 'agents.profiles[0].labels={linux,mutation}' --set 'agents.profiles[0].mode=job' > out/warm.yaml
           grep -q 'kind: StatefulSet' out/warm.yaml && grep -q 'volumeClaimTemplates' out/warm.yaml && grep -q 'kind: ScaledJob' out/warm.yaml
+          # Slots: agent.json's, and KEDA's threshold per pod.
+          helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t --set agents.slots=4 \
+            --set agents.autoscaling.keda=true > out/slots.yaml
+          grep -q '"slots": 4' out/slots.yaml && grep -q 'threshold: "4"' out/slots.yaml
           ! helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t --set 'agents.profiles[0].name=m' \
             --set 'agents.profiles[0].labels={linux}' --set 'agents.profiles[0].mode=job' \
             --set 'agents.profiles[0].persistence.enabled=true' > /dev/null 2>&1

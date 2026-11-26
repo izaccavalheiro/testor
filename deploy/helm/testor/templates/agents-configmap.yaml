@@ -10,6 +10,7 @@ data:
   agent.json: |
     {{- $config := dict "server" (include "testor.agentServer" $) "home" "/home/agent/testor" "upload" true "labels" $g.labels "projects" $.Values.agents.projects }}
     {{- with $.Values.agents.vault }}{{ $_ := set $config "vault" . }}{{ end }}
+    {{- if gt (int $g.slots) 1 }}{{ $_ := set $config "slots" (int $g.slots) }}{{ end }}
     {{- $config | toPrettyJson | nindent 4 }}
 {{- end }}
 {{- end }}

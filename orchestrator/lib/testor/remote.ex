@@ -57,13 +57,26 @@ defmodule Testor.Remote do
     max = Application.get_env(:testor, :remote_log_max, 256 * 1024 * 1024)
 
     with {:ok, run_id} <- bound_run(id, agent) do
-      append = if Storage.shared?(), do: &Storage.Shared.append/4, else: &append_local/4
+      append = if Storage.shared?(), do: &Storage.Shared.append/4, else: &append_log_local/4
       append.(run_id, offset, data, max)
     end
   end
 
-  defp append_local(run_id, offset, data, max) do
-    path = Config.log_file(run_id)
+  @doc """
+  Appends to the stream marks of job `id`'s run (`logs/<run>.streams`: `o` or `e` per log line,
+  how `testor run` replays stdout and stderr apart) at `offset`, as `append_log/4` does.
+  """
+  def append_streams(id, agent, offset, data) do
+    with {:ok, run_id} <- bound_run(id, agent),
+         true <- Regex.match?(~r/\A[oe]*\z/, data) || {:error, :malformed} do
+      append_local(Path.join(Config.logs_dir(), run_id <> ".streams"), offset, data, 64 * 1_048_576)
+    end
+  end
+
+  defp append_log_local(run_id, offset, data, max),
+    do: append_local(Config.log_file(run_id), offset, data, max)
+
+  defp append_local(path, offset, data, max) do
     size = Files.size(path)
 
     cond do
