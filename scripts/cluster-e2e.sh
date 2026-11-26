@@ -14,7 +14,8 @@ NET=testor-cluster-$$
 WORK=$(mktemp -d)
 PASS=cluster-password-1234
 PG_IMAGE=postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
-DB=postgres://testor:testor-db@db:5432/testor
+# A private network: no TLS between testor and its database here (verify-full elsewhere).
+DB="postgres://testor:testor-db@db:5432/testor?sslmode=disable"
 cleanup() {
   docker rm -f "$NET-a" "$NET-b" "$NET-db" "$NET-agent" >/dev/null 2>&1 || true
   docker volume rm "$NET-home" >/dev/null 2>&1 || true
@@ -36,7 +37,10 @@ start() {
   docker run -d --name "$NET-$1" --network "$NET" --network-alias "testor-$1" -p 127.0.0.1::6767 \
     -e TESTOR_ALLOWED_HOSTS="testor-a,testor-b" -e TESTOR_DATABASE_URL="$DB" -e TESTOR_INSTANCE="testor-$1" \
     -v "$NET-home:/data" --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "$TESTOR" >/dev/null
-  for _ in $(seq 1 30); do docker exec "$NET-$1" /app/bin/testor eval 'Testor.Probe.check()' >/dev/null 2>&1 && break; sleep 2; done
+  for _ in $(seq 1 30); do docker exec "$NET-$1" /app/bin/testor eval 'Testor.Probe.check()' >/dev/null 2>&1 && return 0; sleep 2; done
+  docker logs "$NET-$1" 2>&1 | tail -40
+  echo "FAIL: testor-$1 did not start"
+  exit 1
 }
 start a
 start b
