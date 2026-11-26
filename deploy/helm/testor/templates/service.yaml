@@ -8,3 +8,6 @@ spec:
   selector: {{- include "testor.selector" . | nindent 4 }}
   ports:
     - { name: http, port: {{ .Values.service.port }}, targetPort: http, protocol: TCP }
+    {{- if .Values.tls.acme.httpPort }}
+    - { name: acme-http, port: 80, targetPort: acme-http, protocol: TCP }
+    {{- end }}

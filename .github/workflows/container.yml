@@ -13,7 +13,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "deploy/helm/**", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -67,6 +67,12 @@ jobs:
 
       - name: Two testors on one home and one PostgreSQL (scripts/cluster-e2e.sh)
         run: scripts/cluster-e2e.sh testor:ci testor-agent:ci
+
+      - name: Certificates from ACME, issued and renewed by Pebble (scripts/acme-e2e.sh)
+        run: scripts/acme-e2e.sh testor:ci
+
+      - name: The Terraform module on kind (scripts/terraform-e2e.sh)
+        run: scripts/terraform-e2e.sh testor:ci
 
   # Tags: each image for each platform on a runner of that platform (native arm64, no QEMU),
   # checked there, pushed by digest with its provenance and SBOM; joined below.
@@ -230,6 +236,10 @@ jobs:
             --set agents.serviceAccount.create=true --set agents.serviceAccount.automountToken=true \
             --set 'agents.serviceAccount.annotations.iam\.gke\.io/gcp-service-account=ci@p.iam.gserviceaccount.com' \
             > out/agent-secrets.yaml
+          helm template t testor -n ci --set tls.acme.domains[0]=testor.example.com \
+            --set tls.acme.httpPort=8080 > out/acme.yaml
+          grep -q TESTOR_ACME out/acme.yaml && grep -q acme-http out/acme.yaml
+          ! helm template t testor -n ci --set tls.existingSecret=tls --set tls.acme.domains[0]=a.example.com > /dev/null 2>&1
           grep -q '"vault"' out/agent-secrets.yaml && grep -q 'serviceAccountName: t-testor-agent' out/agent-secrets.yaml
           docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
-            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml
+            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml /m/acme.yaml

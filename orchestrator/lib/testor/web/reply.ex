@@ -9,7 +9,7 @@ defmodule Testor.Web.Reply do
     conn
     |> put_resp_content_type("application/json")
     |> put_resp_header("cache-control", "no-store")
-    |> send_resp(status, JSON.encode!(data))
+    |> send_resp(status, data |> JSON.encode!() |> Testor.Auth.bind_links(conn.assigns[:principal]))
   end
 
   def error(conn, status, code, message) do

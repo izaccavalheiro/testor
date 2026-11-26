@@ -61,8 +61,10 @@ bin/testor eval 'Testor.Auth.CLI.enable false'        # off again, users kept
 
 Browsers load images, videos and reports without sending an `Authorization` header, so with
 authentication on, screenshot and artifact URLs carry a signature
-(`/s/<expiry>.<hmac>/shots/<run>/...`), valid one to two days and only for that run's files.
-They can be shared with someone who has no account, for that time.
+(`/s/v2.<expiry>.<viewer>.<hmac>/shots/<run>/...`): valid only for that run's files, for
+`linkMinutes` (auth.json, 15 by default), and only for the user it was made for. Another
+signed-in person gets `403`; a copied link stops working within minutes. The dashboard renews
+the links it shows before they expire.
 
 ## What else protects it
 

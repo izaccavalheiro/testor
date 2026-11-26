@@ -34,19 +34,22 @@ Two principles hold through every milestone:
 
 ## Next milestones
 
-Designs for the larger pieces are in [docs/design](docs/design/README.md).
+Designs for the larger pieces are in [docs/design](docs/design/README.md). One release per
+milestone:
 
-### 0.13: other backends
+| Release | Theme |
+| ------- | ----- |
+| **0.13.0** | Operability: a Terraform module over the Helm chart (published to ghcr.io, signed); certificates from ACME (Let's Encrypt) for the built-in TLS; file links bound to the viewer and minutes long |
+| 0.14.0 | Mutation testing, first class: Stryker-family reports (the mutation-testing-report schema) parsed, signed, gated and shown; caches kept between syncs |
+| 0.15.0 | Universal result formats: JUnit XML, CTRF, TAP and TRX into the spec table, flaky detection and gates; coverage summaries; hotspots |
+| 0.16.0 | Heavy jobs: per-task timeouts, commands as objects, cgroup-aware limits, a memory guard, agent profiles with a Kubernetes Job per run, a queue and per-run workspaces for SSH runs, a container executor |
+| 0.17.0 | Queue backends: SQS FIFO, then NATS JetStream |
+| 0.18.0 | Object storage as the main store: run files in S3 (no shared volume), the run index and live events in PostgreSQL, content-addressed snapshots, a shared incremental-state store |
+| 0.19.0 | Transparent handoff: `testor run -- <command>` with output and exit code unchanged, scoped jobs, a result cache, live sessions for watch mode, agent slots |
+| 0.20.0 | Sharding and impact analysis: batch jobs fanned out to shards and merged; which tests to run first for a change |
+| 0.21.0 | AI-era verification and zero-config: MCP tools to offload runs and mutation loops, a stack profiler, predictive sizing, spot-instance resilience |
 
-- [Storage, queue and event ports](docs/design/ports.md): S3-compatible object storage as the
-  primary store (no shared volume), RabbitMQ, NATS or SQS for jobs.
-- Signed links bound to the viewer and minutes long.
-
-### Later
-
-- Certificates from ACME (Let's Encrypt) for the built-in TLS; a Terraform module.
-- Impact analysis: which tests to run first for a change, from past failures.
-- A per-project queue for SSH runs too, and per-run workspaces for them.
+Each is additive, so 1.0.0 can follow 0.21.0 if the last two ship without a breaking change.
 
 ## 1.0: stable
 

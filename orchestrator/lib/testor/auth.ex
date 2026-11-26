@@ -27,15 +27,17 @@ defmodule Testor.Auth do
   request: removing the user, lowering the role or setting `tokensValidAfter` (see
   `Testor.Auth.CLI.revoke/1`) takes effect at once. Rotating the keys revokes every token.
 
-  Screenshots and artifacts are linked with a signed prefix (`/s/<expiry>.<mac>/...`) bound to
-  their run, valid for one to two days: images, videos and sandboxed HTML reports (which have
-  an opaque origin, so no credentials) load without a password, and a report can reach its own
-  run's files only.
+  Screenshots and artifacts are linked with a signed prefix (`/s/v2.<expiry>.<viewer>.<mac>/...`,
+  `Testor.Auth.Links`) bound to their run and to the person they were made for, valid for
+  `linkMinutes` (15 by default): images, videos and sandboxed HTML reports (which have an opaque
+  origin, so no credentials) load without a password, a report can reach its own run's files
+  only, and a copied link opens for no other signed-in person.
 
   `auth.json`:
 
       {"users": {"ada": {"password": "$pbkdf2-sha256$600000$...", "role": "admin"}},
-       "tokens": {"defaultTtlMinutes": 60, "maxTtlDays": 30, "algorithm": "EdDSA", "acceptHs256": true}}
+       "tokens": {"defaultTtlMinutes": 60, "maxTtlDays": 30, "algorithm": "EdDSA", "acceptHs256": true},
+       "linkMinutes": 15}
 
   `tokens.algorithm` is what new tokens are signed with: `EdDSA` (the default) or `HS256`;
   `tokens.acceptHs256: false` refuses HS256 tokens while `EdDSA` signs.
@@ -44,7 +46,7 @@ defmodule Testor.Auth do
   """
   require Logger
   alias Testor.Config
-  alias Testor.Auth.{Guard, JobTokens, JWT, OIDC, Password, TokenKeys}
+  alias Testor.Auth.{Guard, JobTokens, JWT, Links, OIDC, Password, TokenKeys}
 
   @roles %{
     "viewer" => ["read"],
@@ -190,7 +192,8 @@ defmodule Testor.Auth do
       algorithm: "EdDSA",
       accept_hs256: false,
       default_ttl: @default_ttl,
-      max_ttl: @max_ttl
+      max_ttl: @max_ttl,
+      link_ttl: Links.ttl(%{})
     }
   end
 
@@ -272,7 +275,8 @@ defmodule Testor.Auth do
       # Tokens issued before 0.8 are HS256: accepted until the next major version unless refused.
       accept_hs256: algorithm == "HS256" or tokens["acceptHs256"] != false,
       max_ttl: max_ttl,
-      default_ttl: min(seconds(tokens["defaultTtlMinutes"], 60, @default_ttl), max_ttl)
+      default_ttl: min(seconds(tokens["defaultTtlMinutes"], 60, @default_ttl), max_ttl),
+      link_ttl: Links.ttl(raw)
     }
   end
 
@@ -536,38 +540,12 @@ defmodule Testor.Auth do
 
   # --- signed file links ---------------------------------------------------------------------
 
-  @doc "The prefix of a run's screenshot and artifact links: `\"\"` while authentication is off."
-  def file_prefix(id, settings \\ settings(), now \\ System.system_time(:second))
+  @doc """
+  The prefix of a run's screenshot and artifact links in data: `"/s/~"` while authentication
+  is on, which `Testor.Auth.Links.bind/3` turns into a link for the viewer; `""` while it is off.
+  """
+  def file_prefix(_id, settings \\ settings()), do: Links.prefix(settings)
 
-  def file_prefix(id, %{enabled: true, key: key}, now) when is_binary(key) do
-    # The expiry is the end of tomorrow (UTC): every link made today is the same, so browsers
-    # cache the files, and a link lives one to two days.
-    expires = (div(now, 86_400) + 2) * 86_400
-    "/s/#{expires}." <> file_mac(key, id, expires)
-  end
-
-  def file_prefix(_id, _settings, _now), do: ""
-
-  @doc "Whether `cap` (from `file_prefix/3`) is a valid, unexpired link to run `id`'s files."
-  def file_cap_valid?(cap, id, settings \\ settings(), now \\ System.system_time(:second))
-
-  def file_cap_valid?(_cap, _id, %{enabled: false}, _now), do: true
-
-  def file_cap_valid?(cap, id, %{key: key}, now) when is_binary(key) and is_binary(cap) do
-    with [expires, mac] <- String.split(cap, ".", parts: 2),
-         {expires, ""} <- Integer.parse(expires),
-         true <- expires > now and expires <= now + 3 * 86_400 do
-      Plug.Crypto.secure_compare(file_mac(key, id, expires), mac)
-    else
-      _ -> false
-    end
-  end
-
-  def file_cap_valid?(_cap, _id, _settings, _now), do: false
-
-  defp file_mac(key, id, expires) do
-    :crypto.mac(:hmac, :sha256, key, "file\0#{id}\0#{expires}")
-    |> binary_part(0, 18)
-    |> Base.url_encode64(padding: false)
-  end
+  @doc "`body` with its file links bound to `principal` (`Testor.Auth.Links.bind/3`)."
+  def bind_links(body, principal, settings \\ settings()), do: Links.bind(body, principal, settings)
 end
