@@ -19,6 +19,9 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ### Fixed
 
+- The release caps the runtime's port table (`ERL_MAX_PORTS`, 65536 unless set): where the
+  open-files limit is near 2^30 (containerd, kind) it sized its tables from it and was killed
+  for memory under the chart's 1 GiB limit.
 - The Helm chart turns Kubernetes service links off: a release named `testor` made a Service
   whose variables (`TESTOR_PORT=tcp://...`) testor read as its own and failed to start.
 
