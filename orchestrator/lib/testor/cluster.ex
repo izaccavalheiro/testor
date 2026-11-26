@@ -42,6 +42,12 @@ defmodule Testor.Cluster do
 
   def get(kind, id), do: backend().get(kind, id)
 
+  @doc "Saves `doc` as `kind`/`id` unless there is one: whether it did (one testor wins)."
+  def put_new(kind, id, doc), do: backend().put_new(kind, id, doc)
+
+  @doc "Removes `kind`/`id`: whether it was there."
+  def delete(kind, id), do: backend().delete(kind, id)
+
   @doc "Every document of `kind`."
   def list(kind), do: backend().list(kind)
 

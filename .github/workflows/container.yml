@@ -13,7 +13,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -67,6 +67,9 @@ jobs:
 
       - name: Two testors on one home and one PostgreSQL (scripts/cluster-e2e.sh)
         run: scripts/cluster-e2e.sh testor:ci testor-agent:ci
+
+      - name: Two testors with no shared volume, runs in S3 (scripts/storage-e2e.sh)
+        run: scripts/storage-e2e.sh testor:ci testor-agent:ci
 
       - name: Certificates from ACME, issued and renewed by Pebble (scripts/acme-e2e.sh)
         run: scripts/acme-e2e.sh testor:ci
@@ -223,6 +226,17 @@ jobs:
             --set 'persistence.accessModes[0]=ReadWriteMany' > out/replicas.yaml
           grep -q 'replicas: 3' out/replicas.yaml && grep -q RollingUpdate out/replicas.yaml
           ! helm template t testor -n ci --set replicas=3 > /dev/null 2>&1
+          # Runs in a bucket: no shared volume, config.json from the chart, one set of keys.
+          helm template t testor -n ci --set database.existingSecret=db --set replicas=3 \
+            --set storage.s3.bucket=runs --set storage.s3.region=eu-west-1 --set storage.s3.existingSecret=s3 \
+            --set keys.existingSecret=keys --set persistence.enabled=false --set config.execution.enabled=true \
+            --set 'serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::1:role/testor' > out/storage.yaml
+          grep -q '"bucket": "runs"' out/storage.yaml && grep -q TESTOR_CONFIG_FILE out/storage.yaml
+          grep -q TESTOR_SIGNING_KEY out/storage.yaml && ! grep -q PersistentVolumeClaim out/storage.yaml
+          ! helm template t testor -n ci --set database.existingSecret=db --set replicas=3 \
+            --set storage.s3.bucket=runs --set storage.s3.region=r > /dev/null 2>&1
+          ! helm template t testor -n ci --set persistence.enabled=false > /dev/null 2>&1
+          ! helm template t testor -n ci --set storage.s3.bucket=runs > /dev/null 2>&1
           helm template t testor -n ci --set persistence.existingClaim=data \
             --set networkPolicy.enabled=false > out/claim.yaml
           helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \
@@ -251,4 +265,4 @@ jobs:
           ! helm template t testor -n ci --set tls.existingSecret=tls --set tls.acme.domains[0]=a.example.com > /dev/null 2>&1
           grep -q '"vault"' out/agent-secrets.yaml && grep -q 'serviceAccountName: t-testor-agent' out/agent-secrets.yaml
           docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
-            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject,ScaledJob /m/profiles.yaml /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml /m/acme.yaml
+            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject,ScaledJob /m/profiles.yaml /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml /m/acme.yaml /m/storage.yaml

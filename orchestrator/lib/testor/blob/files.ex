@@ -60,7 +60,7 @@ defmodule Testor.Blob.Files do
   def head(cfg, key) do
     with {:ok, path} <- path(cfg, key),
          {:file, size, _} <- Files.entry(path) do
-      {:ok, %{size: size}}
+      {:ok, %{size: size, sha256: nil}}
     else
       {:error, _} = error -> error
       _ -> :not_found

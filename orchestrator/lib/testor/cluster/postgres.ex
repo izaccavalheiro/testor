@@ -50,6 +50,24 @@ defmodule Testor.Cluster.Postgres do
     :ok
   end
 
+  def put_new(kind, id, doc) do
+    %{num_rows: rows} =
+      Postgrex.query!(
+        @pool,
+        "INSERT INTO testor_docs (kind, id, doc) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+        [kind, id, JSON.encode!(doc)]
+      )
+
+    rows == 1
+  end
+
+  def delete(kind, id) do
+    %{num_rows: rows} =
+      Postgrex.query!(@pool, "DELETE FROM testor_docs WHERE kind = $1 AND id = $2", [kind, id])
+
+    rows == 1
+  end
+
   def get(kind, id) do
     case Postgrex.query!(@pool, "SELECT doc FROM testor_docs WHERE kind = $1 AND id = $2", [kind, id]) do
       %{rows: [[doc]]} -> JSON.decode!(doc)

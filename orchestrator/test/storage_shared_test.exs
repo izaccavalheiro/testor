@@ -193,6 +193,34 @@ defmodule Testor.StorageSharedTest do
     Store.unindexed(id)
   end
 
+  test "agents' keys are pinned in PostgreSQL: one testor's pin holds on every other" do
+    key = fn ->
+      curve = {1, 2, 840, 10045, 3, 1, 7}
+      private = :public_key.generate_key({:namedCurve, curve})
+
+      spki =
+        :public_key.pem_entry_encode(
+          :SubjectPublicKeyInfo,
+          {{:ECPoint, elem(private, 4)}, {:namedCurve, curve}}
+        )
+
+      :public_key.pem_encode([spki])
+    end
+
+    agent = "pod-#{System.unique_integer([:positive])}"
+    {pem, other} = {key.(), key.()}
+    assert :ok = Testor.AgentKeys.pin(agent, pem)
+    assert :ok = Testor.AgentKeys.pin(agent, pem)
+    assert {:error, :mismatch} = Testor.AgentKeys.pin(agent, other)
+    assert %{^agent => %{"publicKey" => ^pem}} = Testor.AgentKeys.all()
+    assert Cluster.get("agent-key", agent)["agent"] == agent
+    refute Map.has_key?(Testor.AgentKeys.Local.all(), agent)
+    assert Testor.AgentKeys.forget(agent)
+    refute Testor.AgentKeys.forget(agent)
+    assert :ok = Testor.AgentKeys.pin(agent, other)
+    Testor.AgentKeys.forget(agent)
+  end
+
   test "a local run's log: a segment once enough has gathered; failures are logged" do
     id = run_id()
     {:ok, _} = Shared.put(remote_run(id, %{"remote" => nil, "origin" => Cluster.instance()}))

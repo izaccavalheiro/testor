@@ -26,6 +26,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- join "," (concat $hosts .Values.allowedHosts) -}}
 {{- end -}}
 
+{{/*
+config.json as the chart renders it: .Values.config, with storage.s3 as its "storage".
+*/}}
+{{- define "testor.config" -}}
+{{- $config := deepCopy .Values.config -}}
+{{- $s3 := .Values.storage.s3 -}}
+{{- if $s3.bucket -}}
+{{- if not $s3.region }}{{ fail "storage.s3.region: the bucket's region" }}{{ end -}}
+{{- $storage := dict "type" "s3" "bucket" $s3.bucket "region" $s3.region "pathStyle" $s3.pathStyle "presign" $s3.presign "cacheMB" (int $s3.cacheMB) -}}
+{{- range $key := list "endpoint" "prefix" "publicEndpoint" "encryption" "kmsKeyId" -}}
+{{- with index $s3 $key }}{{ $_ := set $storage $key . }}{{ end -}}
+{{- end -}}
+{{- $_ := set $config "storage" $storage -}}
+{{- end -}}
+{{- toPrettyJson $config -}}
+{{- end -}}
+
 {{- define "testor.scheme" -}}{{ if or .Values.tls.existingSecret .Values.tls.acme }}HTTPS{{ else }}HTTP{{ end }}{{- end -}}
 
 {{- define "testor.agentSelector" -}}

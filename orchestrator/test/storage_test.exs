@@ -97,6 +97,7 @@ defmodule Testor.StorageTest do
         do: assert(key in FakeS3.keys(), key)
 
     assert JSON.decode!(FakeS3.object("runs/#{id}.json").data)["stored"] == true
+    assert Testor.Query.compact(Store.get(id))["stored"] == true
     forget_files(id)
 
     snapshot = Views.run_snapshot(id)

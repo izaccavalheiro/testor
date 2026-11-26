@@ -114,6 +114,24 @@ defmodule Testor.AttestationTest do
     Store.cancel(running)
   end
 
+  test "TESTOR_SIGNING_KEY replaces the key file, for testors that share no volume" do
+    seed = :crypto.strong_rand_bytes(32)
+    System.put_env("TESTOR_SIGNING_KEY", Base.encode64(seed))
+    on_exit(fn -> System.delete_env("TESTOR_SIGNING_KEY") end)
+    {public, _} = :crypto.generate_key(:eddsa, :ed25519, seed)
+    assert Attestation.keypair() == {public, seed}
+
+    System.put_env("TESTOR_SIGNING_KEY", "short")
+    assert_raise RuntimeError, ~r/TESTOR_SIGNING_KEY is not a base64/, fn -> Attestation.keypair() end
+
+    # A key file that cannot be read is no key.
+    System.delete_env("TESTOR_SIGNING_KEY")
+    File.rm(Attestation.key_file())
+    File.mkdir_p!(Attestation.key_file())
+    assert_raise RuntimeError, ~r/is not a base64/, fn -> Attestation.keypair() end
+    File.rmdir!(Attestation.key_file())
+  end
+
   test "the public key in PEM round-trips, and its id is the SHA-256 of its DER" do
     {public, _} = Attestation.keypair()
     %{"publicKey" => pem, "keyid" => keyid, "algorithm" => "ed25519"} = Attestation.public_key()

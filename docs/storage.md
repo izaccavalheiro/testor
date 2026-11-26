@@ -104,6 +104,65 @@ in common. What each sees of the others' runs goes through PostgreSQL:
 
 Jobs, claims and approvals are already in PostgreSQL ([queues](queues.md)).
 
+## Moving a home into a bucket
+
+`Testor.Storage.CLI` copies a home's finished runs into the bucket config.json's `storage`
+names (and, with `TESTOR_DATABASE_URL`, into the run index), checks them there, and copies a
+bucket back into a home to leave S3:
+
+```sh
+bin/testor eval 'Testor.Storage.CLI.migrate()'                       # the home into the bucket
+bin/testor eval 'Testor.Storage.CLI.verify()'                        # every object and signature read again
+bin/testor eval 'Testor.Storage.CLI.export(~s[/srv/testor-home])'    # the bucket back to files
+bin/testor eval 'Testor.Storage.CLI.verify(only: [~s[20261126-101500-a1b2c3]])'
+```
+
+- `migrate` can be stopped and run again: an object the bucket holds with the same SHA-256 (or
+  the same size, where the bucket keeps no checksum) is not sent twice, and a run's record goes
+  last, with `"stored": true`. Running runs wait for the next time. It also sends the audit
+  trail's files, and copies the agents' pinned keys into PostgreSQL.
+- `verify` reads each stored run's attestation from the bucket, checks its signature with this
+  testor's key (`signing.key`, or `TESTOR_SIGNING_KEY`), then reads every object it signs and
+  compares its SHA-256; it names the runs whose files changed, went missing or are signed by
+  another key, and counts those never signed.
+- Each takes `only: [run ids]`.
+
+Then set `storage` in the config.json testor starts with, and restart it.
+
+## In Kubernetes
+
+The Helm chart's `storage.s3` writes the storage section into a config.json of its own (a
+ConfigMap, `TESTOR_CONFIG_FILE`, with `config` for the rest), and `persistence.enabled: false`
+makes the home an emptyDir. With `replicas` above 1 it needs `database.existingSecret` and
+`keys.existingSecret`, a Secret with the keys every replica signs and checks with:
+
+```sh
+kubectl create secret generic testor-keys \
+  --from-literal=token-key="$(head -c 32 /dev/urandom | base64)" \
+  --from-literal=signing-key="$(head -c 32 /dev/urandom | base64)" \
+  --from-literal=jwt-secret="$(head -c 48 /dev/urandom | base64)"
+helm install testor deploy/helm/testor --set replicas=3 --set database.existingSecret=testor-db \
+  --set storage.s3.bucket=acme-testor --set storage.s3.region=eu-west-1 \
+  --set keys.existingSecret=testor-keys --set persistence.enabled=false \
+  --set 'serviceAccount.annotations.eks\.amazonaws\.com/role-arn=arn:aws:iam::111122223333:role/testor'
+```
+
+`TESTOR_TOKEN_KEY` signs tokens and `TESTOR_JWT_SECRET` sessions, so either replica accepts
+what another issued; `TESTOR_SIGNING_KEY` signs attestations, so every replica checks every
+run's. Users come from the chart's admin user, on every pod, or from single sign-on; agents'
+pinned keys are kept in PostgreSQL. `scripts/storage-e2e.sh` runs two such testors in CI.
+
+The Terraform module (`deploy/terraform/testor`) takes the same as `storage_s3`, `keys_secret`,
+`service_account_annotations` and `persistence = { enabled = false }`, and checks them before
+apply.
+
+## Retention
+
+The janitor's history retention (`runs.maxRuns`, `runs.maxAgeDays`) deletes a run's objects
+by prefix, in batches of a thousand, and leaves those under Object Lock or a legal hold as the
+bucket keeps them. `screenshots` and `artifacts` limits apply to the home; in the bucket, keep
+them with lifecycle rules on the `screenshots/` and `artifacts/` prefixes.
+
 ## The bucket
 
 Keep it private and TLS only, for example (AWS):

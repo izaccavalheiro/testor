@@ -29,6 +29,9 @@ config :testor,
   # TESTOR_SECRETS_DIR: where auth.json and the keys live (unset: the data folder). Point it at
   # a folder the account that runs the tests cannot read.
   secrets_dir: System.get_env("TESTOR_SECRETS_DIR"),
+  # TESTOR_CONFIG_FILE: config.json somewhere else than the data folder (a ConfigMap, for
+  # testors whose home is not kept: docs/storage.md).
+  config_file: System.get_env("TESTOR_CONFIG_FILE"),
   workspaces: workspaces,
   ip: ip,
   port: String.to_integer(System.get_env("TESTOR_PORT", "6767")),
