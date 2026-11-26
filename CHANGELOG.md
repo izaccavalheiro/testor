@@ -7,6 +7,18 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Mutation testing, first class** ([docs/mutation.md](docs/mutation.md)): a run hands over
+  report files (`run.ps1 -Reports`, `REPORTS` in `remote.yml`, `reports` in `agent.json`);
+  testor reads the mutation-testing-report schema (StrykerJS, Stryker.NET, Stryker4s), or a
+  Stryker log's summary, into a signed `mutation` summary, shows the score, a table per file
+  and the surviving mutants, a live bar while it runs, and a `?metric=mutation` badge; release
+  gates take `minMutationScore` and `maxSurvivors`.
+- **Commands as objects** in `agent.json` (`command`, `reports`, `artifacts`, `preserve`), a
+  plain string still working; preserved caches survive isolated workspaces; `KEEP` takes
+  paths, `PRESERVE` and `CLEAN=1` in `remote.yml`, and `"clean": true` on a job.
+
 ## 0.12.2 - 2026-11-26
 
 ### Fixed

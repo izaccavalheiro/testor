@@ -111,7 +111,8 @@ Spans are sent once, in the background; a collector that cannot be reached is lo
 `GET /api/v1/projects/<project>/badge.svg?kind=` is the project's latest result (of `kind`
 when given) as an SVG badge, `Cache-Control: no-cache`. Scope `read`, unless `config.json`'s
 `publicBadges` lists the project: its badge then answers without credentials. See [badges and
-Backstage](../website/docs/features/badges-and-backstage.md).
+Backstage](../website/docs/features/badges-and-backstage.md). `?metric=mutation` shows the
+latest mutation score instead ([mutation testing](mutation.md)).
 
 ## DORA metrics
 
