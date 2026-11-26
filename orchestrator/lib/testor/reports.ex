@@ -7,6 +7,11 @@ defmodule Testor.Reports do
     * `mutation`: the open mutation-testing-report schema (StrykerJS, Stryker.NET, Stryker4s
       and others), read by `Testor.Reports.Mutation`. Without one, the log's summary of a
       Stryker run (its "Final mutation score") stands in, with the score and totals only.
+    * test results, `junit`, `trx`, `ctrf` and `tap` (`Testor.Reports.Tests`): a run with any
+      takes its spec table from them (several are merged), not from its log; the record says
+      which (`specsFrom`) and keeps the log's own summary when it differs (`logSummary`).
+    * coverage, `lcov`, `cobertura` and `istanbul` (`Testor.Reports.Coverage`): the record's
+      `coverage` (lines, branches, functions %), the files' rows beside it.
 
   A report is untrusted data: at most #{20} files of #{50} MB each, parsed in a task with a
   time limit; no path inside it is ever opened.
@@ -29,12 +34,19 @@ defmodule Testor.Reports do
   def dir(id), do: Path.join(Config.reports_dir(), id)
   def detail_file(id), do: Path.join(Config.reports_dir(), id <> ".mutation.json")
   def tests_file(id), do: Path.join(Config.reports_dir(), id <> ".tests.json")
+  def specs_file(id), do: Path.join(Config.reports_dir(), id <> ".specs.json")
+  def coverage_file(id), do: Path.join(Config.reports_dir(), id <> ".coverage.json")
+
+  @test_kinds ["junit", "trx", "ctrf", "tap"]
+  @coverage_kinds ["lcov", "cobertura", "istanbul"]
 
   @doc "Removes a run's reports and what was read from them."
   def delete(id) do
     File.rm_rf(dir(id))
     File.rm(detail_file(id))
     File.rm(tests_file(id))
+    File.rm(specs_file(id))
+    File.rm(coverage_file(id))
   end
 
   @doc "A run's report files: `[%{\"file\", \"kind\", \"bytes\"}]`, sorted, at most #{@max_files}."
@@ -53,9 +65,9 @@ defmodule Testor.Reports do
   end
 
   @doc """
-  What a report file is: `mutation` (a JSON object with `schemaVersion` and `files`, found in
-  its first or last 64 KB: tools write the keys in either order), or `file` for one testor
-  does not read.
+  What a report file is, from its first and last 64 KB (tools write JSON keys in any order):
+  `mutation`, `junit`, `trx`, `ctrf`, `tap`, `lcov`, `cobertura`, `istanbul`, or `file` for one
+  testor does not read.
   """
   def kind(path) do
     {head, tail} =
@@ -64,9 +76,20 @@ defmodule Testor.Reports do
         _ -> {"", ""}
       end
 
-    if String.contains?(head, "\"files\"") and String.contains?(head <> tail, "\"schemaVersion\""),
-      do: "mutation",
-      else: "file"
+    both = head <> tail
+    has = &String.contains?(both, &1)
+
+    cond do
+      has.("\"schemaVersion\"") and has.("\"files\"") -> "mutation"
+      has.("\"results\"") and has.("\"tests\"") and has.("\"tool\"") -> "ctrf"
+      has.("\"total\"") and has.("\"pct\"") -> "istanbul"
+      Regex.match?(~r/<testsuites?[\s>]/, head) -> "junit"
+      Regex.match?(~r/<TestRun[\s>]/, head) -> "trx"
+      Regex.match?(~r/<coverage[\s>]/, head) -> "cobertura"
+      Regex.match?(~r/^SF:/m, head) and has.("end_of_record") -> "lcov"
+      Regex.match?(~r/\A\s*(TAP version \d+|1\.\.\d+|(not )?ok\b)/, head) -> "tap"
+      true -> "file"
+    end
   end
 
   defp ends(io) do
@@ -86,35 +109,123 @@ defmodule Testor.Reports do
     mutation =
       case Enum.find(reports, &(&1["kind"] == "mutation")) do
         %{"file" => file, "bytes" => bytes} ->
-          if bytes <= max_bytes(), do: from_report(id, Path.join(dir(id), file))
+          if bytes <= max_bytes(), do: from_report(id, file)
 
         nil ->
           nil
       end || Mutation.from_log(log_tail || tail(id))
 
+    {specs, coverage} = {test_specs(id, reports), coverage(id, reports)}
+
     %{}
     |> put_if("reports", reports != [] && reports)
     |> put_if("mutation", mutation)
+    |> put_if("specsFrom", specs != [] && "reports")
+    |> put_if("coverage", coverage)
   end
 
-  defp from_report(id, path) do
-    task =
-      Task.Supervisor.async_nolink(Testor.TaskSupervisor, fn -> path |> File.read!() |> Mutation.parse() end)
+  # Every test report's rows, merged by file (a file in two reports adds up), cached.
+  defp test_specs(id, reports) do
+    rows =
+      for %{"kind" => kind, "file" => file, "bytes" => bytes} <- reports,
+          kind in @test_kinds,
+          bytes <= max_bytes(),
+          {:ok, rows} <- [read(id, file, &apply(Testor.Reports.Tests, String.to_existing_atom(kind), [&1]))],
+          row <- rows,
+          do: row
+
+    specs =
+      rows
+      |> Enum.group_by(& &1["file"])
+      |> Enum.map(fn {_file, [first | _] = same} -> merge(first, same) end)
+      |> Enum.sort_by(&{&1["status"] != "failed", &1["file"]})
+
+    if specs != [], do: Testor.Files.write_json(specs_file(id), %{"specs" => specs})
+    specs
+  end
+
+  defp merge(first, [_]), do: first
+
+  defp merge(first, same) do
+    sum = fn key -> same |> Enum.map(& &1[key]) |> Enum.sum() end
+    failed = sum.("failed")
+
+    %{
+      first
+      | "tests" => sum.("tests"),
+        "failed" => failed,
+        "skipped" => sum.("skipped"),
+        "durationMs" => sum.("durationMs"),
+        "retries" => sum.("retries"),
+        "cases" => same |> Enum.flat_map(& &1["cases"]) |> Enum.take(1000),
+        "status" => if(failed > 0, do: "failed", else: first["status"])
+    }
+  end
+
+  # The first coverage report's totals in the record, its files beside it.
+  defp coverage(id, reports) do
+    Enum.find_value(reports, fn
+      %{"kind" => kind, "file" => file, "bytes" => bytes} when kind in @coverage_kinds ->
+        if bytes <= max_bytes() do
+          case read(id, file, &apply(Testor.Reports.Coverage, String.to_existing_atom(kind), [&1])) do
+            {:ok, totals, files} ->
+              Testor.Files.write_json(coverage_file(id), %{"files" => files})
+              Map.put(totals, "source", kind)
+
+            _ ->
+              nil
+          end
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  # A report read in a task with a time limit; a failure is logged and is nil.
+  defp read(id, file, parse) do
+    path = Path.join(dir(id), file)
+    task = Task.Supervisor.async_nolink(Testor.TaskSupervisor, fn -> path |> File.read!() |> parse.() end)
 
     case Task.yield(task, Application.get_env(:testor, :report_parse_ms, @parse_ms)) ||
            Task.shutdown(task, :brutal_kill) do
-      {:ok, {:ok, summary, detail, tests}} ->
-        Testor.Files.write_json(detail_file(id), detail)
-        if tests != %{}, do: Testor.Files.write_json(tests_file(id), tests)
-        summary
-
       {:ok, {:error, reason}} ->
-        Logger.warning("reports: #{id}: #{Path.basename(path)} is not a mutation report (#{reason})")
+        Logger.warning("reports: #{id}: #{file} could not be read (#{reason})")
         nil
+
+      {:ok, result} ->
+        result
 
       other ->
-        Logger.warning("reports: #{id}: #{Path.basename(path)} could not be read in time (#{inspect(other)})")
+        Logger.warning("reports: #{id}: #{file} could not be read in time (#{inspect(other)})")
         nil
+    end
+  end
+
+  @doc """
+  A finished run's spec table: from its test reports when it had any (read when it ended),
+  else from its log.
+  """
+  def run_specs(id) do
+    case Testor.Files.read_json(specs_file(id)) do
+      {:ok, %{"specs" => specs}} when is_list(specs) -> specs
+      _ -> Testor.Files.log_specs(id)
+    end
+  end
+
+  @doc "The coverage of each file of a run, or nil."
+  def coverage_detail(id) do
+    case Testor.Files.read_json(coverage_file(id)) do
+      {:ok, %{"files" => files}} -> files
+      _ -> nil
+    end
+  end
+
+  defp from_report(id, file) do
+    with {:ok, summary, detail, tests} <- read(id, file, &Mutation.parse/1) do
+      Testor.Files.write_json(detail_file(id), detail)
+      if tests != %{}, do: Testor.Files.write_json(tests_file(id), tests)
+      summary
     end
   end
 

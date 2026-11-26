@@ -1,12 +1,15 @@
 {{- if .Values.agents.enabled }}
+{{- range $g := (include "testor.agentGroups" . | fromJsonArray) }}
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "testor.fullname" . }}-agent
-  labels: {{- include "testor.labels" . | nindent 4 }}
+  name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  labels: {{- include "testor.labels" $ | nindent 4 }}
 data:
   agent.json: |
-    {{- $config := dict "server" (include "testor.agentServer" .) "home" "/home/agent/testor" "upload" true "labels" .Values.agents.labels "projects" .Values.agents.projects }}
-    {{- with .Values.agents.vault }}{{ $_ := set $config "vault" . }}{{ end }}
+    {{- $config := dict "server" (include "testor.agentServer" $) "home" "/home/agent/testor" "upload" true "labels" $g.labels "projects" $.Values.agents.projects }}
+    {{- with $.Values.agents.vault }}{{ $_ := set $config "vault" . }}{{ end }}
     {{- $config | toPrettyJson | nindent 4 }}
+{{- end }}
 {{- end }}

@@ -7,7 +7,8 @@ defmodule Testor.Store do
   """
   use GenServer
   require Logger
-  alias Testor.{Config, Events, Files, OS, RunTracker, SpecParser, Stats}
+  alias Testor.{Config, Events, Files, OS, RunTracker, SpecParser, Stats, Storage}
+  alias Testor.Storage.Shared
 
   @table :testor_runs
   @live :testor_live
@@ -67,6 +68,12 @@ defmodule Testor.Store do
   @doc "Deletes a finished run: its record, log, screenshots and artifacts."
   def delete(id), do: GenServer.call(__MODULE__, {:delete, id}, 30_000)
 
+  @doc "A run as the index holds it at `version`, changed by another testor (`Testor.Storage.Shared`)."
+  def indexed(run, version), do: GenServer.cast(__MODULE__, {:indexed, run, version})
+
+  @doc "A run another testor removed."
+  def unindexed(id), do: GenServer.cast(__MODULE__, {:unindexed, id})
+
   # --- server --------------------------------------------------------------------------------
 
   @impl true
@@ -85,7 +92,10 @@ defmodule Testor.Store do
       &File.mkdir_p!/1
     )
 
-    state = scan(%{sigs: %{}})
+    # Without a shared volume, the runs are the index's (Testor.Storage.Shared), local ones added.
+    state = %{sigs: %{}, versions: %{}}
+    state = if Storage.shared?(), do: Enum.reduce(Shared.all(), state, &index_run(&2, &1, 0)), else: state
+    state = scan(state)
     Logger.info("store: #{map_size(state.sigs)} runs in #{Config.runs_dir()}")
     Process.send_after(self(), :scan, @scan_ms)
     {:ok, state}
@@ -105,6 +115,11 @@ defmodule Testor.Store do
     Process.send_after(self(), :scan, @scan_ms)
     {:noreply, state}
   end
+
+  @impl true
+  def handle_cast({:indexed, run, version}, state), do: {:noreply, index_run(state, run, version)}
+
+  def handle_cast({:unindexed, id}, state), do: {:noreply, forget(state, id)}
 
   @impl true
   def handle_call({:refresh, id}, _from, state) do
@@ -170,6 +185,8 @@ defmodule Testor.Store do
         File.rm_rf(Path.join(Config.shots_dir(), id))
         File.rm_rf(Path.join(Config.artifacts_dir(), id))
         Testor.Reports.delete(id)
+        Storage.delete(id)
+        if Storage.shared?(), do: Shared.delete(id)
         {:reply, :ok, forget(state, id)}
     end
   end
@@ -210,11 +227,12 @@ defmodule Testor.Store do
     on_disk = MapSet.new(ids)
 
     # What the table holds, not only what was signed: a scan that failed halfway may have
-    # stored a run without its signature.
+    # stored a run without its signature. A run the index holds (Testor.Storage.Shared) need not
+    # be in this home: the index removes it.
     state =
       all()
       |> Enum.map(& &1["id"])
-      |> Enum.reject(&MapSet.member?(on_disk, &1))
+      |> Enum.reject(&(MapSet.member?(on_disk, &1) or Map.has_key?(state.versions, &1)))
       |> Enum.reduce(state, &forget(&2, &1))
 
     # Finished runs never change on disk again (only this process writes them), so only new
@@ -248,10 +266,25 @@ defmodule Testor.Store do
     end
   end
 
+  # A run from the index, newer than the version this testor has of it (0: any).
+  defp index_run(state, run, version) do
+    id = run["id"]
+
+    if version == 0 or version > Map.get(state.versions, id, 0) do
+      state = %{state | versions: Map.put(state.versions, id, version)}
+      apply_run(state, id, nil, run)
+    else
+      state
+    end
+  end
+
+  # `sig` is the local record's (nil: the run came from the index).
   defp apply_run(state, id, sig, run) do
     prev = get(id)
     run = keep_annotations(run, prev)
-    state = %{state | sigs: Map.put(state.sigs, id, sig)}
+    shared = sig != nil and Storage.shared?()
+    run = if shared, do: Map.put_new(run, "origin", Testor.Cluster.instance()), else: run
+    state = if sig, do: %{state | sigs: Map.put(state.sigs, id, sig)}, else: state
 
     finalizing = run["status"] != "running" and not Map.has_key?(run, "summary")
     {state, run} = if finalizing, do: finalize(state, run), else: {state, run}
@@ -259,13 +292,19 @@ defmodule Testor.Store do
     # Every run is finalized once, however it was seen: also one that started and ended between
     # two scans, which is never seen running. Signed once it is in the table.
     if finalizing, do: finished(id)
+    # The others see a local run while it runs, and once it is stored (Testor.Storage.publish).
+    indexed? = shared and (run["status"] == "running" or run["stored"] == true)
+    state = if indexed?, do: %{state | versions: Shared.put_version(state.versions, run)}, else: state
 
     cond do
       prev == nil and run["status"] == "running" ->
         on_start(run)
 
+      # One another testor finished: its files may have to be fetched first, not in this process.
       prev != nil and prev["status"] == "running" and run["status"] != "running" ->
-        on_finish(run)
+        if sig,
+          do: on_finish(run),
+          else: Task.Supervisor.start_child(Testor.TaskSupervisor, fn -> on_finish(run) end)
 
       prev != run ->
         Events.broadcast("global", "run", with_live(run))
@@ -332,7 +371,8 @@ defmodule Testor.Store do
 
   defp on_finish(run) do
     id = run["id"]
-    specs = Files.log_specs(id)
+    Storage.local(id)
+    specs = Testor.Reports.run_specs(id)
     shots = Files.screenshots(id, specs)
     artifacts = Files.artifacts(id)
     Logger.info("store: #{id} #{run["status"]} in #{run["durationMs"]} ms")
@@ -345,6 +385,11 @@ defmodule Testor.Store do
     if artifacts != [], do: Stats.refresh_artifacts()
   end
 
+  defp compact_spec(spec) do
+    base = %{"file" => spec["file"], "status" => spec["status"], "durationMs" => spec["durationMs"] || 0}
+    if (spec["retries"] || 0) > 0, do: Map.put(base, "retries", spec["retries"]), else: base
+  end
+
   @doc false
   def with_shot_counts(specs, shots) do
     Enum.map(specs, fn spec ->
@@ -355,16 +400,28 @@ defmodule Testor.Store do
   # Adds the spec summary (and the screenshot count, for records without one) and saves it.
   defp finalize(state, run) do
     id = run["id"]
-    specs = Files.log_specs(id)
+    # Its log and reports may be in the bucket only, sent through other testors.
+    Storage.gather(id, :finish)
+    # What its report files say first (Testor.Reports): test results, which then are its spec
+    # table, a mutation score, coverage. Without test reports, the specs its log printed.
+    reports = Testor.Reports.summarize(id)
+    log_specs = Files.log_specs(id)
+    specs = if reports["specsFrom"], do: Testor.Reports.run_specs(id), else: log_specs
+    log_summary = SpecParser.summary(log_specs)
 
-    # Each spec file's outcome is kept with the record: flaky specs are found across runs
-    # (Testor.Query.flaky/2) without reading every log again.
-    # And what its report files (or its log's summary) say: a mutation score (Testor.Reports).
+    # Each spec file's outcome (and time, retries) is kept with the record: flaky specs and
+    # hotspots are found across runs (Testor.Query) without reading every log again.
     run =
       run
       |> Map.put("summary", SpecParser.summary(specs))
-      |> Map.put("specs", Enum.map(specs, &%{"file" => &1["file"], "status" => &1["status"]}))
-      |> Map.merge(Testor.Reports.summarize(id))
+      |> Map.put("specs", Enum.map(specs, &compact_spec/1))
+      |> Map.merge(reports)
+      |> then(
+        &if(reports["specsFrom"] && log_summary["specs"] > 0 && log_summary != &1["summary"],
+          do: Map.put(&1, "logSummary", log_summary),
+          else: &1
+        )
+      )
 
     run =
       Map.put_new_lazy(run, "screenshots", fn ->

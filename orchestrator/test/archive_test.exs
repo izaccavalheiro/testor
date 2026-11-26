@@ -48,7 +48,7 @@ defmodule Testor.ArchiveTest do
   import ExUnit.CaptureLog
   import Testor.Test.Helpers
   alias Testor.{Archive, Config, Store}
-  alias Testor.Archive.SigV4
+  alias Testor.Aws.SigV4
 
   setup do
     pid = start_supervised!({Bandit, plug: Testor.ArchiveTest.S3, ip: :loopback, port: 0, startup_log: false})
@@ -66,7 +66,7 @@ defmodule Testor.ArchiveTest do
             ~w(AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_ROLE_ARN AWS_WEB_IDENTITY_TOKEN_FILE AWS_STS_ENDPOINT),
           do: System.delete_env(var)
 
-      Archive.reset()
+      Testor.Aws.reset()
       Application.delete_env(:testor, :s3_test)
       Application.delete_env(:testor, :s3_status)
       Application.delete_env(:testor, :archive_backoff)
@@ -210,7 +210,7 @@ defmodule Testor.ArchiveTest do
 
     file = Path.join(Config.data_dir(), "archive-me.txt")
     File.write!(file, "x")
-    {:ok, creds} = Archive.credentials("r")
+    {:ok, creds} = Testor.Aws.credentials("r")
 
     assert_receive {:sts,
                     %{"RoleArn" => "arn:aws:iam::1:role/testor", "WebIdentityToken" => "eyJ.web.identity"}}
@@ -218,9 +218,9 @@ defmodule Testor.ArchiveTest do
     assert %{key: "ASIAWEB", token: "websession"} = creds
 
     # A host of its own for the bucket: 127.0.0.1 has none, so the request fails, signed as such.
-    assert {:error, "failed" <> _} = Archive.put(config, creds, "k", file)
+    assert {:error, "failed" <> _} = Testor.Blob.S3.put(config, "k", {:file, file})
     # Cached: STS is not asked again.
-    assert {:ok, ^creds} = Archive.credentials("r")
+    assert {:ok, ^creds} = Testor.Aws.credentials("r")
     refute_receive {:sts, _}, 100
   end
 
@@ -268,11 +268,11 @@ defmodule Testor.ArchiveTest do
     System.put_env("AWS_WEB_IDENTITY_TOKEN_FILE", token)
 
     System.put_env("AWS_STS_ENDPOINT", endpoint <> "/nope")
-    assert {:error, "STS answered 404"} = Archive.credentials("r")
+    assert {:error, "STS answered 404"} = Testor.Aws.credentials("r")
     System.put_env("AWS_STS_ENDPOINT", "http://127.0.0.1:1")
-    assert {:error, "STS cannot be reached" <> _} = Archive.credentials("r")
+    assert {:error, "STS cannot be reached" <> _} = Testor.Aws.credentials("r")
     System.put_env("AWS_STS_ENDPOINT", endpoint <> "/sts-empty")
-    assert {:error, "STS's answer holds no credentials"} = Archive.credentials("r")
+    assert {:error, "STS's answer holds no credentials"} = Testor.Aws.credentials("r")
   end
 
   test "configuration" do

@@ -13,10 +13,12 @@ spec:
       ports:
         - { port: http, protocol: TCP }
     {{- if .Values.agents.enabled }}
-    # This release's agents.
+    # This release's agents, and its agent profiles'.
     - from:
         - podSelector:
             matchLabels: {{- include "testor.agentSelector" . | nindent 14 }}
+        - podSelector:
+            matchLabels: {{- include "testor.agentProfileSelector" . | nindent 14 }}
       ports:
         - { port: http, protocol: TCP }
     {{- end }}

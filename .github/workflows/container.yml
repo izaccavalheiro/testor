@@ -230,6 +230,15 @@ jobs:
             --set agents.serviceAccount.create=true --set agents.serviceAccount.automountToken=true \
             --set 'agents.serviceAccount.annotations.iam\.gke\.io/gcp-service-account=ci@p.iam.gserviceaccount.com' \
             > out/agent-secrets.yaml
+          helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \
+            --set agents.projects.web.commands.test=test \
+            --set 'agents.profiles[0].name=e2e-browser' --set 'agents.profiles[0].labels={linux,browser}' \
+            --set 'agents.profiles[0].shmSize=1Gi' --set 'agents.profiles[0].autoscaling.keda=true' \
+            --set 'agents.profiles[1].name=mutation-heavy' --set 'agents.profiles[1].labels={linux,mutation}' \
+            --set 'agents.profiles[1].mode=job' --set 'agents.profiles[1].workspaceSizeLimit=20Gi' > out/profiles.yaml
+          grep -q 'name: t-testor-agent-e2e-browser' out/profiles.yaml && grep -q 'kind: ScaledJob' out/profiles.yaml
+          grep -q 'label="browser"' out/profiles.yaml && grep -q 'label="mutation"' out/profiles.yaml && grep -q 'medium: Memory' out/profiles.yaml
+          ! helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t --set 'agents.profiles[0].name=Bad_Name' > /dev/null 2>&1
           grep -q '"vault"' out/agent-secrets.yaml && grep -q 'serviceAccountName: t-testor-agent' out/agent-secrets.yaml
           docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
-            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml
+            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject,ScaledJob /m/profiles.yaml /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml

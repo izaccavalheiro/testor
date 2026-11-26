@@ -26,6 +26,9 @@ defmodule Testor.Application do
       if(Testor.Jobs.Postgres.enabled?(), do: [Testor.Jobs.Postgres], else: []) ++
       [
         Testor.Cluster,
+        # Where runs are kept (the home, or a bucket), before the store that reads them.
+        Testor.Storage,
+        Testor.Storage.Shared,
         Testor.Store,
         Testor.Jobs,
         Testor.Schedules,

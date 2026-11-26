@@ -206,6 +206,64 @@ try {
   $badge = Invoke-WebRequest "$base/api/v1/projects/demo/badge.svg?metric=mutation"
   Check "mutation: a score badge" ($badge.Content -match "50\.0%")
 
+  # A Jest run with jest-junit: its spec table comes from the report, not the log.
+  & "$testorHome/run.ps1" -Project demo -Kind jest -Reports "junit.xml" -Body {
+    Set-Content -LiteralPath junit.xml -Value ('<testsuites><testsuite name="sum"><testcase classname="sum" name="adds" time="0.01" file="src/sum.test.js"/>' +
+      '<testcase classname="sum" name="fails" time="0.02" file="src/sum.test.js"><failure message="no"/></testcase></testsuite></testsuites>')
+    "Tests: 1 failed, 1 passed, 2 total"
+  } | Out-Null
+  $deadline = (Get-Date).AddSeconds(20)
+  do {
+    Start-Sleep -Milliseconds 500
+    $jest = @((Invoke-RestMethod "$base/api/state").history) | Where-Object kind -eq "jest" | Select-Object -First 1
+  } until (($jest -and $jest.specsFrom) -or (Get-Date) -gt $deadline)
+  Check "junit: the spec table from the report" ($jest.specsFrom -eq "reports" -and $jest.summary.tests -eq 2 -and $jest.summary.failed -eq 1) "($($jest.summary | ConvertTo-Json -Compress))"
+  $exported = Invoke-WebRequest "$base/api/v1/runs/$($jest.id)/report.junit.xml"
+  Check "junit: exported again" ($exported.Content -match 'testcase name="fails"')
+
+  # A run past its timeout: its tree ended, recorded failed with reason timeout.
+  $t0 = Get-Date
+  $timedOut = $false
+  try {
+    & "$testorHome/run.ps1" -Project demo -Kind hang -TimeoutSeconds 3 -Body { pwsh -NoProfile -Command "Start-Sleep 60" } 2>$null | Out-Null
+  } catch { $timedOut = $true }
+  $hangSeconds = ((Get-Date) - $t0).TotalSeconds
+  $deadline = (Get-Date).AddSeconds(15)
+  do {
+    Start-Sleep -Milliseconds 500
+    $hang = @((Invoke-RestMethod "$base/api/state").history) | Where-Object kind -eq "hang" | Select-Object -First 1
+  } until ($hang -or (Get-Date) -gt $deadline)
+  Check "timeout: the run ends at its timeout" ($hangSeconds -lt 30 -and ($timedOut -or $LASTEXITCODE)) "($([math]::Round($hangSeconds)) s)"
+  Check "timeout: recorded failed, reason timeout" ($hang.status -eq "failed" -and $hang.reason -eq "timeout") "($($hang.status) $($hang.reason))"
+
+  # The memory guard ends a run that takes more than its share, before the system does.
+  $total = [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes
+  $grab = [long][math]::Min($total * 0.04, 3GB)
+  if ($total * 0.02 -lt 2.5GB) {
+    try {
+      & "$testorHome/run.ps1" -Project demo -Kind greedy -MemoryGuard "1,2" -TimeoutSeconds 60 -Body {
+        pwsh -NoProfile -Command "`$a = [byte[]]::new($grab); [Array]::Fill(`$a, [byte]1); Start-Sleep 50"
+      } 2>$null | Out-Null
+    } catch { }
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+      Start-Sleep -Milliseconds 500
+      $greedy = @((Invoke-RestMethod "$base/api/state").history) | Where-Object kind -eq "greedy" | Select-Object -First 1
+    } until ($greedy -or (Get-Date) -gt $deadline)
+    Check "memory guard: the run is ended, reason memory" ($greedy.status -eq "failed" -and $greedy.reason -eq "memory") "($($greedy.status) $($greedy.reason) $($greedy.error))"
+  } else { "skip  memory guard: this machine has too much memory for the check" }
+
+  # TESTOR_LOCK (remote.yml's SSH runs): a second run of the project waits for the first.
+  $bg = if ($IsWindows) { @{ WindowStyle = "Hidden" } } else { @{ RedirectStandardOutput = (Join-Path $work "lock.out"); RedirectStandardError = (Join-Path $work "lock.err") } }
+  $lockWait = Start-Process pwsh -PassThru @bg -ArgumentList "-NoProfile", "-Command", "`$env:TESTOR_LOCK = '1'; & '$testorHome/run.ps1' -Project locked -Kind first -Body { Start-Sleep 6 }"
+  Start-Sleep -Seconds 2
+  $env:TESTOR_LOCK = "1"
+  $t0 = Get-Date
+  & "$testorHome/run.ps1" -Project locked -Kind second -Body { "quick" } 3>$null 2>$null | Out-Null
+  $env:TESTOR_LOCK = $null
+  $lockWait.WaitForExit()
+  Check "lock: a second run of the project waits for the first" (((Get-Date) - $t0).TotalSeconds -ge 3)
+
   # Cancelling kills the run's whole process tree, on every OS.
   $hidden = if ($IsWindows) { @{ WindowStyle = "Hidden" } } else { @{} }
   $slowErr = Join-Path $work "slow.err"

@@ -19,7 +19,8 @@ defmodule Testor.Gates do
       testor received it);
     * with `maxAgeHours`, it ended within that time;
     * with `minMutationScore` (a percentage) and `maxSurvivors`, its signed mutation summary
-      (`Testor.Reports`) reaches that score and leaves at most that many mutants alive.
+      (`Testor.Reports`) reaches that score and leaves at most that many mutants alive;
+    * with `minCoverage` (a percentage), its signed coverage summary covers that share of lines.
 
   The answer is `pass` and the reason of each check that fails, for a pipeline to stop on, or
   for a policy engine (OPA) to take as its input.
@@ -118,11 +119,26 @@ defmodule Testor.Gates do
 
       true ->
         case attested(run, commit) do
-          {:ok, signed} -> agent_signed(gate, run) || mutation(gate, signed["mutation"])
-          reason -> reason
+          {:ok, signed} ->
+            agent_signed(gate, run) || mutation(gate, signed["mutation"]) ||
+              coverage(gate, signed["coverage"])
+
+          reason ->
+            reason
         end
     end
   end
+
+  # The coverage threshold (lines), checked on the signed record's summary.
+  defp coverage(%{"minCoverage" => min}, summary) when is_number(min) do
+    lines = summary["lines"]
+
+    if is_number(lines) and lines >= min,
+      do: nil,
+      else: "its line coverage #{if is_number(lines), do: "#{lines}%", else: "(none)"} is below #{min}%"
+  end
+
+  defp coverage(_gate, _summary), do: nil
 
   # The mutation thresholds, checked on the signed record's summary.
   defp mutation(gate, summary) do
@@ -160,6 +176,7 @@ defmodule Testor.Gates do
   # {:ok, signed record} when testor's attestation holds and signs this run, passed, at this commit.
   defp attested(run, commit) do
     {public, _} = Attestation.keypair()
+    Testor.Storage.local(run["id"])
 
     with {:ok, text} <- File.read(Attestation.file(run["id"])),
          {:ok, envelope} <- JSON.decode(text),
@@ -207,6 +224,9 @@ defmodule Testor.Gates do
       raw["maxSurvivors"] != nil and not (is_integer(raw["maxSurvivors"]) and raw["maxSurvivors"] >= 0) ->
         {:error, "maxSurvivors is a number of mutants, 0 or more"}
 
+      raw["minCoverage"] != nil and not percentage?(raw["minCoverage"]) ->
+        {:error, "minCoverage is a percentage of lines, 0 to 100"}
+
       true ->
         {:ok,
          Map.take(raw, [
@@ -215,7 +235,8 @@ defmodule Testor.Gates do
            "requireAgentSignature",
            "maxAgeHours",
            "minMutationScore",
-           "maxSurvivors"
+           "maxSurvivors",
+           "minCoverage"
          ])}
     end
   end

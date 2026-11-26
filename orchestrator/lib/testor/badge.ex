@@ -8,7 +8,8 @@ defmodule Testor.Badge do
   public repository's CI badge does. It shows one word (passed, failed...), nothing else.
 
   `?metric=mutation` shows the latest mutation score instead (`87.5%`, of the latest run that
-  has one): green from 80, orange from 60, red below.
+  has one), `?metric=coverage` the latest line coverage: green from 80, orange from 60, red
+  below.
   """
   alias Testor.{Config, Store}
 
@@ -31,11 +32,13 @@ defmodule Testor.Badge do
   @doc "The badge of `project`'s latest run (of `kind` when given), or its mutation score."
   def svg(project, kind, metric \\ nil)
 
-  def svg(project, kind, "mutation") do
+  def svg(project, kind, metric) when metric in ["mutation", "coverage"] do
+    path = if metric == "mutation", do: ["mutation", "score"], else: ["coverage", "lines"]
+
     score =
       Enum.find_value(Store.all(), fn run ->
         run["project"] == project and (kind == nil or run["kind"] == kind) and
-          get_in(run, ["mutation", "score"])
+          get_in(run, path)
       end)
 
     {message, color} =
@@ -46,7 +49,7 @@ defmodule Testor.Badge do
         true -> {"#{score}%", "#c62828"}
       end
 
-    render("mutation", message, color)
+    render(metric, message, color)
   end
 
   def svg(project, kind, _metric) do

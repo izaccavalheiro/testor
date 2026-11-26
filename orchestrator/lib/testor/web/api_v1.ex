@@ -113,9 +113,18 @@ defmodule Testor.Web.ApiV1 do
   end
 
   # ?by=agent: the attestation the agent that ran it signed (runs from other machines).
+  get "/runs/:id/report.junit.xml" do
+    export(conn, id, "application/xml", &Testor.Reports.Export.junit/2)
+  end
+
+  get "/runs/:id/report.ctrf.json" do
+    export(conn, id, "application/json", &(&1 |> Testor.Reports.Export.ctrf(&2) |> JSON.encode!()))
+  end
+
   get "/runs/:id/attestation" do
     with_id(conn, id, fn conn ->
       conn = fetch_query_params(conn)
+      Testor.Storage.local(id)
 
       file =
         if conn.query_params["by"] == "agent", do: Remote.agent_file(id), else: Testor.Attestation.file(id)
@@ -133,6 +142,13 @@ defmodule Testor.Web.ApiV1 do
           )
       end
     end)
+  end
+
+  # The spec files that fail, take and retry most (Testor.Query.hotspots/3).
+  get "/projects/:project/hotspots" do
+    conn = fetch_query_params(conn)
+    limit = int(conn.query_params["limit"], 200, 1, 1000)
+    json(conn, 200, %{"data" => Query.hotspots(project, conn.query_params["kind"], limit)})
   end
 
   get "/projects/:project/flaky" do
@@ -397,6 +413,11 @@ defmodule Testor.Web.ApiV1 do
         {:error, :disabled} ->
           error(conn, 403, "execution_disabled", "jobs are off: set execution.enabled in config.json")
 
+        {:error, :queue_unavailable} ->
+          conn
+          |> put_resp_header("retry-after", "10")
+          |> error(503, "queue_unavailable", "the job queue's broker did not take the job; try again")
+
         {:error, message} ->
           error(conn, 400, "bad_request", message)
       end
@@ -592,6 +613,27 @@ defmodule Testor.Web.ApiV1 do
     end
   end
 
+  # A finished run's spec table as a report for another tool (Testor.Reports.Export).
+  defp export(conn, id, type, render) do
+    with_id(conn, id, fn conn ->
+      case Testor.Store.get(id) do
+        nil ->
+          error(conn, 404, "not_found", "no such run")
+
+        run ->
+          Testor.Storage.local(id)
+
+          conn
+          |> put_resp_content_type(type)
+          |> put_resp_header(
+            "content-disposition",
+            ~s(attachment; filename="#{id}.#{if type =~ "xml", do: "junit.xml", else: "ctrf.json"}")
+          )
+          |> send_resp(200, render.(run, Testor.Reports.run_specs(id)))
+      end
+    end)
+  end
+
   defp remote_reply({:ok, data}, conn), do: json(conn, 200, data)
 
   defp remote_reply({:error, :final}, conn),
@@ -622,6 +664,13 @@ defmodule Testor.Web.ApiV1 do
   defp remote_reply({:error, reason}, conn)
        when reason in [:bad_run_id, :bad_status, :bad_path, :not_an_image, :malformed, :not_this_run],
        do: error(conn, 400, "bad_request", "not accepted: #{reason}")
+
+  # The bucket refused or could not be reached (Testor.Storage): the agent sends it again.
+  defp remote_reply({:error, why}, conn) when is_binary(why) do
+    conn
+    |> put_resp_header("retry-after", "5")
+    |> error(503, "storage_unavailable", "the run's files cannot be stored now: try again")
+  end
 
   defp remote_reply(error, conn), do: agent_reply(error, conn)
 

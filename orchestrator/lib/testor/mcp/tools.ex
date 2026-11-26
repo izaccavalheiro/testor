@@ -107,6 +107,23 @@ defmodule Testor.MCP.Tools do
       "scope" => "read"
     },
     %{
+      "name" => "find_hotspots",
+      "title" => "Costly spec files",
+      "description" =>
+        "The spec files of a project that failed, took and were retried most over its recent runs " <>
+          "(the last 200 by default): where test time and flakiness go.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "project" => %{"type" => "string", "description" => "the project (snapshot folder) name"},
+          "kind" => %{"type" => "string", "description" => "only runs of this task (test, e2e, ...)"},
+          "limit" => %{"type" => "integer", "description" => "how many recent runs (1 to 1000)"}
+        },
+        "required" => ["project"]
+      },
+      "scope" => "read"
+    },
+    %{
       "name" => "get_device",
       "title" => "Runner device stats",
       "description" =>
@@ -202,6 +219,9 @@ defmodule Testor.MCP.Tools do
 
       name == "find_flaky_specs" and not Access.allowed?(principal, args["project"]) ->
         {:ok, %{"flaky" => []}}
+
+      name == "find_hotspots" and not Access.allowed?(principal, args["project"]) ->
+        {:ok, %{"mostFailing" => [], "slowest" => [], "mostRetried" => [], "runs" => 0}}
 
       true ->
         :ok
@@ -335,6 +355,14 @@ defmodule Testor.MCP.Tools do
 
   defp run(_args, "list_projects", _base, principal),
     do: {:ok, %{"projects" => Access.filter(Query.projects(), principal)}}
+
+  defp run(args, "find_hotspots", _base, _principal) do
+    with true <- is_binary(args["project"]) || {:error, "project is required"},
+         {:ok, kind} <- optional(args, "kind", &is_binary/1),
+         {:ok, limit} <- optional(args, "limit", &(is_integer(&1) and &1 in 1..1000)) do
+      {:ok, Query.hotspots(args["project"], kind, limit || 200)}
+    end
+  end
 
   defp run(args, "find_flaky_specs", _base, _principal) do
     case {args["project"], optional(args, "kind", &is_binary/1)} do

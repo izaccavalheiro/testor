@@ -19,7 +19,10 @@ defmodule Testor.Views do
         "elixir" => System.version(),
         "otp" => System.otp_release(),
         "uptimeMs" => :erlang.statistics(:wall_clock) |> elem(0),
-        "os_pid" => System.pid()
+        "os_pid" => System.pid(),
+        # The job queue's broker, when there is one: degraded (not down) when it failed lately,
+        # as queued jobs then wait.
+        "queue" => Testor.Queue.health()
       })
     else
       base
@@ -50,6 +53,8 @@ defmodule Testor.Views do
 
       run ->
         live = if run["status"] == "running", do: RunTracker.snapshot(id)
+        # A stored run's log, reports and attestations, fetched when this home lacks them.
+        if live == nil, do: Testor.Storage.local(id)
 
         {specs, log} =
           case live do
@@ -57,7 +62,7 @@ defmodule Testor.Views do
               {specs, %{text: text, size: offset, truncated: truncated}}
 
             nil ->
-              {Files.log_specs(id), Files.tail(Config.log_file(id), @log_snapshot)}
+              {Testor.Reports.run_specs(id), Files.tail(Config.log_file(id), @log_snapshot)}
           end
 
         shots = Files.screenshots(id, specs)
@@ -74,6 +79,8 @@ defmodule Testor.Views do
           "artifacts" => Files.artifacts(id),
           # The files and surviving mutants of its mutation report (Testor.Reports), or nil.
           "mutation" => Testor.Reports.mutation_detail(id),
+          # The coverage of each file (Testor.Reports.Coverage), or nil.
+          "coverage" => Testor.Reports.coverage_detail(id),
           "log" => log.text,
           "logBytes" => log.size,
           "truncated" => log.truncated
@@ -91,7 +98,7 @@ defmodule Testor.Views do
       cond do
         File.dir?(path) ->
           run = Store.get(name)
-          specs = if run, do: Files.log_specs(name), else: []
+          specs = if run, do: Testor.Reports.run_specs(name), else: []
 
           for shot <- Files.screenshots(name, specs) do
             Map.merge(shot, %{
