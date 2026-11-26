@@ -28,17 +28,15 @@ Two principles hold through every milestone:
 | **0.7.0** | Runs signed by their agent: ECDSA P-256 keys pinned on first lease, an in-toto attestation per remote run checked byte for byte against the files received, verifiable with OpenSSL | released |
 | **0.8.0** | Teams and identity: per-project access and a role per project; EdDSA tokens with a published JWKS; single sign-on with OpenID Connect; secrets for jobs from Vault, cloud secret managers and SOPS, resolved on the runner and masked; identity tokens for jobs (testor as an OIDC issuer for cloud credentials); isolated workspaces; scheduled jobs; OpenTelemetry traces joined to CI's; the agent image for arm64 | released |
 | **0.9.0** | Delivery: release gates on signed results (for pipelines and OPA), commit statuses on GitHub and GitLab pull requests, approvals of AI agents' actions, DORA metrics, status badges and a Backstage guide | released |
+| **0.10.0** | Storage: signed runs archived to S3-compatible storage (encrypted, optionally locked; SigV4 without a dependency), the job queue in PostgreSQL shared by several testors | released |
 
 ## Next milestones
 
 Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
-### 0.10: many testors, other backends
+### 0.11: many testors, other backends
 
 - A **hub**: the board and history across several testors, filtered by runner label.
-- **Archive to object storage** (done, in the next release): signed runs copied to an
-  S3-compatible bucket, encrypted (SSE-KMS) and optionally locked.
-- **The job queue in PostgreSQL** (done, in the next release).
 - [Storage, queue and event ports](docs/design/ports.md): PostgreSQL for the run index and
   events, S3-compatible object storage as the primary store for logs and artifacts, RabbitMQ,
   NATS or SQS for jobs.
