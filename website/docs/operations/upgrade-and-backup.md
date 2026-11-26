@@ -58,7 +58,9 @@ Everything worth keeping is in the testor home (`~/test-run/.testor`):
 tar -czf testor-backup.tgz -C ~/test-run/.testor runs logs screenshots artifacts config.json auth.json jwt.key token-keys.json signing.key
 ```
 
-Restoring is copying them back and restarting the service. Project snapshots
+Restoring is copying them back and restarting the service. For runs kept off the machine,
+encrypted and locked, set up [an archive to object storage](../reference/security.md#archive-to-object-storage):
+every signed run is copied to an S3-compatible bucket as it ends. Project snapshots
 (`~/test-run/<project>`) are not worth backing up: the next `sync` recreates them.
 
 ## Move to another machine

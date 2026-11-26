@@ -1,6 +1,7 @@
 # Storage, queue and event ports
 
-Status: proposed.
+Status: proposed; the first step, an archive of signed runs to S3-compatible storage
+(`Testor.Archive`, SigV4 without a dependency), is done (0.10).
 
 Today the run index is in ETS, filled by scanning `runs/*.json` every 300 ms, and logs,
 screenshots and artifacts are files. That keeps the install a single binary, and limits it to
