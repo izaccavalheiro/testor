@@ -6,7 +6,7 @@ Status: in progress. Done (0.10): an archive of signed runs to S3-compatible sto
 testors on one shared home and one PostgreSQL (`Testor.Cluster`: claims for what must happen
 once, shared approvals, an audit trail per testor). SQLite and Redis are dropped ([decisions](README.md#decisions)).
 
-**Object storage (0.18):** `Testor.Blob` is the object store port (`Testor.Blob.Files`, a
+**Object storage (0.13):** `Testor.Blob` is the object store port (`Testor.Blob.Files`, a
 folder; `Testor.Blob.S3`, any S3-compatible bucket, SigV4 in `Testor.Aws`), and
 `Testor.Storage` keeps runs in a bucket with the home as a cache ([storage](../storage.md)).
 With PostgreSQL too, the run index is the table `testor_runs` instead of the scan of
@@ -20,7 +20,7 @@ through its S3-compatible XML API.
 Without `storage`, the run index is in ETS, filled by scanning `runs/*.json` every 300 ms, and
 logs, screenshots and artifacts are files: a single binary on one node with a local disk.
 
-**Queues (0.17):** `Testor.Queue` is the queue port: SQS FIFO (`Testor.Queue.SQS`) and NATS
+**Queues (0.13):** `Testor.Queue` is the queue port: SQS FIFO (`Testor.Queue.SQS`) and NATS
 JetStream (`Testor.Queue.NATS`, a client of its text protocol) dispatch jobs while their
 records stay in the store ([queues](../queues.md)). **RabbitMQ: not built.** AMQP needs a
 binary-protocol client, which means a heavy dependency (`amqp_client`, `rabbit_common`); it

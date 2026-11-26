@@ -6,8 +6,8 @@ the terminal stays unchanged, and nothing starts a command without an explicit o
 
 | Design | Roadmap | Status |
 | ------ | ------- | ------ |
-| [Agent protocol](agent-protocol.md): runners that take work from a controller | 0.4 to 0.12 | steps 1 to 5 done ([jobs](../jobs.md), the hub in 0.12); `container` and `kubernetes` executors and a job's `timeout` next (0.16) |
-| [Storage, queue and event ports](ports.md): files, PostgreSQL, S3, SQS/NATS | 0.10 to 0.18 | in progress: the archive, PostgreSQL's queue and several testors done; brokers (0.17), S3 as the main store (0.18) next |
+| [Agent protocol](agent-protocol.md): runners that take work from a controller | 0.4 to 0.13 | done: steps 1 to 5 ([jobs](../jobs.md), the hub in 0.12), executors, timeouts, snapshots and slots in 0.13 |
+| [Storage, queue and event ports](ports.md): files, PostgreSQL, S3, SQS/NATS | 0.10 to 0.13 | done: the archive, PostgreSQL's queue, several testors, brokers (SQS, NATS) and S3 as the main store (0.13); Azure Blob not built |
 | [Identity](identity.md): OIDC, projects and teams, asymmetric tokens, workload identity, links | 0.8, 0.13 | done |
 
 ## Decisions

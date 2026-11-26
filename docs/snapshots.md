@@ -79,7 +79,7 @@ run left on the way with a folder before it writes.
 
 ## SSH runs: only what changed
 
-`remote.yml`'s `sync` sends only the files that changed (since 0.18). git hashes the tree into
+`remote.yml`'s `sync` sends only the files that changed (since 0.13). git hashes the tree into
 a throwaway index (`git update-index --info-only`: no objects written), the runner compares it
 with the manifest of its last sync (`<HOME_DIR>/manifests/<PROJECT>.json`) and with the files
 as they are there (a file a run changed is sent again), and asks for the ones it lacks. Files

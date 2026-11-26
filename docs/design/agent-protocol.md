@@ -2,8 +2,8 @@
 
 Status: steps 1 to 4 done ([jobs](../jobs.md): a local agent in 0.4, agents on other machines
 in 0.5, in containers and Kubernetes in 0.6, signing their runs in 0.7); step 5 done (the hub,
-0.12). Next: `container` and `kubernetes` executors and a job's `timeout` (0.16), a snapshot
-digest as a job's source (0.18), agents registering their capacity (0.19). Builds on: signed attestations, cooperative cancel, the actor record,
+0.12). Done in 0.13: `container` and `kubernetes` executors and a job's `timeout`, a snapshot
+digest as a job's source, agents registering their capacity (slots). Builds on: signed attestations, cooperative cancel, the actor record,
 separate accounts (0.3).
 
 ## Problem
