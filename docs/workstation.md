@@ -36,6 +36,11 @@ includes:
 | `testor:logs`      | the end of the orchestrator's log                              |
 | `testor:uninstall` | remove the task and the rule (the data stays)                  |
 
+`testor:test` and `testor:smoke` go through the runner's `run.ps1` once testor is installed
+there: they show on the dashboard as runs of the project `testor` (`PROJECT` changes it), the
+test run with its HTML coverage report. The others maintain testor itself and are no
+project's sessions.
+
 ## Running a project on the runner
 
 Include `taskfiles/remote.yml` from the project's Taskfile, `internal` so its building blocks

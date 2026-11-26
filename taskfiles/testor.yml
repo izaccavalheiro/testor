@@ -11,6 +11,8 @@
 #   task testor:test      format, warnings as errors, ExUnit with the 100% coverage gate, on the runner
 #   task testor:smoke     a release built and checked end to end (scripts/smoke.ps1), on the runner
 #   task testor:ci        both: everything CI checks
+#                         (test and smoke are recorded through the runner's run.ps1, when testor is
+#                         installed there, as runs of the project PROJECT, default testor)
 #   task testor:format    mix format on the runner, the formatted sources copied back
 #   task testor:deploy    build and (re)start it; the dashboard is http://<runner>:6767
 #   task testor:user      add a user (USER=ada ROLE=admin, password from TESTOR_PASSWORD): auth on
@@ -19,8 +21,9 @@
 #   task testor:status / testor:logs / testor:uninstall
 #
 # Optional vars: PORT (6767), WORKSPACES (test-run, under the runner user's home), HOME_DIR
-# (<WORKSPACES>/.testor), ALLOW_FROM (Windows firewall: remote addresses, comma separated;
-# 100.64.0.0/10 is Tailscale's range); for deploy, BIND, ALLOWED_HOSTS, TRUSTED_PROXIES,
+# (<WORKSPACES>/.testor), PROJECT (testor: what test and smoke are recorded as), ALLOW_FROM
+# (Windows firewall: remote addresses, comma separated; 100.64.0.0/10 is Tailscale's range); for
+# deploy, BIND, ALLOWED_HOSTS, TRUSTED_PROXIES,
 # ANONYMOUS and SECRETS_DIR (see docs/security.md), which the runner keeps between deploys.
 version: "3"
 
@@ -31,6 +34,18 @@ vars:
   _PORT: '{{.PORT | default "6767"}}'
   _WORKSPACES: '{{.WORKSPACES | default "test-run"}}'
   _HOME_DIR: '{{.HOME_DIR | default (printf "%s/.testor" ._WORKSPACES)}}'
+  _PROJECT: '{{.PROJECT | default "testor"}}'
+  # The recorded runs' source, as remote.yml sends it: who, which commit, whether it was dirty.
+  _ACTOR:
+    sh: '{{if .ACTOR}}echo "{{.ACTOR}}"{{else}}echo "${USER:-$USERNAME}@$(hostname)"{{end}}'
+  _COMMIT:
+    sh: 'git -C "{{._ROOT}}" rev-parse HEAD 2>/dev/null || true'
+  _BRANCH:
+    sh: 'git -C "{{._ROOT}}" rev-parse --abbrev-ref HEAD 2>/dev/null || true'
+  _DIRTY:
+    sh: 'if [ -n "$(git -C "{{._ROOT}}" status --porcelain 2>/dev/null)" ]; then echo true; else echo false; fi'
+  _COMMITTED:
+    sh: 'git -C "{{._ROOT}}" log -1 --format=%cI 2>/dev/null || true'
   _ALLOW_FROM: '{{range $i, $a := splitList "," (.ALLOW_FROM | default "100.64.0.0/10,LocalSubnet")}}{{if $i}}, {{end}}"{{$a}}"{{end}}'
   # The installed release's eval, with the folders the service uses. No parentheses or double
   # quotes in the expression: on Windows, testor.bat passes it through cmd.exe.
@@ -45,6 +60,7 @@ vars:
     $testorHome = Join-Path $HOME "{{._HOME_DIR}}"
     $src = Join-Path $testorHome "src"
     $installer = Join-Path (Join-Path $src "runner") "install.ps1"
+    $testorRun = Join-Path $testorHome "run.ps1"
 
 tasks:
   upload:
@@ -100,22 +116,27 @@ tasks:
     desc: Check the orchestrator on the runner (format, warnings as errors, ExUnit with 100% coverage)
     cmds:
       - task: upload
-      - task: ps
-        vars: { LABEL: mix test, SCRIPT: "& $installer -Test -TestArgs @({{range $i, $a := splitArgs (.CLI_ARGS | default \"\")}}{{if $i}}, {{end}}'{{$a}}'{{end}})" }
+      - task: recorded
+        vars:
+          LABEL: mix test
+          KIND: test
+          # The HTML coverage report, kept with the run (mix test.coverage writes it).
+          ARTIFACTS: "'cover/*.html'"
+          BODY: "& $installer -Test{{if .CLI_ARGS}} -TestArgs @({{range $i, $a := splitArgs .CLI_ARGS}}{{if $i}}, {{end}}'{{$a}}'{{end}}){{end}}"
 
   smoke:
     desc: Build a release on the runner and check it end to end (scripts/smoke.ps1), beside the installed one
     cmds:
       - task: upload
-      - task: ps
-        vars: { LABEL: smoke test, SCRIPT: "& $installer -Smoke" }
+      - task: recorded
+        vars: { LABEL: smoke test, KIND: smoke, BODY: "& $installer -Smoke" }
 
   ci:
     desc: Every check CI runs, on the runner - format, warnings, ExUnit with 100% coverage, release smoke test
     cmds:
       - task: test
-      - task: ps
-        vars: { LABEL: smoke test, SCRIPT: "& $installer -Smoke" }
+      - task: recorded
+        vars: { LABEL: smoke test, KIND: smoke, BODY: "& $installer -Smoke" }
 
   deploy:
     desc: Build testor on the runner, install it as a service (and on Windows its firewall rule), and (re)start it
@@ -198,6 +219,29 @@ tasks:
     cmds:
       - task: ps
         vars: { LABEL: uninstall, SCRIPT: "& $installer -Uninstall -Port {{._PORT}}" }
+
+  # A check of testor's own sources, recorded as a run of PROJECT by the runner's run.ps1 (from
+  # the sources' orchestrator folder: its working folder) once testor is installed there; before
+  # that it runs unrecorded. Output and exit code are the command's own either way.
+  recorded:
+    internal: true
+    requires:
+      vars: [KIND, BODY]
+    cmds:
+      - task: ps
+        vars:
+          LABEL: "{{.LABEL}}"
+          SCRIPT: |
+            $env:TESTOR_ACTOR = '{{._ACTOR | replace "'" "''"}}'
+            $env:TESTOR_COMMIT = '{{._COMMIT}}'
+            $env:TESTOR_BRANCH = '{{._BRANCH | replace "'" "''"}}'
+            $env:TESTOR_DIRTY = '{{._DIRTY}}'
+            $env:TESTOR_COMMITTED_AT = '{{._COMMITTED}}'
+            Set-Location (Join-Path $src "orchestrator")
+            $body = {
+            {{.BODY}}
+            }
+            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}"{{if .ARTIFACTS}} -Artifacts {{.ARTIFACTS}}{{end}} -Body $body } else { & $body }
 
   ps:
     internal: true

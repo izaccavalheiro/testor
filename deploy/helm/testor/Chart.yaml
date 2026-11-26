@@ -2,8 +2,8 @@ apiVersion: v2
 name: testor
 description: testor's orchestrator (dashboard, /api/v1, MCP) over a testor home on a persistent volume
 type: application
-version: 0.12.0
-appVersion: "0.12.0"
+version: 0.12.1
+appVersion: "0.12.1"
 home: https://izaccavalheiro.github.io/testor/
 sources:
   - https://github.com/izaccavalheiro/testor

@@ -7,12 +7,24 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.12.1 - 2026-11-26
+
 ### Changed
 
 - The test suite runs in partitions at once (`orchestrator/test/partitions.ps1`, coverage
   merged with `mix test.coverage`): about a minute instead of three on the runner. Container
   images build for amd64 on pull requests; arm64 builds on tags only, on native arm64 runners,
   joined with amd64 in one index.
+
+### Fixed
+
+- **Sessions** name the project of `remote.yml`'s commands again. Since its prelude takes an
+  absolute workspaces folder, every command without `KIND` (`sync`, `npm ci`) was listed as a
+  session of `.testor`, testor's home.
+- `task testor:test` and `task testor:smoke` (and `testor:ci`) are recorded through the
+  runner's `run.ps1`, as runs of the project `testor` (`PROJECT=` changes it). The test run
+  keeps the HTML coverage report. They were unrecorded sessions. Sessions in testor's own home
+  (`testor.yml`'s upload, deploy, status and logs) are no longer listed: they maintain testor.
 
 ## 0.12.0 - 2026-11-26
 
