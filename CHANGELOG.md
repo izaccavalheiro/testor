@@ -44,6 +44,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   (`storage_s3`, `keys_secret`, `service_account_annotations`). `TESTOR_SIGNING_KEY` signs
   attestations in place of `signing.key`; agents' pinned keys are kept in PostgreSQL for
   testors that share no volume.
+- **Sharding** ([docs/sharding.md](docs/sharding.md)): `"shards": N` makes a batch of N shard
+  jobs leased at once (`TESTOR_SHARD_INDEX`, `TESTOR_SHARD_TOTAL`), planned for a snapshot by LPT
+  over the tests' p75 durations or the files' mutants (`TESTOR_SHARD_FILES`), and merged when the
+  last ends into one signed run: specs, mutation score recomputed, coverage, wall and CPU time,
+  each shard's attestation digest. Gates and statuses read the merged run, not the shards.
+- **Impact analysis** ([docs/impact.md](docs/impact.md)): `POST /api/v1/projects/<p>/impact` and
+  MCP `get_impacted_tests` rank spec files for changed files from co-failures, mutation
+  coverage, naming and recent failures; runs record `changedFiles`; jobs take `"order":
+  "impact"` (`TESTOR_TEST_ORDER`) and `"impact": {"first": n}`; `Testor.Impact.replay/1`
+  measures the ranking (APFD).
 - **Handing test runs off** ([docs/handoff.md](docs/handoff.md)): `runner/testor.ps1 run` sends
   the working tree as a snapshot, queues the job and follows it, stdout on stdout and stderr on
   stderr (run.ps1 marks each log line's stream), exiting with the run's code; Ctrl+C cancels it.

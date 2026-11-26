@@ -106,8 +106,8 @@ defmodule Testor.Gates do
     |> Enum.max_by(&(&1["startedAt"] || ""), fn -> nil end)
   end
 
-  @doc "Whether a run tested the whole suite: not a scoped run (`select`) nor a watch session's."
-  def full?(run), do: run["select"] == nil and run["session"] == nil
+  @doc "Whether a run tested the whole suite: not a scoped run (`select`), a shard of a batch, nor a watch session's."
+  def full?(run), do: run["select"] == nil and run["session"] == nil and run["shard"] == nil
 
   defp same_commit?(recorded, commit),
     do: is_binary(recorded) and String.starts_with?(String.downcase(recorded), commit)

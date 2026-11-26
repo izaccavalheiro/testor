@@ -70,11 +70,12 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `GET /api/v1/gates` | read | `config.json`'s release gates, or the `error` that leaves one out |
 | `GET /api/v1/gates/:name?commit=` | read | whether a commit passes: `{gate, commit, pass, checks: [{kind, pass, reason, runId, attestation}]}` ([release gates](attestation.md#release-gates)) |
 | `GET /api/v1/schedules` | read | `config.json`'s schedules with their `next` time (UTC), or the `error` that leaves one out |
-| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref? or snapshot?, select?, workspace?, failFast?, cache?, argv? (scope exec)}`: `201`, or `403` while `execution.enabled` is off |
+| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref? or snapshot?, select?, workspace?, failFast?, cache?, shards?, order?, impact?, argv? (scope exec)}`: `201`, or `403` while `execution.enabled` is off |
 | `GET /api/v1/runs/:id/digest?format=` | read | counts, failures with their messages, the project's stack frames; `text` for lines ([handoff](handoff.md#failure-digest)) |
 | `GET /api/v1/runs/:id/log?offset=` | read | the log from a byte offset, as it is (`X-Log-Size`) |
 | `GET /api/v1/runs/:id/streams?offset=` | read | one character per log line: `o` (stdout) or `e` (stderr) |
 | `POST /api/v1/watches`, `.../:id/changes`, `.../:id/heartbeat`, `DELETE .../:id` | execute | a watch session: opened with a snapshot, fed new ones, kept alive, ended ([handoff](handoff.md#watch-sessions)) |
+| `POST /api/v1/projects/:p/impact` | read | spec files ranked for `{changed, limit?}`, each with its reasons ([impact](impact.md)) |
 | `POST /api/v1/projects/:p/snapshots` | execute | a snapshot's manifest `{files, branch?, commit?}`: `200` with the `missing` contents, `201` once kept ([snapshots](snapshots.md)) |
 | `PUT /api/v1/blobs/sha256:<hex>` | execute | one content, checked against its hash (`snapshots.maxFileMB`) |
 | `GET /api/v1/projects/:p/state/:name?branch=` | read | a state file of the branch, else the default branch's (`X-Testor-State-Branch`) |
