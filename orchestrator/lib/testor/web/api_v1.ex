@@ -337,6 +337,27 @@ defmodule Testor.Web.ApiV1 do
     end
   end
 
+  # The board of other testors (Testor.Hub), each with the projects one may see.
+  get "/hub" do
+    conn = fetch_query_params(conn)
+
+    case Testor.Hub.board(conn.query_params["label"]) do
+      nil ->
+        error(conn, 404, "not_found", "no hub: list testors in hub.json")
+
+      testors ->
+        principal = conn.assigns.principal
+
+        data =
+          Enum.map(
+            testors,
+            &Map.update!(&1, "projects", fn list -> Testor.Access.filter(list, principal) end)
+          )
+
+        json(conn, 200, %{"data" => data})
+    end
+  end
+
   # Release gates (Testor.Gates): whether a commit may ship, from signed results.
   get "/gates" do
     json(conn, 200, %{"data" => Testor.Access.filter(Testor.Gates.list(), conn.assigns.principal)})

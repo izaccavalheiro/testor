@@ -7,6 +7,12 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **The hub**: `hub.json` (in the secrets folder) lists other testors with a read token and
+  labels; this testor asks each for its projects every 15 seconds and shows them on a **Hub**
+  tab and at `GET /api/v1/hub?label=`, with each project's latest result and a link back.
+
 ## 0.11.0 - 2026-11-26
 
 ### Added

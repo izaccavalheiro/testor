@@ -187,6 +187,13 @@ defmodule Testor.Web.OpenAPI do
             "type" => "object"
           })
       },
+      "/hub" => %{
+        "parameters" => [%{"name" => "label", "in" => "query", "schema" => %{"type" => "string"}}],
+        "get" =>
+          op("runs", "The board of the testors hub.json lists: each one's latest result per project", %{
+            "type" => "object"
+          })
+      },
       "/gates" => %{
         "get" => op("gates", "config.json's release gates, or why one is left out", %{"type" => "object"})
       },
