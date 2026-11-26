@@ -29,11 +29,15 @@
 # ARTIFACTS (with KIND): space-separated files and folders, relative to the project, wildcards
 # allowed, unquoted (coverage playwright-report reports/*.md), that the run writes and the dashboard
 # keeps with it: HTML reports, coverage, Markdown, JUnit XML, ...
+# REPORTS (with KIND): files testor reads when the run ends, the same way (a mutation report:
+# reports/mutation/mutation.json); see docs/mutation.md.
 #
 # Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
 # ROOT (default: the git root of the directory `task` was called from), WORKSPACES
 # (test-run), HOME_DIR (<WORKSPACES>/.testor; both relative to the runner's home folder or
-# absolute), KEEP (node_modules .lockhash target .venv),
+# absolute), KEEP (node_modules .lockhash target .venv: names kept at any depth, or paths
+# from the project's root such as reports/stryker-incremental.json), PRESERVE (paths kept as
+# caches between syncs, which CLEAN=1 drops first: .stryker-tmp reports/stryker-incremental.json),
 # ACTOR (who the runs are recorded as started by; default <user>@<workstation>).
 #
 # The workstation needs ssh, git and tar (GNU tar, bsdtar or Windows' tar.exe). Scripts reach
@@ -62,6 +66,9 @@ vars:
   _COMMITTED:
     sh: 'git -C "{{._ROOT}}" log -1 --format=%cI 2>/dev/null || true'
   _KEEP: '{{range $i, $k := splitList " " (.KEEP | default "node_modules .lockhash target .venv")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
+  # Caches a tool keeps between runs (Stryker's incremental file), paths relative to the project;
+  # CLEAN=1 drops them before the sync.
+  _PRESERVE: '{{range $i, $k := splitList " " (.PRESERVE | default "")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
   _PRELUDE: |
@@ -91,12 +98,24 @@ tasks:
             git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
             tar -czf - -C "{{._ROOT}}" --null -T -
           SCRIPT: |
-            function Clear-Snapshot($p) {
-              Get-ChildItem -LiteralPath $p -Force | Where-Object { $_.Name -notin {{._KEEP}} } | ForEach-Object {
-                if ($_.PSIsContainer) { Clear-Snapshot $_.FullName } else { Remove-Item -LiteralPath $_.FullName -Force }
+            # KEEP: names kept wherever they are (node_modules), or paths from the project's root
+            # (a/b); PRESERVE: such paths too, unless CLEAN=1.
+            $keep = @({{._KEEP}}) | Where-Object { $_ }
+            $preserve = @({{._PRESERVE}}) | Where-Object { $_ } | ForEach-Object { $_ -replace "\\", "/" }
+            $keepNames = @($keep | Where-Object { $_ -notmatch "/" })
+            $keepPaths = @($keep | Where-Object { $_ -match "/" }) + @($preserve)
+            if ("{{.CLEAN | default ""}}" -eq "1" -and (Test-Path $workspace)) {
+              foreach ($p in $preserve) { Remove-Item -LiteralPath (Join-Path $workspace $p) -Recurse -Force -ErrorAction SilentlyContinue }
+              $keepPaths = @($keep | Where-Object { $_ -match "/" })
+            }
+            function Clear-Snapshot($p, $rel) {
+              Get-ChildItem -LiteralPath $p -Force | ForEach-Object {
+                $r = if ($rel) { "$rel/$($_.Name)" } else { $_.Name }
+                if ($_.Name -in $keepNames -or $r -in $keepPaths) { return }
+                if ($_.PSIsContainer) { Clear-Snapshot $_.FullName $r } else { Remove-Item -LiteralPath $_.FullName -Force }
               }
             }
-            if (Test-Path $workspace) { Clear-Snapshot $workspace }
+            if (Test-Path $workspace) { Clear-Snapshot $workspace "" }
             $null = New-Item -ItemType Directory -Force -Path $workspace
             tar -xzf - -C $workspace
 
@@ -125,7 +144,7 @@ tasks:
             {{if .KIND}}$body = {
             {{.CMD}}
             }
-            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}"{{if .ARTIFACTS}} -Artifacts @({{range $i, $a := splitList " " (.ARTIFACTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}} -Body $body } else { & $body }
+            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}"{{if .ARTIFACTS}} -Artifacts @({{range $i, $a := splitList " " (.ARTIFACTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}}{{if .REPORTS}} -Reports @({{range $i, $a := splitList " " (.REPORTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}} -Body $body } else { & $body }
             {{else}}{{.CMD}}
             {{end}}
 

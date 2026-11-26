@@ -182,6 +182,30 @@ try {
   $listed = Mcp "tools/call" @{ name = "list_runs"; arguments = @{ status = "failed" } }
   Check "mcp: list_runs" (@($listed.result.structuredContent.runs).Count -eq 1 -and -not $listed.result.isError)
 
+  # A mutation run hands over its report (-Reports): testor reads it when the run ends. A report
+  # the run did not write is not kept.
+  $null = New-Item -ItemType Directory -Force stale
+  Set-Content -LiteralPath stale/old.json -Value '{}'
+  (Get-Item stale/old.json).LastWriteTime = (Get-Date).AddDays(-1)
+  & "$testorHome/run.ps1" -Project demo -Kind mutation -Reports "reports/mutation/mutation.json", "stale/old.json" -Body {
+    $null = New-Item -ItemType Directory -Force reports/mutation
+    $mutants = '[{"id":"1","mutatorName":"ArithmeticOperator","replacement":"-","status":"Killed","location":{"start":{"line":1,"column":1},"end":{"line":1,"column":2}}},' +
+      '{"id":"2","mutatorName":"BooleanLiteral","replacement":"false","status":"Survived","location":{"start":{"line":1,"column":1},"end":{"line":1,"column":5}}}]'
+    Set-Content -LiteralPath reports/mutation/mutation.json -Value ('{"schemaVersion":"2","thresholds":{"high":80,"low":60},"files":{"src/a.js":{"language":"javascript","source":"true + 1","mutants":' + $mutants + '}}}')
+    "Final mutation score of 50.00 is greater than or equal to break threshold 0"
+  } 3>$null | Out-Null
+  $deadline = (Get-Date).AddSeconds(20)
+  do {
+    Start-Sleep -Milliseconds 500
+    $mut = @((Invoke-RestMethod "$base/api/state").history) | Where-Object kind -eq "mutation" | Select-Object -First 1
+  } until (($mut -and $mut.mutation) -or (Get-Date) -gt $deadline)
+  Check "mutation: the report's score is in the record" ($mut.mutation.score -eq 50 -and $mut.mutation.source -eq "report") "($($mut.mutation | ConvertTo-Json -Compress))"
+  Check "mutation: only the report the run wrote is kept" (@($mut.reports).Count -eq 1) "($(@($mut.reports).file -join ', '))"
+  $mutDetail = Invoke-RestMethod "$base/api/runs/$($mut.id)"
+  Check "mutation: surviving mutants with the run" (@($mutDetail.mutation.survivors)[0].original -eq "true" -and @($mutDetail.mutation.survivors)[0].replacement -eq "false")
+  $badge = Invoke-WebRequest "$base/api/v1/projects/demo/badge.svg?metric=mutation"
+  Check "mutation: a score badge" ($badge.Content -match "50\.0%")
+
   # Cancelling kills the run's whole process tree, on every OS.
   $hidden = if ($IsWindows) { @{ WindowStyle = "Hidden" } } else { @{} }
   $slowErr = Join-Path $work "slow.err"

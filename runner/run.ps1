@@ -6,6 +6,7 @@
 #                         or .vitest-attachments, plus anything saved to $env:SCREENSHOT_DIR
 #   artifacts\<id>\       what -Artifacts names (reports, coverage, ...), videos from the same
 #                         folders as screenshots, plus anything saved to $env:TESTOR_ARTIFACT_DIR
+#   reports\<id>\         what -Reports names: result files testor reads (a mutation report)
 # The folders are next to this script (the testor home). Recording never fails a run: only
 # the command's own error is rethrown, so output, stderr and the exit code are unchanged.
 #
@@ -17,11 +18,16 @@
 # in order until artifacts.maxRunMB (config.json, default 256) is reached; the rest is skipped
 # with a warning. The command sees $env:TESTOR_RUN_ID, $env:SCREENSHOT_DIR and
 # $env:TESTOR_ARTIFACT_DIR (folders kept with the run).
+#
+# -Reports (and $env:TESTOR_REPORTS, ";"-separated): files relative to the working folder
+# (wildcards allowed) that testor reads when the run ends, such as Stryker's
+# reports/mutation/mutation.json. Only files the run wrote are kept, 20 at most, 50 MB each.
 param(
   [Parameter(Mandatory)][string]$Project,
   [Parameter(Mandatory)][string]$Kind,
   [Parameter(Mandatory)][scriptblock]$Body,
-  [string[]]$Artifacts = @()
+  [string[]]$Artifacts = @(),
+  [string[]]$Reports = @()
 )
 
 $root = $PSScriptRoot
@@ -121,6 +127,25 @@ function Copy-Artifact([object[]]$files, [string]$label) {
     $null = $script:copied.Add($file.FullName)
   }
   $script:artBytes += $size
+}
+
+function Save-Reports {
+  $wanted = @($Reports) + @("$env:TESTOR_REPORTS" -split ";") | ForEach-Object { "$_".Trim() } | Where-Object { $_ }
+  $dir = Join-Path (Join-Path $root "reports") $id
+  $kept = @()
+  foreach ($pattern in $wanted) {
+    if ([IO.Path]::IsPathRooted($pattern)) { Write-Warning "testor: report '$pattern' is not relative to the working folder; skipped"; continue }
+    foreach ($file in @(Get-ChildItem -Path (Join-Path $workdir $pattern) -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType })) {
+      if ($file.LastWriteTime -lt $since) { Write-Warning "testor: report $($file.Name) was not written by this run; not kept"; continue }
+      if ($file.Length -gt 50MB) { Write-Warning "testor: report $($file.Name) is over 50 MB; not kept"; continue }
+      if ($kept.Count -ge 20) { Write-Warning "testor: 20 reports at most; $($file.Name) not kept"; continue }
+      $name = $file.Name
+      for ($n = 2; $name -in $kept; $n++) { $name = "$n-$($file.Name)" }
+      $null = New-Item -ItemType Directory -Force -Path $dir
+      Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $dir $name)
+      $kept += $name
+    }
+  }
 }
 
 function Save-Artifacts {
@@ -273,6 +298,7 @@ try {
       Write-Warning "testor: artifacts over the run's $([math]::Round($maxRunBytes / 1MB)) MB limit (artifacts.maxRunMB) were not kept: $($skipped -join ', ')"
     }
   } catch { Write-Warning "testor: artifacts: $_" }
+  try { Save-Reports } catch { Write-Warning "testor: reports: $_" }
   try {
     $kept = @(Get-ChildItem -LiteralPath $artDir -Recurse -File -Force -ErrorAction SilentlyContinue)
     $record.artifacts = $kept.Count

@@ -32,6 +32,14 @@
 # as it happens (the record, the log in chunks, then screenshots, artifacts and the final
 # record), then deletes its copy. testor treats it like a run of its own.
 #
+# A command is a string, or an object that also names what the run hands over (paths relative
+# to the workspace) and what it keeps between jobs:
+#   "mutation": { "command": "npx stryker run", "reports": ["reports/mutation/mutation.json"],
+#                 "artifacts": ["reports/mutation"], "preserve": ["reports/stryker-incremental.json"] }
+# "reports" are files testor reads (docs/mutation.md); "preserve" paths survive an isolated
+# workspace (copied from <home>/cache/<project> before the run and back after it); a job with
+# "clean": true drops them first.
+#
 # Isolation: with a project's "isolate": "worktree" (a git workspace) each job runs in a git
 # worktree of its own, at the job's ref (or the workspace's HEAD: committed files only); with
 # "copy", in a copy of the workspace. Either is under <home>/isolated and removed when the run
@@ -190,7 +198,7 @@ function Complete-Run($job, $state, [bool]$cancelled) {
   }
   Send-Log $job $state
   $sent = @()
-  foreach ($area in "screenshots", "artifacts") {
+  foreach ($area in "screenshots", "artifacts", "reports") {
     $dir = Join-Path (Join-Path $home_ $area) $state.runId
     if (-not (Test-Path -LiteralPath $dir)) { continue }
     foreach ($file in @(Get-ChildItem -LiteralPath $dir -Recurse -File -Force | Where-Object { -not $_.LinkType })) {
@@ -210,7 +218,7 @@ function Complete-Run($job, $state, [bool]$cancelled) {
   $null = Call "/agent/jobs/$($job.id)/run" $record "Put"
   # testor has it all: the copy here is not needed any more.
   Remove-Item -LiteralPath $runFile, (Join-Path (Join-Path $home_ "logs") "$($state.runId).log") -ErrorAction SilentlyContinue
-  foreach ($area in "screenshots", "artifacts", "cancel") {
+  foreach ($area in "screenshots", "artifacts", "reports", "cancel") {
     Remove-Item -LiteralPath (Join-Path (Join-Path $home_ $area) $state.runId) -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
@@ -228,8 +236,18 @@ function Call([string]$path, $body, [string]$method = "Post") {
 function Resolve-Job($job) {
   $project = $projects[$job.project]
   if (-not $project) { return @{ error = "project $($job.project) is not in this agent's configuration" } }
-  $command = if ($project.commands) { $project.commands[$job.kind] } else { $null }
-  if (-not $command) { return @{ error = "task $($job.kind) of $($job.project) is not in this agent's configuration" } }
+  $entry = if ($project.commands) { $project.commands[$job.kind] } else { $null }
+  $command = if ($entry -is [Collections.IDictionary]) { $entry.command } else { $entry }
+  if (-not $command -or $command -isnot [string]) { return @{ error = "task $($job.kind) of $($job.project) is not in this agent's configuration" } }
+  $lists = @{}
+  foreach ($key in "reports", "artifacts", "preserve") {
+    $lists[$key] = @(if ($entry -is [Collections.IDictionary] -and $entry[$key]) { $entry[$key] } else { @() })
+    foreach ($path in $lists[$key]) {
+      if ($path -isnot [string] -or [IO.Path]::IsPathRooted($path) -or ($path -split "[\\/]") -contains "..") {
+        return @{ error = "$key of $($job.project) $($job.kind) are paths inside the workspace" }
+      }
+    }
+  }
   # With a repository, the workspace (by default <home>/workspaces/<project>) is cloned when
   # missing, and refs can be checked out.
   $repository = $project.repository
@@ -241,7 +259,8 @@ function Resolve-Job($job) {
   $isolate = $project.isolate
   if ($isolate -notin @($null, $false, "worktree", "copy")) { return @{ error = "isolate of $($job.project) is worktree, copy or false" } }
   if ($isolate -eq "worktree" -and -not $git) { return @{ error = "isolate: worktree needs a git workspace for $($job.project) (git: true)" } }
-  @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null }; isolate = $isolate }
+  @{ command = $command; workspace = $workspace; git = $git; clone = if ($clone) { $repository } else { $null }; isolate = $isolate
+     reports = $lists.reports; artifacts = $lists.artifacts; preserve = $lists.preserve }
 }
 
 function Tool([string]$name) { if ($tools[$name]) { Expand $tools[$name] } else { $name } }
@@ -444,7 +463,18 @@ function Invoke-Job($job) {
   # Encoded: Start-Process passes arguments without escaping their double quotes, which would
   # break any command holding one.
   $quote = { param($text) "'" + ($text -replace "'", "''") + "'" }
-  $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Body { $($plan.command) }"
+  # Preserved caches: dropped for a clean job, else brought into an isolated workspace.
+  $cache = Join-Path (Join-Path $home_ "cache") $job.project
+  foreach ($path in $plan.preserve) {
+    if ($job.clean) {
+      Remove-Item -LiteralPath (Join-Path $cache $path), (Join-Path $runDir $path) -Recurse -Force -ErrorAction SilentlyContinue
+    } elseif ($plan.isolate -and (Test-Path -LiteralPath (Join-Path $cache $path))) {
+      $null = New-Item -ItemType Directory -Force (Split-Path (Join-Path $runDir $path))
+      Copy-Item -LiteralPath (Join-Path $cache $path) -Destination (Join-Path $runDir $path) -Recurse -Force
+    }
+  }
+  $list = { param($paths) if ($paths.Count) { "@(" + (($paths | ForEach-Object { & $quote $_ }) -join ", ") + ")" } else { "@()" } }
+  $script = "Set-Location -LiteralPath $(& $quote $runDir); & $(& $quote $runPs1) -Project $(& $quote $job.project) -Kind $(& $quote $job.kind) -Artifacts $(& $list $plan.artifacts) -Reports $(& $list $plan.reports) -Body { $($plan.command) }"
   $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
   $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
   $env:TESTOR_JOB_ID = $job.id
@@ -535,7 +565,18 @@ function Invoke-Job($job) {
   }
   $process.WaitForExit()
   Remove-Item "$out.out", "$out.err", "$out.jwt" -ErrorAction SilentlyContinue
-  if ($plan.isolate) { Remove-Isolated $plan.workspace $runDir }
+  if ($plan.isolate) {
+    foreach ($path in $plan.preserve) {
+      $from = Join-Path $runDir $path
+      if (Test-Path -LiteralPath $from) {
+        $to = Join-Path $cache $path
+        Remove-Item -LiteralPath $to -Recurse -Force -ErrorAction SilentlyContinue
+        $null = New-Item -ItemType Directory -Force (Split-Path $to)
+        Copy-Item -LiteralPath $from -Destination $to -Recurse -Force
+      }
+    }
+    Remove-Isolated $plan.workspace $runDir
+  }
   if ($upload -and -not $lost) {
     try { Complete-Run $job $state ($null -ne $cancelledAt) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
   }
