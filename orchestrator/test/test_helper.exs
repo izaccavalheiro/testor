@@ -1,9 +1,11 @@
 # The tests run the real server: the store, the trackers, the janitor, stats, sessions, device
 # stats, maintenance and Bandit, on a free port of 127.0.0.1, with folders of their own (the
 # machine that runs them may have real ones, with auth.json and runs).
-root = Path.join(System.tmp_dir!(), "testor-test-#{System.unique_integer([:positive])}")
-# A workspaces name of its own: sessions of the real workspaces (this very test run's) must not count.
-workspaces = Path.join(root, "testor-ws")
+# Unique per OS process: partitions of the suite run at once (test/partitions.ps1).
+root = Path.join(System.tmp_dir!(), "testor-test-#{System.pid()}-#{System.unique_integer([:positive])}")
+# A workspaces name of its own: sessions of the real workspaces (this very test run's, or another
+# partition's) must not count.
+workspaces = Path.join(root, "testor-ws-#{System.pid()}")
 data_dir = Path.join(workspaces, ".testor")
 File.mkdir_p!(data_dir)
 
