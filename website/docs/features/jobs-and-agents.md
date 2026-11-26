@@ -23,7 +23,12 @@ POST /api/v1/jobs {project, kind} ──▶ testor's queue ──lease──▶ 
   containers and Kubernetes, scaled by KEDA on queued jobs.
 - **Leases, labels, refs.** Agents renew a lease while they run a job; a job whose agent
   disappears is tried again. Jobs can ask for labels (`windows`, `gpu`) and a git ref the agent
-  checks out (or clones). One job per project runs at a time.
+  checks out (or clones). One job per project runs at a time, preferably on the agent that ran
+  it last.
+- **Snapshots.** A job can run a working tree with its uncommitted changes, sent by content:
+  only the files testor and the agent lack travel, so a one-line change moves one file.
+  Incremental state (Stryker's incremental file, timings) follows a branch from agent to agent:
+  [snapshots](../reference/snapshots.md).
 - **Scheduled.** Nightly suites and other recurring jobs from cron expressions in
   `config.json`, never piling up behind a slow run.
 - **Isolated.** Each job can run in a git worktree or a copy of the workspace of its own,

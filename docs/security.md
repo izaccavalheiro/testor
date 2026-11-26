@@ -409,6 +409,16 @@ cannot be read fails the job naming the secret only ([jobs.md](jobs.md#secrets))
 workload identities (IAM roles for service accounts, GKE and Azure workload identity, Vault's
 Kubernetes login) to long-lived keys on the runner.
 
+A job may name a snapshot instead of a ref ([snapshots](snapshots.md)). Its code is whatever
+its sender uploaded, so an agent takes snapshot jobs only for projects whose `agent.json` says
+`"snapshots": true`: there, the `execute` scope can run any code with that machine's commands,
+as push access to a `ref` can. Contents are addressed by their SHA-256 and checked on upload,
+so none can be swapped for another; manifests' paths are relative, normalized and refused with
+`..`, `.git`, a drive or stream colon, or a case clash; the agent resolves each inside the
+workspace and replaces any link on the way. Incremental state is data the next run reads: it is
+kept per project and branch, written only by the agent holding a job of that project, and
+capped in size, so another project's job cannot poison it.
+
 testor can also be that identity: with `jobTokens` in `auth.json`, the agent holding a job's
 lease gets an OpenID Connect token for it (RS256, `sub` = `project:<p>:kind:<k>`, 15 minutes by
 default, for a listed audience only), which clouds and Vault trade for credentials scoped to

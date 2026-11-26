@@ -13,7 +13,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -64,6 +64,9 @@ jobs:
         run: |
           docker buildx build --builder default --load -f runner/Dockerfile -t testor-agent:ci .
           scripts/container-e2e.sh testor:ci testor-agent:ci
+
+      - name: Snapshots and incremental state (scripts/snapshot-e2e.sh)
+        run: scripts/snapshot-e2e.sh testor:ci testor-agent:ci
 
       - name: Two testors on one home and one PostgreSQL (scripts/cluster-e2e.sh)
         run: scripts/cluster-e2e.sh testor:ci testor-agent:ci
@@ -259,10 +262,19 @@ jobs:
           grep -q 'name: t-testor-agent-e2e-browser' out/profiles.yaml && grep -q 'kind: ScaledJob' out/profiles.yaml
           grep -q 'label="browser"' out/profiles.yaml && grep -q 'label="mutation"' out/profiles.yaml && grep -q 'medium: Memory' out/profiles.yaml
           ! helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t --set 'agents.profiles[0].name=Bad_Name' > /dev/null 2>&1
+          # Warm agents: a StatefulSet with a volume per pod; never for a Job per run.
+          helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \
+            --set agents.projects.web.commands.test=test --set agents.persistence.enabled=true \
+            --set agents.autoscaling.keda=true --set 'agents.profiles[0].name=mutation-heavy' \
+            --set 'agents.profiles[0].labels={linux,mutation}' --set 'agents.profiles[0].mode=job' > out/warm.yaml
+          grep -q 'kind: StatefulSet' out/warm.yaml && grep -q 'volumeClaimTemplates' out/warm.yaml && grep -q 'kind: ScaledJob' out/warm.yaml
+          ! helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t --set 'agents.profiles[0].name=m' \
+            --set 'agents.profiles[0].labels={linux}' --set 'agents.profiles[0].mode=job' \
+            --set 'agents.profiles[0].persistence.enabled=true' > /dev/null 2>&1
           helm template t testor -n ci --set tls.acme.domains[0]=testor.example.com \
             --set tls.acme.httpPort=8080 > out/acme.yaml
           grep -q TESTOR_ACME out/acme.yaml && grep -q acme-http out/acme.yaml
           ! helm template t testor -n ci --set tls.existingSecret=tls --set tls.acme.domains[0]=a.example.com > /dev/null 2>&1
           grep -q '"vault"' out/agent-secrets.yaml && grep -q 'serviceAccountName: t-testor-agent' out/agent-secrets.yaml
           docker run --rm -v "$PWD/out:/m" "$KUBECONFORM" -strict -summary \
-            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject,ScaledJob /m/profiles.yaml /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml /m/acme.yaml /m/storage.yaml
+            -kubernetes-version 1.30.0 -skip ServiceMonitor,ScaledObject,ScaledJob /m/profiles.yaml /m/default.yaml /m/full.yaml /m/claim.yaml /m/agents.yaml /m/agent-secrets.yaml /m/database.yaml /m/replicas.yaml /m/acme.yaml /m/storage.yaml /m/warm.yaml

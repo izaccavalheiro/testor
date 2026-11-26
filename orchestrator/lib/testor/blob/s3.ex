@@ -240,7 +240,8 @@ defmodule Testor.Blob.S3 do
               [_, size] <- [Regex.run(~r/<Size>(\d+)<\/Size>/, entry)],
               do: %{
                 key: key |> xml_unescape() |> String.replace_prefix(cfg.prefix, ""),
-                size: String.to_integer(size)
+                size: String.to_integer(size),
+                modified: modified(entry)
               }
 
         acc = acc ++ objects
@@ -259,6 +260,16 @@ defmodule Testor.Blob.S3 do
   end
 
   defp done(objects), do: {:ok, Enum.sort_by(objects, & &1.key)}
+
+  # When the object was written, in Unix seconds (nil when the listing does not say).
+  defp modified(entry) do
+    with [_, at] <- Regex.run(~r/<LastModified>([^<]+)<\/LastModified>/, entry),
+         {:ok, time, _} <- DateTime.from_iso8601(at) do
+      DateTime.to_unix(time)
+    else
+      _ -> nil
+    end
+  end
 
   @impl true
   def delete(cfg, keys) do

@@ -72,6 +72,10 @@ defmodule Testor.Janitor do
     shots = prune(Config.shots_dir(), config["screenshots"], running, now)
     artifacts = prune(Config.artifacts_dir(), config["artifacts"], running, now)
 
+    # 3. Snapshots not sent again, contents no snapshot names, branches' old state.
+    snapshots = Testor.Snapshots.sweep(now)
+    states = Testor.States.sweep(now)
+
     result = %{
       "at" => now_iso(),
       "reason" => reason,
@@ -80,11 +84,15 @@ defmodule Testor.Janitor do
         "screenshotFolders" => shots.folders,
         "artifactFolders" => artifacts.folders,
         "looseFiles" => shots.loose + artifacts.loose,
-        "bytes" => shots.bytes + artifacts.bytes
+        "bytes" => shots.bytes + artifacts.bytes,
+        "snapshots" => snapshots["snapshots"],
+        "blobs" => snapshots["blobs"],
+        "states" => states
       }
     }
 
-    if removed_runs + shots.folders + shots.loose + artifacts.folders + artifacts.loose > 0 do
+    if removed_runs + shots.folders + shots.loose + artifacts.folders + artifacts.loose + states +
+         snapshots["snapshots"] + snapshots["blobs"] > 0 do
       Logger.info("janitor (#{reason}): #{inspect(result["removed"])}")
     end
 

@@ -59,6 +59,9 @@ defmodule Testor.Test.FakeS3 do
   def keys, do: objects() |> Map.keys() |> Enum.sort()
   def object(key), do: objects()[key]
 
+  @doc "Makes `key` look written at `unix` (seconds) in listings."
+  def age(key, unix), do: Agent.update(@agent, &put_in(&1, [:objects, key, :modified], unix))
+
   def put_object(key, data),
     do: Agent.update(@agent, &put_in(&1, [:objects, key], %{data: data, headers: []}))
 
@@ -109,7 +112,10 @@ defmodule Testor.Test.FakeS3 do
 
     contents =
       Enum.map_join(shown, "", fn key ->
-        "<Contents><Key>#{escape(key)}</Key><Size>#{byte_size(object(key).data)}</Size></Contents>"
+        at = object(key) |> Map.get(:modified, System.os_time(:second)) |> DateTime.from_unix!()
+
+        "<Contents><Key>#{escape(key)}</Key><Size>#{byte_size(object(key).data)}</Size>" <>
+          "<LastModified>#{DateTime.to_iso8601(at)}</LastModified></Contents>"
       end)
 
     next =

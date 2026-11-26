@@ -79,7 +79,7 @@ defmodule Testor.Blob.Files do
           key = Path.join(dir, file.rel) |> String.replace("\\", "/") |> String.trim_leading("/"),
           String.starts_with?(key, prefix),
           not String.contains?(Path.basename(key), ".tmp-"),
-          do: %{key: key, size: file.size}
+          do: %{key: key, size: file.size, modified: file.mtime}
 
     {:ok, Enum.sort_by(objects, & &1.key)}
   end

@@ -4,7 +4,7 @@
 #
 #   docker build -f runner/Dockerfile -t testor-agent .
 #
-# It holds PowerShell 7, git, run.ps1 and agent.ps1, runs as an unprivileged user (uid 10001)
+# It holds PowerShell 7, git, run.ps1, agent.ps1 and snapshot.ps1, runs as an unprivileged user (uid 10001)
 # and suits a read-only root file system: the agent's home (runs before they are sent, cloned
 # workspaces) is /home/agent, a volume. Give it agent.json at $TESTOR_AGENT_CONFIG
 # (/etc/testor-agent/agent.json, with "home": "/home/agent/testor" and "upload": true) and its
@@ -31,7 +31,7 @@ RUN case "${TARGETARCH}" in \
  && ln -s /opt/pwsh/pwsh /usr/local/bin/pwsh && rm /tmp/pwsh.tgz \
  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --user-group --create-home --home-dir /home/agent --shell /usr/sbin/nologin agent
-COPY runner/run.ps1 runner/agent.ps1 /opt/testor-agent/
+COPY runner/run.ps1 runner/agent.ps1 runner/snapshot.ps1 /opt/testor-agent/
 USER 10001:10001
 ENV HOME=/home/agent \
     TESTOR_AGENT_CONFIG=/etc/testor-agent/agent.json \

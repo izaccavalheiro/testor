@@ -202,6 +202,12 @@ variable "agents" {
       prometheus_server = optional(string, "http://prometheus-server.monitoring.svc")
       queued_per_agent  = optional(number, 1)
     }), {})
+    # Warm agents: a StatefulSet with a volume per pod (workspaces and caches survive restarts).
+    persistence = optional(object({
+      enabled       = optional(bool, false)
+      size          = optional(string, "20Gi")
+      storage_class = optional(string, "")
+    }), {})
   })
   default = {}
 

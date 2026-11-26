@@ -39,7 +39,7 @@ Requirements: Terraform 1.5 or later, the `hashicorp/helm` provider 3.x.
 | `persistence` | `persistence` | `enabled` (false: an emptyDir, with `storage_s3`), `size`, `storage_class`, `access_modes`, `existing_claim` |
 | `ingress` | `ingress` | `enabled`, `class_name`, `host`, `tls_secret`, `annotations` |
 | `network_policy` | `networkPolicy` | `enabled`, `ingress_from`, `egress_to` |
-| `agents` | `agents` | `enabled`, `token_secret`, `labels`, `projects`, `autoscaling` (KEDA) |
+| `agents` | `agents` | `enabled`, `token_secret`, `labels`, `projects`, `autoscaling` (KEDA), `persistence` (warm agents: a StatefulSet) |
 | `values` | anything | merged last, over everything above |
 
 Outputs: `namespace`, `service_name`, `url` (inside the cluster), `ingress_url`, `revision`,

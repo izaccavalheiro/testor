@@ -81,7 +81,13 @@ An agent on testor's own machine writes its runs straight into testor's home. An
    ["reports/mutation/mutation.json"], "artifacts": ["reports/mutation"], "preserve":
    ["reports/stryker-incremental.json"]}`. `reports` are files testor reads when the run ends,
    `artifacts` files kept with it, `preserve` paths kept between jobs, also in isolated
-   workspaces ([mutation testing](mutation.md)). Paths are inside the workspace.
+   workspaces ([mutation testing](mutation.md)), and `state` paths kept by testor per branch,
+   so they follow a branch from agent to agent ([snapshots](snapshots.md#incremental-state)).
+   Paths are inside the workspace.
+
+   Instead of a `ref`, a job may name a `snapshot` of a working tree, uncommitted changes
+   included, sent with `runner/snapshot.ps1`; agents take them for projects with
+   `"snapshots": true` ([snapshots](snapshots.md)).
 
 ## Agents on other machines
 
@@ -334,6 +340,7 @@ role, and keep the `execute` scope (which queues jobs) to people who may use tho
 | `project`, `kind` | what to run: names (letters, digits, `_ . -`) the agent maps to a command |
 | `labels` | labels the agent must have |
 | `ref` | git branch, tag or commit to check out first |
+| `snapshot`, `branch`, `commit` | a snapshot to run instead of a ref, and what it was taken from ([snapshots](snapshots.md)) |
 | `status` | `queued`, `leased`, `running`, `passed`, `failed`, `cancelled`, `expired` |
 | `requestedBy`, `agent` | who asked for it, which agent holds it |
 | `attempts`, `leaseUntil` | tries so far, when the current lease ends (Unix seconds) |
