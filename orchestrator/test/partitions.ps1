@@ -14,6 +14,16 @@ $out = Join-Path ([IO.Path]::GetTempPath()) "testor-partitions-$PID"
 $null = New-Item -ItemType Directory -Force $out
 Get-ChildItem cover -Filter *.coverdata -ErrorAction SilentlyContinue | Remove-Item
 
+# One build of the test environment before the partitions start: each mix test would compile it
+# into the same _build/test at once, and a partition that loses the race fails (Windows CI:
+# "could not write to file .../consolidated/Elixir.Inspect.beam").
+$mixEnv = $env:MIX_ENV
+$env:MIX_ENV = "test"
+mix compile
+$code = $LASTEXITCODE
+$env:MIX_ENV = $mixEnv
+if ($code) { throw "mix compile failed" }
+
 $started = Get-Date
 $runs = foreach ($i in 1..$Partitions) {
   # A child process takes the environment as it is when it starts.
