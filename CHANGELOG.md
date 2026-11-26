@@ -7,6 +7,13 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Changed
+
+- The test suite runs in partitions at once (`orchestrator/test/partitions.ps1`, coverage
+  merged with `mix test.coverage`): about a minute instead of three on the runner. Container
+  images build for amd64 on pull requests; arm64 builds on tags only, on native arm64 runners,
+  joined with amd64 in one index.
+
 ## 0.12.0 - 2026-11-26
 
 ### Added

@@ -1,10 +1,13 @@
-# The orchestrator's OCI image (orchestrator/Dockerfile), for linux/amd64 and linux/arm64.
+# The orchestrator's and the agent's OCI images (orchestrator/Dockerfile, runner/Dockerfile).
 #
-#   pull requests that touch it   build both platforms and run the container's health probe;
-#                                 nothing is pushed
-#   a tag v<version>              push ghcr.io/<owner>/testor:<version> (and :latest for a
-#                                 stable version) and attest its build provenance, so
-#                                 `gh attestation verify oci://...` checks where it came from
+#   pull requests that touch it   build them for linux/amd64 and test them (health probe, two
+#                                 accounts, the agent's and the cluster's end to end); nothing
+#                                 is pushed
+#   a tag v<version>              build each for linux/amd64 and linux/arm64 on runners of that
+#                                 platform (native arm64), check them there, push
+#                                 ghcr.io/<owner>/testor[-agent]:<version> (and :latest for a
+#                                 stable version) as one index, and attest its build provenance,
+#                                 so `gh attestation verify oci://...` checks where it came from
 
 name: Container
 
@@ -24,21 +27,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Every pull request, push and tag: the amd64 images, built and tested (no QEMU, no arm64:
+  # arm64 is built natively, on tags only, below).
   image:
-    name: Build${{ startsWith(github.ref, 'refs/tags/') && ' and publish' || '' }}
+    name: Build
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    env:
-      PUBLISH: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Check the image starts and answers its health probe
@@ -69,78 +68,122 @@ jobs:
       - name: Two testors on one home and one PostgreSQL (scripts/cluster-e2e.sh)
         run: scripts/cluster-e2e.sh testor:ci testor-agent:ci
 
-      - name: The agent image for arm64 starts PowerShell and parses the agent (under QEMU)
-        run: |
-          docker buildx build --load --platform linux/arm64 -f runner/Dockerfile -t testor-agent:arm64 .
-          docker run --rm --platform linux/arm64 --entrypoint pwsh testor-agent:arm64 -NoProfile -Command '
-            $errors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile("/opt/testor-agent/agent.ps1", [ref]$null, [ref]$errors)
-            if ($errors) { $errors; exit 1 }
-            "PowerShell $($PSVersionTable.PSVersion) on $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"'
-
-      - id: meta
-        if: env.PUBLISH == 'true'
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+  # Tags: each image for each platform on a runner of that platform (native arm64, no QEMU),
+  # checked there, pushed by digest with its provenance and SBOM; joined below.
+  publish:
+    name: Publish ${{ matrix.image }} (${{ matrix.arch }})
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: image
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        image: [testor, testor-agent]
+        arch: [amd64, arm64]
+        include:
+          - { arch: amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+          - { image: testor, context: orchestrator, file: orchestrator/Dockerfile }
+          - { image: testor-agent, context: ., file: runner/Dockerfile }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          images: ghcr.io/${{ github.repository_owner }}/testor
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-          flavor: |
-            latest=${{ !contains(github.ref_name, '-') }}
-      - if: env.PUBLISH == 'true'
-        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check it on its own platform
+        run: |
+          docker buildx build --load -f ${{ matrix.file }} -t check ${{ matrix.context }}
+          if [ "${{ matrix.image }}" = testor ]; then
+            docker run -d --name check --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges check
+            for i in $(seq 1 30); do docker exec check /app/bin/testor eval 'Testor.Probe.check()' && exit 0; sleep 2; done
+            docker logs check; exit 1
+          else
+            docker run --rm --entrypoint pwsh check -NoProfile -Command '
+              $errors = $null
+              [void][System.Management.Automation.Language.Parser]::ParseFile("/opt/testor-agent/agent.ps1", [ref]$null, [ref]$errors)
+              if ($errors) { $errors; exit 1 }
+              "PowerShell $($PSVersionTable.PSVersion) on $([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)"'
+          fi
+
       - id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: orchestrator
-          platforms: linux/amd64,linux/arm64
-          push: ${{ env.PUBLISH == 'true' }}
-          tags: ${{ steps.meta.outputs.tags || 'testor:ci' }}
-          labels: ${{ steps.meta.outputs.labels }}
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: linux/${{ matrix.arch }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           provenance: mode=max
           sbom: true
-
-      - if: env.PUBLISH == 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - name: Keep its digest for the manifest
+        run: |
+          mkdir -p digests
+          echo "${{ steps.push.outputs.digest }}" > "digests/${{ matrix.image }}-${{ matrix.arch }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/testor
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+          name: digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: digests/*
+          retention-days: 1
 
-      # The agent image (runner/Dockerfile): linux/amd64 and linux/arm64.
-      - id: agent-meta
-        if: env.PUBLISH == 'true'
+  # Tags: each image's two platforms under its version tags, and the provenance of that index.
+  manifest:
+    name: Manifest ${{ matrix.image }}
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      matrix:
+        image: [testor, testor-agent]
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          path: digests
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: ghcr.io/${{ github.repository_owner }}/testor-agent
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
           flavor: |
             latest=${{ !contains(github.ref_name, '-') }}
-      - id: agent-push
-        if: env.PUBLISH == 'true'
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - id: index
+        name: Join the platforms under the version's tags
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          refs=$(for f in digests/*; do printf '%s@%s ' "$IMAGE" "$(cat "$f")"; done)
+          args=$(for t in $TAGS; do printf -- '-t %s ' "$t"; done)
+          docker buildx imagetools create $args $refs
+          first=$(echo "$TAGS" | head -1)
+          digest=$(docker buildx imagetools inspect "$first" --format '{{json .Manifest}}' | python3 -c 'import json, sys; print(json.load(sys.stdin)["digest"])')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          context: .
-          file: runner/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.agent-meta.outputs.tags }}
-          labels: ${{ steps.agent-meta.outputs.labels }}
-          provenance: mode=max
-          sbom: true
-      - if: env.PUBLISH == 'true'
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/testor-agent
-          subject-digest: ${{ steps.agent-push.outputs.digest }}
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          subject-digest: ${{ steps.index.outputs.digest }}
           push-to-registry: true
 
   chart:

@@ -210,8 +210,13 @@ if ($Test) {
   mix format --check-formatted
   "== mix compile --warnings-as-errors"
   mix compile --warnings-as-errors --force
-  "== mix test --cover"
-  mix test --cover --color @TestArgs
+  # Chosen tests run as asked; the whole suite runs in partitions at once (test/partitions.ps1).
+  if ($TestArgs.Count) {
+    "== mix test --cover"
+    mix test --cover --color @TestArgs
+  } else {
+    & (Join-Path (Get-Location) "test/partitions.ps1")
+  }
   return
 }
 

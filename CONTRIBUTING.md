@@ -30,7 +30,7 @@ let a runner do it: every check runs there.
 
 | Check | Locally | On a runner |
 | ----- | ------- | ----------- |
-| format, warnings as errors, ExUnit with 100% coverage | `cd orchestrator && mix format --check-formatted && mix compile --warnings-as-errors && mix test --cover` | `task testor:test` |
+| format, warnings as errors, ExUnit with 100% coverage | `cd orchestrator && mix format --check-formatted && mix compile --warnings-as-errors && pwsh test/partitions.ps1` (four partitions at once, coverage merged; `mix test --cover` runs them one after the other) | `task testor:test` |
 | format the sources | `mix format` | `task testor:format` (copies them back) |
 | release smoke test | `MIX_ENV=prod mix release && pwsh scripts/smoke.ps1 -Release orchestrator/_build/prod/rel/testor` | `task testor:smoke` |
 | everything CI runs on the orchestrator | | `task testor:ci` |
