@@ -46,7 +46,7 @@ IFS='|' read cstatus cwarn < /tmp/c.txt
 sleep 1; pgrep -u runner -f "sleep 120" >/dev/null && bad "the sleep survived" || ok "the run's whole tree is gone"
 
 # Deleting: the service removes files and folders the test account wrote.
-mkdir_out=$(as_runner pwsh -NoProfile -Command 'Set-Location /srv/workspaces; New-Item -ItemType Directory -Force test-results | Out-Null; & /srv/testor/home/run.ps1 -Project two -Kind shots -Body { [IO.File]::WriteAllBytes((Join-Path $PWD "test-results/a.png"), [byte[]](1,2,3)) }' 2>&1)
+mkdir_out=$(as_runner pwsh -NoProfile -Command 'Set-Location /srv/workspaces; New-Item -ItemType Directory -Force test-results | Out-Null; & /srv/testor/home/run.ps1 -Project two -Kind shots -Body { [IO.File]::WriteAllBytes((Join-Path $PWD "test-results/a.png"), [byte[]](0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A)) }' 2>&1)
 sleep 3
 shots=$(grep -l '"kind": *"shots"' /srv/testor/home/runs/*.json | head -1 | xargs basename | sed 's/.json$//')
 [ -d /srv/testor/home/screenshots/$shots ] && ok "the run kept a screenshot folder (written by the test account)" || bad "no screenshot folder: $mkdir_out"

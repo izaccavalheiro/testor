@@ -133,6 +133,24 @@ function Save-Record {
 }
 
 # Images and videos under the folders test runners write screenshots to.
+# Whether a file starts as an image or a video does (PNG, JPEG, GIF, WebP, WebM, MP4): a file
+# named .png that is not one (a test suite's fixture: "png" in a.png) is no screenshot, and
+# would show as a broken image.
+function Test-Media([IO.FileInfo]$file) {
+  try {
+    $stream = [IO.File]::OpenRead($file.FullName)
+    try { $head = [byte[]]::new(12); $n = $stream.Read($head, 0, 12) } finally { $stream.Dispose() }
+  } catch { return $false }
+  if ($n -lt 4) { return $false }
+  $text = [Text.Encoding]::ASCII.GetString($head, 0, $n)
+  ($head[0] -eq 0x89 -and $text.Substring(1, 3) -eq "PNG") -or
+    ($head[0] -eq 0xFF -and $head[1] -eq 0xD8 -and $head[2] -eq 0xFF) -or
+    $text.StartsWith("GIF8") -or
+    ($n -ge 12 -and $text.StartsWith("RIFF") -and $text.Substring(8, 4) -eq "WEBP") -or
+    ($head[0] -eq 0x1A -and $head[1] -eq 0x45 -and $head[2] -eq 0xDF -and $head[3] -eq 0xA3) -or
+    ($n -ge 8 -and $text.Substring(4, 4) -eq "ftyp")
+}
+
 function Find-Media([string]$dir, [bool]$inShotFolder) {
   foreach ($item in Get-ChildItem -LiteralPath $dir -Force -ErrorAction SilentlyContinue) {
     # Links are never followed nor copied: one could point at files outside the project.
@@ -141,7 +159,7 @@ function Find-Media([string]$dir, [bool]$inShotFolder) {
       if ($item.Name -in "node_modules", "target", ".git", ".venv", "playwright-report") { continue }
       $shots = $inShotFolder -or ($item.Name -in "test-results", "__screenshots__", "screenshots", ".vitest-attachments")
       Find-Media $item.FullName $shots
-    } elseif ($inShotFolder -and ($item.Extension -in $imageExt -or $item.Extension -in $videoExt) -and $item.LastWriteTime -ge $since) {
+    } elseif ($inShotFolder -and ($item.Extension -in $imageExt -or $item.Extension -in $videoExt) -and $item.LastWriteTime -ge $since -and (Test-Media $item)) {
       $item
     }
   }
@@ -451,6 +469,9 @@ try {
       $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
       Copy-Item -LiteralPath $file.FullName -Destination $target -Force
     }
+    # What the command wrote into SCREENSHOT_DIR itself, kept only if it is an image.
+    Get-ChildItem -LiteralPath $shotDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { -not (Test-Media $_) } |
+      Remove-Item -Force -ErrorAction SilentlyContinue
     $images = @(Get-ChildItem -LiteralPath $shotDir -Recurse -File -ErrorAction SilentlyContinue)
     $record.screenshots = $images.Count
     if ($images.Count -eq 0) { Remove-Item -LiteralPath $shotDir -Recurse -Force -ErrorAction SilentlyContinue }

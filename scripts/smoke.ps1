@@ -64,6 +64,8 @@ try {
     " $([char]0x2713) tests/a.test.ts (2 tests) 3ms"
     " $([char]0x276F) tests/b.test.ts (1 test | 1 failed) 2ms"
     [IO.File]::WriteAllBytes((Join-Path $env:SCREENSHOT_DIR "b-shot.png"), [Convert]::FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="))
+    # Named .png, not one (a test suite's fixture): no screenshot.
+    Set-Content -NoNewline -LiteralPath (Join-Path $env:SCREENSHOT_DIR "fixture.png") -Value "png"
   } | Out-Null
   $failed = $false
   try {
@@ -76,7 +78,7 @@ try {
     Set-Content -LiteralPath report/index.html -Value "<html><script>fetch('/api/state')</script></html>"
     Set-Content -LiteralPath report/data.json -Value '{"ok":true}'
     Set-Content -LiteralPath notes.md -Value "# notes"
-    [IO.File]::WriteAllBytes((Join-Path (Get-Location) "test-results/demo/video.webm"), [byte[]](0..99))
+    [IO.File]::WriteAllBytes((Join-Path (Get-Location) "test-results/demo/video.webm"), [byte[]](@(0x1A, 0x45, 0xDF, 0xA3) + (4..99)))
     "coverage written"
   } | Out-Null
 
