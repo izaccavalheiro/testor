@@ -156,7 +156,7 @@ defmodule Testor.StorageCLITest do
     FakeS3.answer(nil)
 
     File.rm!(Path.join(Config.data_dir(), "config.json"))
-    assert {:error, ~s(config.json has no "storage" of type "s3")} = CLI.migrate()
+    assert {:error, ~s(config.json has no "storage" of type "s3" or "azure")} = CLI.migrate()
     assert {:error, _} = CLI.verify()
     assert {:error, _} = CLI.export(tmp)
   end

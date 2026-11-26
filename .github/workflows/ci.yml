@@ -134,7 +134,7 @@ jobs:
           PY
 
   brokers:
-    name: Job queue and object storage on real servers (ElasticMQ, NATS JetStream, versitygw)
+    name: Job queue and object storage on real servers (ElasticMQ, NATS JetStream, versitygw, Azurite)
     runs-on: ubuntu-24.04
     env:
       MIX_ENV: test
@@ -142,6 +142,8 @@ jobs:
       TESTOR_S3_ENDPOINT: http://127.0.0.1:7070
       TESTOR_S3_ACCESS_KEY: ci-access
       TESTOR_S3_SECRET_KEY: ci-secret-key-12345
+      TESTOR_AZURITE_ENDPOINT: http://127.0.0.1:10000/devstoreaccount1
+      AZURITE: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
       VERSITYGW: versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
       ELASTICMQ: softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c # 1.7.1
       NATS: nats@sha256:0764f1952d72e92e35ad8b152da0f9652a49cb1186b6445fdd45131d81ad6d7e # 2.12
@@ -162,6 +164,7 @@ jobs:
           docker run -d --name nats -p 127.0.0.1:4222:4222 "$NATS" -js
           # versitygw over a folder: the bucket is a folder of it.
           mkdir -p "$RUNNER_TEMP/s3/testor-ci" && chmod -R 777 "$RUNNER_TEMP/s3"
+          docker run -d --name azurite -p 127.0.0.1:10000:10000 "$AZURITE" azurite-blob --blobHost 0.0.0.0
           docker run -d --name s3 -p 127.0.0.1:7070:7070 -v "$RUNNER_TEMP/s3:/data" "$VERSITYGW" \
             --access "$TESTOR_S3_ACCESS_KEY" --secret "$TESTOR_S3_SECRET_KEY" posix /data
           for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:7070/ && break; sleep 1; done

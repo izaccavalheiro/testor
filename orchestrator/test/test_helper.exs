@@ -33,6 +33,7 @@ end
 
 # An S3 API in memory (Testor.Storage, Testor.Blob.S3), for the tests that keep runs in a bucket.
 {:ok, _} = Supervisor.start_child(Testor.Supervisor, Testor.Test.FakeS3.child())
+{:ok, _} = Supervisor.start_child(Testor.Supervisor, Testor.Test.FakeAzure.child())
 
 ExUnit.after_suite(fn _ -> File.rm_rf(root) end)
 # With TESTOR_DATABASE_URL the job queue is in PostgreSQL (CI's PostgreSQL job): its own

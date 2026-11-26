@@ -182,7 +182,12 @@ defmodule Testor.Audit do
     with true <- Testor.Storage.s3?() and size > state.sent,
          {:ok, io} <- File.open(file(), [:read, :binary]),
          {:ok, data} <- read_close(io, state.sent, size - state.sent),
-         :ok <- Testor.Blob.S3.put(Testor.Storage.config(), segment_key(), data) do
+         :ok <-
+           Testor.Storage.adapter_for(Testor.Storage.config()).put(
+             Testor.Storage.config(),
+             segment_key(),
+             data
+           ) do
       %{state | sent: size}
     else
       {:error, why} ->
@@ -225,8 +230,9 @@ defmodule Testor.Audit do
     cfg = Testor.Storage.config()
 
     with true <- Testor.Storage.s3?(),
-         {:ok, [_ | _] = objects} <- Testor.Blob.S3.list(cfg, "audit/#{Testor.Cluster.instance()}/"),
-         {:ok, text} <- Testor.Blob.S3.get(cfg, List.last(objects).key, :binary) do
+         {:ok, [_ | _] = objects} <-
+           Testor.Storage.adapter_for(cfg).list(cfg, "audit/#{Testor.Cluster.instance()}/"),
+         {:ok, text} <- Testor.Storage.adapter_for(cfg).get(cfg, List.last(objects).key, :binary) do
       text
     else
       _ -> ""

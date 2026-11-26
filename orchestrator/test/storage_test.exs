@@ -270,7 +270,7 @@ defmodule Testor.StorageTest do
         assert Storage.read_config() == %{type: :files}
       end)
 
-    assert log =~ "bucket is a bucket name" and log =~ ~s(type is "files" or "s3")
+    assert log =~ "bucket is a bucket name" and log =~ ~s(type is "files", "s3" or "azure")
 
     # Started with it: the bucket's runs restored; started without it again: the home.
     write.(%{

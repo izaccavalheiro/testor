@@ -21,7 +21,6 @@ defmodule Testor.Storage.CLI do
   changed, lost or not all sent is named.
   """
   alias Testor.{Attestation, Cluster, Config, Files, Storage}
-  alias Testor.Blob.S3
   alias Testor.Storage.Shared
 
   @doc "Copies the home's finished runs into the bucket: `{:ok, counts}` or `{:error, why}`."
@@ -65,7 +64,7 @@ defmodule Testor.Storage.CLI do
     record = Map.put(run, "stored", true)
 
     with {:ok, acc} <- result,
-         :ok <- S3.put(cfg, "runs/#{id}.json", JSON.encode!(record)) do
+         :ok <- Storage.adapter_for(cfg).put(cfg, "runs/#{id}.json", JSON.encode!(record)) do
       Files.write_json(Config.run_file(id), record)
       if pg, do: Shared.put(record)
       %{acc | runs: acc.runs + 1}
@@ -80,7 +79,7 @@ defmodule Testor.Storage.CLI do
     if same?(cfg, key, path) do
       {:cont, {:ok, %{acc | kept: acc.kept + 1}}}
     else
-      case S3.put(cfg, key, {:file, path}) do
+      case Storage.adapter_for(cfg).put(cfg, key, {:file, path}) do
         :ok -> {:cont, {:ok, %{acc | sent: acc.sent + 1, bytes: acc.bytes + Files.size(path)}}}
         {:error, why} -> {:halt, {:error, "#{key}: #{why}"}}
       end
@@ -89,7 +88,7 @@ defmodule Testor.Storage.CLI do
 
   # The bucket's object is this file: its checksum, or its size when it keeps none.
   defp same?(cfg, key, path) do
-    case S3.head(cfg, key) do
+    case Storage.adapter_for(cfg).head(cfg, key) do
       {:ok, %{sha256: sum}} when is_binary(sum) -> sum == Base.encode64(sha256(path))
       {:ok, %{size: size}} -> size == Files.size(path)
       _ -> false
@@ -120,7 +119,7 @@ defmodule Testor.Storage.CLI do
   """
   def verify(opts \\ []) do
     with {:ok, cfg} <- start(),
-         {:ok, objects} <- S3.list(cfg, "runs/") do
+         {:ok, objects} <- Storage.adapter_for(cfg).list(cfg, "runs/") do
       out = Keyword.get(opts, :out, &IO.puts/1)
       {public, _} = Attestation.keypair()
       ids = stored_ids(objects, opts)
@@ -147,7 +146,7 @@ defmodule Testor.Storage.CLI do
   end
 
   defp verify_run(cfg, id, public) do
-    with {:ok, text} <- S3.get(cfg, "attestations/#{id}.dsse.json", :binary),
+    with {:ok, text} <- Storage.adapter_for(cfg).get(cfg, "attestations/#{id}.dsse.json", :binary),
          {:ok, envelope} <- JSON.decode(text),
          {:ok, statement} <- Attestation.verify(envelope, public) do
       Enum.reduce_while(statement["subject"] || [], {:ok, 0}, fn subject, {:ok, n} ->
@@ -173,7 +172,7 @@ defmodule Testor.Storage.CLI do
     tmp = Path.join(System.tmp_dir!(), "testor-verify-#{System.unique_integer([:positive])}")
 
     try do
-      case S3.get(cfg, key, {:file, tmp}) do
+      case Storage.adapter_for(cfg).get(cfg, key, {:file, tmp}) do
         :ok ->
           if Base.encode16(sha256(tmp), case: :lower) == digest, do: :ok, else: {:error, "#{key} has changed"}
 
@@ -185,18 +184,19 @@ defmodule Testor.Storage.CLI do
     end
   end
 
-  @doc "Copies every run in the bucket into a home at `dir` (to leave S3): `{:ok, runs}`."
+  @doc "Copies every run in the bucket into a home at `dir` (to leave the bucket): `{:ok, runs}`."
   def export(dir, opts \\ []) do
     with {:ok, cfg} <- start(),
-         {:ok, objects} <- S3.list(cfg, "runs/") do
+         {:ok, objects} <- Storage.adapter_for(cfg).list(cfg, "runs/") do
       out = Keyword.get(opts, :out, &IO.puts/1)
       ids = stored_ids(objects, opts)
 
       for id <- ids do
-        {:ok, keys} = Storage.stored_keys(id, S3, cfg)
+        {:ok, keys} = Storage.stored_keys(id, Storage.adapter_for(cfg), cfg)
 
         for %{key: key, size: size} <- keys, Files.size(Path.join(dir, key)) != size or size == 0 do
-          with {:error, why} <- S3.get(cfg, key, {:file, Path.join(dir, key)}), do: out.("#{key}: #{why}")
+          with {:error, why} <- Storage.adapter_for(cfg).get(cfg, key, {:file, Path.join(dir, key)}),
+               do: out.("#{key}: #{why}")
         end
       end
 
@@ -223,8 +223,8 @@ defmodule Testor.Storage.CLI do
     if pg, do: {:ok, _} = Testor.Jobs.Postgres.start_link()
 
     case Storage.read_config() do
-      %{type: :s3} = cfg -> {:ok, cfg}
-      _ -> {:error, ~s(config.json has no "storage" of type "s3")}
+      %{type: type} = cfg when type in [:s3, :azure] -> {:ok, cfg}
+      _ -> {:error, ~s(config.json has no "storage" of type "s3" or "azure")}
     end
   end
 

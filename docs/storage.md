@@ -40,6 +40,36 @@ Credentials come as AWS SDKs take them: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCE
 `AWS_SESSION_TOKEN`), or `AWS_ROLE_ARN` and `AWS_WEB_IDENTITY_TOKEN_FILE` (IAM roles for service
 accounts), traded with STS. The storage is read when testor starts: a change needs a restart.
 
+### Azure Blob Storage
+
+```json
+{
+  "storage": {
+    "type": "azure",
+    "account": "acmetestor",
+    "container": "runs",
+    "prefix": "testor",
+    "endpoint": "http://azurite:10000/devstoreaccount1",
+    "publicEndpoint": "https://files.example.com",
+    "presign": true,
+    "cacheMB": 2048
+  }
+}
+```
+
+`account` and `container` are required; `endpoint` defaults to
+`https://<account>.blob.core.windows.net` (set it for Azurite or a private endpoint). Credentials
+come as Azure's SDKs take them: the account key in `AZURE_STORAGE_KEY` (Shared Key), or a
+Microsoft Entra workload identity (AKS: `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, set by the workload identity webhook), traded for an access token of
+`https://storage.azure.com`. With the key, browser links are service SAS links (read only, five
+minutes); with a workload identity, testor serves every file itself. Every blob carries its
+SHA-256 as metadata and its MD5 as `Content-MD5`, which the service checks; a file over 64 MB goes
+in 16 MB blocks, each with its own MD5. A blob an immutability policy or legal hold protects is
+left as it is. Create the container first (`az storage container create`); everything else on
+this page applies to Azure as to S3, `bucket` meaning the container. In Kubernetes, give the
+chart the section as `config` (with the key as `extraEnv`, or the workload identity's labels).
+
 ## What is kept where
 
 A run's objects have the keys its files have in the home, under `prefix`:
@@ -194,3 +224,4 @@ and `s3:ListBucket` on it (`s3:AbortMultipartUpload` too, for large files).
 | MinIO, Ceph, versitygw | `pathStyle: true`; versitygw runs in CI |
 | Cloudflare R2 | `endpoint: https://<account>.r2.cloudflarestorage.com`, `region: auto` |
 | Google Cloud Storage | its XML API (`endpoint: https://storage.googleapis.com`) with HMAC keys; not tested in CI |
+| Azure Blob Storage | `"type": "azure"`, above; Azurite runs in CI |
