@@ -108,6 +108,28 @@ defmodule Testor.MCP.Tools do
       "scope" => "read"
     },
     %{
+      "name" => "get_impacted_tests",
+      "title" => "Tests a change affects, first",
+      "description" =>
+        "The spec files of a project ranked for a change (the files changed): tests that failed with " <>
+          "those files before, cover them, are named after them or failed lately come first, each with " <>
+          "its reasons. Run them first.",
+      "inputSchema" => %{
+        "type" => "object",
+        "properties" => %{
+          "project" => %{"type" => "string", "description" => "the project (snapshot folder) name"},
+          "changed" => %{
+            "type" => "array",
+            "items" => %{"type" => "string"},
+            "description" => "changed paths"
+          },
+          "limit" => %{"type" => "integer", "description" => "how many specs (1 to 500, 50 by default)"}
+        },
+        "required" => ["project", "changed"]
+      },
+      "scope" => "read"
+    },
+    %{
       "name" => "find_hotspots",
       "title" => "Costly spec files",
       "description" =>
@@ -220,6 +242,9 @@ defmodule Testor.MCP.Tools do
 
       name == "find_flaky_specs" and not Access.allowed?(principal, args["project"]) ->
         {:ok, %{"flaky" => []}}
+
+      name == "get_impacted_tests" and not Access.allowed?(principal, args["project"]) ->
+        {:ok, %{"specs" => []}}
 
       name == "find_hotspots" and not Access.allowed?(principal, args["project"]) ->
         {:ok, %{"mostFailing" => [], "slowest" => [], "mostRetried" => [], "runs" => 0}}
@@ -358,6 +383,14 @@ defmodule Testor.MCP.Tools do
 
   defp run(_args, "list_projects", _base, principal),
     do: {:ok, %{"projects" => Access.filter(Query.projects(), principal)}}
+
+  defp run(args, "get_impacted_tests", _base, _principal) do
+    with true <- is_binary(args["project"]) || {:error, "project is required"},
+         {:ok, changed} <- Testor.Impact.changed(args["changed"]),
+         {:ok, limit} <- optional(args, "limit", &(is_integer(&1) and &1 in 1..500)) do
+      {:ok, %{"specs" => Testor.Impact.rank(args["project"], changed, limit || 50)}}
+    end
+  end
 
   defp run(args, "find_hotspots", _base, _principal) do
     with true <- is_binary(args["project"]) || {:error, "project is required"},

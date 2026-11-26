@@ -66,6 +66,25 @@ try {
   }
 } catch { Write-Warning "testor: config.json: $_" }
 
+# The files this change touches, for impact analysis: the agent's list (a snapshot job's,
+# TESTOR_CHANGED_FILES), else git's (the branch's commits since it left its upstream's main, and
+# what is not committed). Relative paths, 1,000 at most.
+function Get-ChangedFiles {
+  try {
+    if ($env:TESTOR_CHANGED_FILES -and (Test-Path -LiteralPath $env:TESTOR_CHANGED_FILES)) { $paths = @(Get-Content -LiteralPath $env:TESTOR_CHANGED_FILES) }
+    else {
+      $inside = git rev-parse --is-inside-work-tree 2>$null
+      if ($LASTEXITCODE -or "$inside".Trim() -ne "true") { $global:LASTEXITCODE = 0; return $null }
+      $base = git merge-base HEAD "$(git rev-parse --abbrev-ref origin/HEAD 2>$null)".Trim() 2>$null
+      $paths = @(if ($base -and -not $LASTEXITCODE) { git diff --name-only "$("$base".Trim())...HEAD" 2>$null }) +
+        @(git status --porcelain 2>$null | ForEach-Object { ($_.Substring([math]::Min(3, $_.Length)) -split " -> ")[-1].Trim('"') })
+    }
+    $global:LASTEXITCODE = 0
+    $paths = @($paths | Where-Object { $_ -and -not [IO.Path]::IsPathRooted($_) -and ($_ -split "[\\/]") -notcontains ".." } | ForEach-Object { $_ -replace "\\", "/" } | Select-Object -Unique -First 1000)
+    if ($paths.Count) { , $paths } else { $null }
+  } catch { $global:LASTEXITCODE = 0; $null }
+}
+
 $record = [ordered]@{
   id         = $id
   project    = $Project
@@ -98,6 +117,9 @@ $record = [ordered]@{
   # gates and commit statuses leave such runs out.
   select     = if ($env:TESTOR_SELECT) { try { $env:TESTOR_SELECT | ConvertFrom-Json -AsHashtable } catch { $null } } else { $null }
   session    = if ($env:TESTOR_SESSION) { $env:TESTOR_SESSION } else { $null }
+  # A batch's shard (Testor.Shards): left out of gates, merged into the batch's run.
+  shard      = if ("$env:TESTOR_SHARD_INDEX" -match "^\d+$" -and "$env:TESTOR_SHARD_TOTAL" -match "^\d+$") { [ordered]@{ index = [int]$env:TESTOR_SHARD_INDEX; total = [int]$env:TESTOR_SHARD_TOTAL } } else { $null }
+  changedFiles = Get-ChangedFiles
   # The W3C trace this run belongs to (the agent gives a job's), for testor's spans.
   traceparent = if ("$env:TRACEPARENT" -match "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$") { $env:TRACEPARENT } else { $null }
 }

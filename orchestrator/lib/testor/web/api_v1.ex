@@ -600,6 +600,21 @@ defmodule Testor.Web.ApiV1 do
     end)
   end
 
+  # Spec files ranked for a change (Testor.Impact).
+  post "/projects/:project/impact" do
+    with {:ok, params, conn} <- body_params(conn, 1_048_576),
+         :ok <- project_name(conn, project) do
+      limit = if is_integer(params["limit"]) and params["limit"] in 1..2000, do: params["limit"], else: 50
+
+      case Testor.Impact.changed(params["changed"]) do
+        {:ok, changed} -> json(conn, 200, %{"data" => Testor.Impact.rank(project, changed, limit)})
+        {:error, message} -> error(conn, 400, "bad_request", message)
+      end
+    else
+      {:error, conn} -> conn
+    end
+  end
+
   # --- watch sessions (docs/handoff.md) -------------------------------------------------------
   # A job that stays leased while its client sends the snapshots of its working tree.
 

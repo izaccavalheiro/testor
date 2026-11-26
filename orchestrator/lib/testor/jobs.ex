@@ -48,7 +48,20 @@ defmodule Testor.Jobs do
 
   # --- reads --------------------------------------------------------------------------------
 
-  def get(id), do: __MODULE__ |> GenServer.call({:get, id}) |> public()
+  def get(id) do
+    case __MODULE__ |> GenServer.call({:get, id}) |> public() do
+      # A batch shows its shards.
+      %{"batch" => true, "children" => ids} = job ->
+        Map.put(
+          job,
+          "shardJobs",
+          for(child <- ids, do: child |> get() |> Map.take(["id", "status", "shard", "runId", "agent"]))
+        )
+
+      job ->
+        job
+    end
+  end
 
   @doc "Jobs, newest first, optionally with one status."
   def list(status \\ nil), do: __MODULE__ |> GenServer.call({:list, status}) |> Enum.map(&public/1)
@@ -75,7 +88,7 @@ defmodule Testor.Jobs do
       true ->
         with {:ok, source} <- snapshot(params),
              {:ok, source} <- exec_claim(params, source, who) do
-          source = cached(params, source)
+          source = params |> cached(source) |> plan(params) |> order(params)
 
           case GenServer.call(__MODULE__, {:enqueue, params, source, who}) do
             {:ok, job} when cfg != nil -> dispatch(cfg, queue, job)
@@ -87,22 +100,18 @@ defmodule Testor.Jobs do
 
   # A job's snapshot, read before it is queued: its id, the branch and commit it is of, and with
   # select.affected the files that changed since its base.
-  defp snapshot(%{"snapshot" => id, "project" => project} = params)
+  defp snapshot(%{"snapshot" => id, "project" => project})
        when is_binary(id) and is_binary(project) do
     with {:ok, hex} <- Testor.Snapshots.parse_id(id),
          true <- name?(project),
          {:ok, manifest} <- Testor.Snapshots.manifest(project, hex) do
       source = Map.take(manifest, ["branch", "commit"]) |> Map.put("snapshot", id)
 
-      case params["select"] do
-        %{"affected" => a} when a in [true, "then-all"] ->
-          case Testor.Snapshots.changed(project, hex, manifest["branch"]) do
-            {:ok, paths} -> {:ok, Map.put(source, "changed", paths)}
-            :none -> {:ok, source}
-          end
-
-        _ ->
-          {:ok, source}
+      # What changed since the branch's last snapshot: the runs' changedFiles (impact analysis),
+      # and select.affected's files.
+      case Testor.Snapshots.changed(project, hex, manifest["branch"]) do
+        {:ok, paths} -> {:ok, Map.put(source, "changed", paths)}
+        :none -> {:ok, source}
       end
     else
       _ -> {:error, "snapshot is the id of a snapshot of this project (sha256:<hex>)"}
@@ -171,6 +180,32 @@ defmodule Testor.Jobs do
   end
 
   defp cached(_params, source), do: source
+
+  # A snapshot batch's weighted plan (Testor.Shards): the files of each shard, when every shard
+  # gets some.
+  defp plan(source, %{"shards" => n, "project" => project, "kind" => kind})
+       when is_integer(n) and n in 2..64 do
+    with "sha256:" <> hex <- source["snapshot"],
+         {:ok, manifest} <- Testor.Snapshots.manifest(project, hex),
+         [_ | _] = weighted <- Testor.Shards.weighted(project, kind, manifest),
+         bins = Testor.Shards.plan(weighted, n),
+         true <- Enum.all?(bins, &(&1 != [])) do
+      Map.put(source, "plan", bins)
+    else
+      _ -> source
+    end
+  end
+
+  defp plan(source, _params), do: source
+
+  # "order": "impact": the spec files ranked for the change (Testor.Impact), for the agent's
+  # TESTOR_TEST_ORDER; "impact": {"first": n} runs the first n alone, then the rest.
+  defp order(source, %{"order" => "impact", "project" => project}) do
+    ranked = Testor.Impact.rank(project, source["changed"] || [], 2_000) |> Enum.map(& &1["file"])
+    if ranked == [], do: source, else: Map.put(source, "testOrder", ranked)
+  end
+
+  defp order(source, _params), do: source
 
   # The broker's message for a new job; a job the broker refused is not left queued.
   defp dispatch(cfg, queue, job) do
@@ -250,6 +285,7 @@ defmodule Testor.Jobs do
       {:ok, job} ->
         broker(job["dispatch"], fn cfg, queue, receipt -> cfg.adapter.ack(cfg, queue, receipt) end)
         Testor.ResultCache.record(job, result, job["status"])
+        if job["parent"], do: Task.start(fn -> Testor.Batches.settle(job["parent"]) end)
         {:ok, public(job)}
 
       error ->
@@ -274,6 +310,11 @@ defmodule Testor.Jobs do
   """
   def cancel(id) do
     case request_cancel(id) do
+      {:ok, %{"batch" => true, "children" => children} = job} ->
+        Enum.each(children, &cancel/1)
+        Task.start(fn -> Testor.Batches.settle(id) end)
+        {:ok, job}
+
       {:ok, %{"runId" => run} = job} when is_binary(run) ->
         # A run on this machine is cancelled here; a remote one by its agent, which hears it
         # at its next heartbeat.
@@ -302,6 +343,12 @@ defmodule Testor.Jobs do
 
   @doc "Sweeps leases as at `now` (Unix seconds); the timer does it every few seconds."
   def sweep_now(now), do: GenServer.call(__MODULE__, {:sweep, now})
+
+  @doc "Claims batch `id`'s merge: `:ok` once, `:taken` after."
+  def claim_batch(id), do: GenServer.call(__MODULE__, {:batch, id, :claim})
+
+  @doc "Ends batch `id` with `status` and its merged run."
+  def end_batch(id, status, run), do: GenServer.call(__MODULE__, {:batch, id, {:end, status, run}})
 
   @doc "A watch session's new snapshot, from its client: `{:ok, job}` or `{:error, :not_found | :ended}`."
   def watch_change(id, snapshot), do: GenServer.call(__MODULE__, {:watch, id, snapshot})
@@ -350,7 +397,8 @@ defmodule Testor.Jobs do
          {:ok, job} <- new_job(params, who),
          job = with_source(job, source) do
       Logger.info("jobs: #{job["id"]} queued (#{job["project"]} #{job["kind"]}) by #{who}")
-      transact(state, :none, fn _ -> {{:ok, job}, [job]} end)
+      jobs = if job["shards"], do: batch(job, source["plan"]), else: [job]
+      transact(state, :none, fn _ -> {{:ok, with_children(hd(jobs), tl(jobs))}, jobs} end)
     else
       error -> {:reply, error, state}
     end
@@ -516,6 +564,33 @@ defmodule Testor.Jobs do
     {:reply, :ok, end_idle(state, now)}
   end
 
+  def handle_call({:batch, id, what}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      case {Map.get(jobs, id), what} do
+        # Claimed once: a running batch no one merges yet; any other is taken.
+        {%{"batch" => true, "status" => "running"} = job, :claim} when not is_map_key(job, "merging") ->
+          job = Map.put(job, "merging", true)
+          {:ok, [job]}
+
+        {%{"batch" => true}, :claim} ->
+          {:taken, []}
+
+        {%{"batch" => true} = job, {:end, status, run}} ->
+          job =
+            job
+            |> Map.merge(%{
+              "status" => status,
+              "exitCode" => if(status == "passed", do: 0, else: 1),
+              "endedAt" => now_iso(),
+              "runId" => run
+            })
+            |> Map.delete("merging")
+
+          {{:ok, job}, [job]}
+      end
+    end)
+  end
+
   def handle_call({:watch, id, snapshot}, _from, state) do
     transact(state, {:id, id}, fn jobs ->
       case Map.get(jobs, id) do
@@ -573,13 +648,16 @@ defmodule Testor.Jobs do
               d != nil,
               do: d
 
-        {{runs, gone}, changed}
+        parents = for %{"status" => "expired", "parent" => p} <- changed, do: p
+        {{runs, gone, parents}, changed}
       end)
 
     {:reply, result, state} = reply
     # PostgreSQL out of reach answers {:error, :unavailable}: nothing to settle then.
-    {runs, gone} = if match?({runs, _} when is_list(runs), result), do: result, else: {[], []}
+    {runs, gone, parents} = if match?({runs, _, _} when is_list(runs), result), do: result, else: {[], [], []}
     Enum.each(runs, &Store.settle(&1, "aborted"))
+    # A batch whose last shard expired ends now.
+    if parents != [], do: Task.start(fn -> parents |> Enum.uniq() |> Enum.each(&Testor.Batches.settle/1) end)
 
     if gone != [],
       do: Task.start(fn -> Enum.each(gone, &broker(&1, fn cfg, q, r -> cfg.adapter.ack(cfg, q, r) end)) end)
@@ -696,6 +774,19 @@ defmodule Testor.Jobs do
       argv != nil and not argv?(argv) ->
         {:error, "argv is a list of 1 to 100 arguments (4000 bytes each, no NUL)"}
 
+      params["shards"] != nil and not (is_integer(params["shards"]) and params["shards"] in 2..64) ->
+        {:error, "shards is a number of shards, 2 to 64"}
+
+      params["shards"] != nil and (select != nil or argv != nil or params["watch"] == true) ->
+        {:error, "a batch takes no select, argv or watch: its shards get their files"}
+
+      params["order"] not in [nil, "impact"] ->
+        {:error, ~s(order is "impact")}
+
+      params["impact"] != nil and
+          not match?(%{"first" => n} when is_integer(n) and n in 1..2000, params["impact"]) ->
+        {:error, "impact is {first: n}: the n first-ranked specs alone, then the rest"}
+
       select["affected"] && params["snapshot"] == nil ->
         {:error, "select.affected needs a snapshot (its changes are counted from the branch's last one)"}
 
@@ -710,6 +801,8 @@ defmodule Testor.Jobs do
           |> put_if("workspace", params["workspace"])
           |> put_if("failFast", if(params["failFast"] == true, do: true))
           |> put_if("cache", if(params["cache"] == false, do: false))
+          |> put_if("shards", params["shards"])
+          |> put_if("impact", params["impact"])
           |> then(
             &if(params["watch"] == true,
               do: Map.merge(&1, %{"watch" => true, "seq" => 0, "lastSeen" => System.os_time(:second)}),
@@ -741,13 +834,50 @@ defmodule Testor.Jobs do
 
   defp order(job), do: {job["createdAt"], job["id"]}
 
+  # A batch: the parent (running from the start, never leased, ended by Testor.Batches) and its
+  # shards, each a job of its own workspace with its index and, from a plan, its files.
+  defp batch(job, plan) do
+    n = job["shards"]
+
+    children =
+      for i <- 1..n do
+        job
+        |> Map.drop(["shards"])
+        |> Map.merge(%{
+          "id" => "#{job["id"]}-s#{i}",
+          "parent" => job["id"],
+          "shard" => %{"index" => i, "total" => n},
+          "workspace" => "#{job["workspace"] || "shard"}-#{i}"
+        })
+        |> then(&if(plan, do: Map.put(&1, "select", %{"files" => Enum.at(plan, i - 1)}), else: &1))
+      end
+
+    parent =
+      Map.merge(job, %{
+        "batch" => true,
+        "status" => "running",
+        "startedAt" => now_iso(),
+        "children" => Enum.map(children, & &1["id"])
+      })
+      |> then(&if(plan, do: Map.put(&1, "plan", plan), else: &1))
+
+    [parent | children]
+  end
+
+  defp with_children(job, []), do: job
+
+  defp with_children(job, children),
+    do: Map.put(job, "shardJobs", Enum.map(children, &Map.take(&1, ["id", "status", "shard"])))
+
   # What enqueue/2 read before the job was made: its snapshot, the changed files, the exec
   # claim, a cached result (the job is then over at once).
   defp with_source(job, source) do
     {changed, source} = Map.pop(source, "changed")
     {hit, source} = Map.pop(source, "cached")
+    {_plan, source} = Map.pop(source, "plan")
     job = Map.merge(job, source)
-    job = if changed, do: put_in(job, ["select", "changed"], changed), else: job
+    job = if changed, do: Map.put(job, "changedFiles", Enum.take(changed, 1000)), else: job
+    job = if changed && job["select"]["affected"], do: put_in(job, ["select", "changed"], changed), else: job
 
     case hit do
       nil ->

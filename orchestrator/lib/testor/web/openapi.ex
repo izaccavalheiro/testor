@@ -296,6 +296,13 @@ defmodule Testor.Web.OpenAPI do
         ],
         "get" => op("runs", "One character per log line: o (stdout) or e (stderr)", %{"type" => "string"})
       },
+      "/projects/{project}/impact" => %{
+        "parameters" => [project_param()],
+        "post" =>
+          op("runs", "Spec files ranked for a change {changed: [paths], limit?}, each with its reasons", %{
+            "type" => "object"
+          })
+      },
       "/watches" => %{
         "post" =>
           op("jobs", "Open a watch session {project, snapshot, labels?, workspace?} (scope execute)", %{

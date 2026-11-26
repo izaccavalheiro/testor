@@ -284,7 +284,8 @@ function Resolve-Job($job) {
   $selectMap = if ($entry -is [Collections.IDictionary]) { $entry.select } else { $null }
   $affectedMap = if ($entry -is [Collections.IDictionary]) { $entry.affected } else { $null }
   $scoped = $job.select -and ($job.select.files -or $job.select.names) -and -not $job.select.affected
-  if ($scoped -and -not $selectMap) { return @{ error = "task $($job.kind) of $($job.project) takes no selection (its select in agent.json)" } }
+  # A shard's files are appended to an argv, or given in TESTOR_SHARD_FILES, as the default.
+  if ($scoped -and -not $selectMap -and -not $job.shard) { return @{ error = "task $($job.kind) of $($job.project) takes no selection (its select in agent.json)" } }
   if ($job.watch -and $entry.rerun -notin @($null, "native", "restart")) { return @{ error = "rerun of $($job.project) $($job.kind) is native or restart" } }
   $lists = @{}
   foreach ($key in "reports", "artifacts", "preserve", "state") {
@@ -400,6 +401,11 @@ function Find-AffectedTests([string]$root, $changed) {
 # the rest), or one full run when a change means one.
 function Get-Passes($job, $plan, [string]$runDir) {
   $select = $job.select
+  # "impact": {"first": n}: the n specs ranked first for the change, alone, then the rest.
+  if ($job.impact.first -and $job.testOrder -and $plan.select -and -not $select) {
+    $top = @($job.testOrder | Select-Object -First ([int]$job.impact.first) | Where-Object { Test-Path -LiteralPath (Join-Path $runDir $_) -PathType Leaf })
+    if ($top.Count) { return , @(@{ label = "impact"; files = $top; select = @{ files = $top } }, @{ label = "all" }) }
+  }
   if (-not $select) { return , @(@{ label = "all" }) }
   if (-not $select.affected) { return , @(@{ label = "selected"; files = @($select.files); names = @($select.names); select = $select }) }
   $changed = @($select.changed)
@@ -413,6 +419,8 @@ function Get-Passes($job, $plan, [string]$runDir) {
     @{ label = "affected"; argv = @($plan.affected.argv | ForEach-Object { "$_" }); files = $changed; map = @{ files = $(if ($plan.affected.files) { $plan.affected.files } else { "append" }) } }
   } elseif ($plan.select) {
     $tests = @(Find-AffectedTests $runDir $changed)
+    # In the order impact analysis ranks them, when the job has one.
+    if ($job.testOrder) { $rank = @{}; $i = 0; foreach ($f in $job.testOrder) { $rank["$f"] = $i++ }; $tests = @($tests | Sort-Object { if ($rank.ContainsKey($_)) { $rank[$_] } else { [int]::MaxValue } }, { $_ }) }
     if (-not $tests.Count) { Log "$($job.id) affected: no tests found for the change, a full run"; return , @($full) }
     @{ label = "affected"; files = $tests }
   } else { Log "$($job.id) affected: the task has no select in agent.json, a full run"; return , @($full) }
@@ -867,6 +875,16 @@ function Invoke-Job($job) {
   }
   if ($job.watch) { $plain["TESTOR_SESSION"] = $job.id }
   $out = Join-Path ([IO.Path]::GetTempPath()) "testor-agent-$($job.id)"
+  # A batch's shard: its index and the total (Vitest --shard=i/n, Jest --shard, nextest --partition).
+  if ($job.shard) { $plain["TESTOR_SHARD_INDEX"] = "$($job.shard.index)"; $plain["TESTOR_SHARD_TOTAL"] = "$($job.shard.total)" }
+  # Data files, one path per line: what changed (impact analysis), and the specs in rank order.
+  foreach ($pair in @(@("changedFiles", "TESTOR_CHANGED_FILES", "changed"), @("testOrder", "TESTOR_TEST_ORDER", "order"))) {
+    $values = @($job.($pair[0]))
+    if (-not $values.Count -or -not $values[0]) { continue }
+    $file = "$out.$($pair[2])"
+    [IO.File]::WriteAllLines($file, [string[]]$values)
+    $plain[$pair[1]] = $file
+  }
   $maskBefore = $env:TESTOR_MASK
   if ($idToken) {
     $tokenFile = "$out.jwt"
@@ -906,6 +924,7 @@ function Invoke-Job($job) {
         $file = "$out.select-$kind"
         [IO.File]::WriteAllLines($file, [string[]]@($pass[$kind]))
         $plain["TESTOR_SELECT_$($kind.ToUpper())"] = $file
+        if ($job.shard -and $kind -eq "files") { $plain["TESTOR_SHARD_FILES"] = $file }
         $selectFiles = @($selectFiles) + $file
       }
     }
@@ -1012,6 +1031,7 @@ function Invoke-Job($job) {
     Remove-Item "$out.out", "$out.err" -ErrorAction SilentlyContinue
     foreach ($file in @($selectFiles)) { if ($file) { Remove-Item -LiteralPath $file -ErrorAction SilentlyContinue } }
     foreach ($kind in "FILES", "NAMES") { $plain.Remove("TESTOR_SELECT_$kind") }
+    $plain.Remove("TESTOR_SHARD_FILES")
     if ($upload -and -not $lost) {
       try { Complete-Run $job $state ($null -ne $cancelledAt -or $null -ne $restart) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
     }
@@ -1037,7 +1057,7 @@ function Invoke-Job($job) {
     if ($exitCode -and $job.failFast) { break }
     $index++
   }
-  Remove-Item "$out.jwt" -ErrorAction SilentlyContinue
+  Remove-Item "$out.jwt", "$out.changed", "$out.order" -ErrorAction SilentlyContinue
   if ($plan.state.Count -and -not $lost) { Save-State $job $plan $runDir $branch }
   if ($plan.isolate) {
     foreach ($path in $plan.preserve) {

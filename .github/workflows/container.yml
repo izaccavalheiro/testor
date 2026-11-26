@@ -13,7 +13,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "scripts/handoff-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "scripts/handoff-e2e.sh", "scripts/shard-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -70,6 +70,9 @@ jobs:
 
       - name: testor run, output and exit code unchanged (scripts/handoff-e2e.sh)
         run: scripts/handoff-e2e.sh testor:ci testor-agent:ci
+
+      - name: A batch of shards on two agents, merged and signed (scripts/shard-e2e.sh)
+        run: scripts/shard-e2e.sh testor:ci testor-agent:ci
 
       - name: Two testors on one home and one PostgreSQL (scripts/cluster-e2e.sh)
         run: scripts/cluster-e2e.sh testor:ci testor-agent:ci
