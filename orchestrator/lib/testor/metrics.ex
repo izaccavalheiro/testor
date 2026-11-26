@@ -15,6 +15,8 @@ defmodule Testor.Metrics do
     * `testor_disk_free_bytes`, `testor_disk_size_bytes`: the volume of the testor home
     * `testor_stored_bytes{area}`: screenshots and artifacts kept
     * `testor_cpu_ratio`, `testor_memory_available_bytes`, `testor_memory_total_bytes`
+    * `testor_tls_expiry_seconds`: time left on the certificate from ACME (`tls.acme`), when one
+      is served; alert well before it reaches 0
   """
   alias Testor.{Device, Query, Stats, Store}
 
@@ -59,9 +61,15 @@ defmodule Testor.Metrics do
       ]),
       family("testor_memory_total_bytes", "gauge", "memory installed", [
         sample("testor_memory_total_bytes", %{}, get_in(static, ["memory", "total"]))
+      ]),
+      family("testor_tls_expiry_seconds", "gauge", "time left on the ACME certificate", [
+        sample("testor_tls_expiry_seconds", %{}, tls_left(Testor.Acme.expiry()))
       ])
     ]
   end
+
+  defp tls_left(nil), do: nil
+  defp tls_left(not_after), do: not_after - System.os_time(:second)
 
   defp runs_by_status(runs) do
     counts = Enum.frequencies_by(runs, & &1["status"])

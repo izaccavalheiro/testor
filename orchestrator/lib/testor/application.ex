@@ -37,13 +37,17 @@ defmodule Testor.Application do
         Testor.Device,
         Testor.Maintenance,
         Testor.Audit,
-        {Bandit, bandit_options()}
-      ]
+        # Certificates from ACME (tls.acme in config.json): the renewer, and the plain-HTTP
+        # listener of its challenges when httpPort is set.
+        Testor.Acme
+      ] ++ List.wrap(Testor.Acme.http_child()) ++ [{Bandit, bandit_options()}]
   end
 
   @doc """
   The HTTP server's options. With `TESTOR_TLS_CERT` and `TESTOR_TLS_KEY` (PEM files) it speaks
   HTTPS only, with Plug's strong cipher suite (TLS 1.2 and 1.3): a reverse proxy is optional.
+  With `tls.acme` in config.json instead, it speaks HTTPS with certificates from an ACME CA
+  (`Testor.Acme`).
   """
   def bandit_options(port \\ Application.fetch_env!(:testor, :port)) do
     base = [plug: Testor.Web.Router, ip: Application.get_env(:testor, :ip, {0, 0, 0, 0}), port: port]
@@ -53,7 +57,8 @@ defmodule Testor.Application do
         base ++ [scheme: :https, certfile: cert, keyfile: key, cipher_suite: :strong]
 
       _ ->
-        base
+        # With tls.acme, HTTPS from the certificates Testor.Acme orders.
+        base ++ (Testor.Acme.tls_options() || [])
     end
   end
 end

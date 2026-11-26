@@ -1,5 +1,5 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: Kubernetes with Terraform
 description: Install testor in Kubernetes with the Helm chart from ghcr.io, or with one terraform apply.
 ---
