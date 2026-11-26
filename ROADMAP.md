@@ -32,6 +32,7 @@ Two principles hold through every milestone:
 | **0.11.0** | Several testors serving one team: one shared home and one PostgreSQL, claims for what must happen once, shared approvals, an audit trail per testor; the Helm chart's replicas | released |
 | **0.12.0** | The hub: one board across several testors (each project's latest result, a link back), filtered by label | released |
 | **0.13.0** | The whole plan after 0.12, in one release: Terraform and ACME, mutation testing, universal result formats, heavy jobs, SQS and NATS queues, object storage (S3 and PostgreSQL, snapshots, incremental state), `testor run` handoff, sharding and impact analysis, MCP offload tools, the profiler, sizing and spot preemption | released |
+| **0.14.0** | A batch's shards on the dashboard; the Helm chart published with the release; fixes from 0.13.0's release (a large snapshot's lease, slots preempted on SIGTERM) | released |
 
 ## Next milestones
 

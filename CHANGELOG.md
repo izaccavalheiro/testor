@@ -7,6 +7,25 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.14.0 - 2026-11-26
+
+### Added
+
+- **A batch's shards on the dashboard**: the run page of a batch shows one bar per shard (its
+  time and status, a link to its run), and the run list tags batches and shards;
+  `GET /api/v1/jobs/<batch>` shows each shard's attempts and preemptions.
+
+### Fixed
+
+- The release publishes the Helm chart: 0.13.0's push to `oci://ghcr.io/izaccavalheiro/charts`
+  was refused (`helm registry login`'s probe is denied to the workflow's token), so 0.13.0 has
+  no chart there.
+- An agent renews its lease while it writes a large snapshot: a first snapshot of 10,000 files
+  could outlast the 30 s lease, and testor queued the job again.
+- An agent with slots stopped with SIGTERM ends its slots' jobs as preempted: it signalled them
+  through `/bin/kill`, which the agent image lacks, and they came back only when their leases ran
+  out.
+
 ## 0.13.0 - 2026-11-26
 
 ### Added
