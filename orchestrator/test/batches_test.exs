@@ -208,6 +208,9 @@ defmodule Testor.BatchesTest do
              }
 
       for id <- [a, b], file <- [Reports.detail_file(id), Reports.coverage_file(id)], do: File.rm(file)
+      # Ended here: a run left running is settled later as aborted, and its run.finished
+      # webhook would reach whatever test configures webhooks then.
+      for id <- [a, b], do: finish(id)
     end
   end
 
