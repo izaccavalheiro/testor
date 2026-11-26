@@ -466,6 +466,8 @@ defmodule Testor.Acme do
 
   @impl true
   def init(nil) do
+    # Stopped (a shutdown, a test), it ends the order in flight: no file written after it.
+    Process.flag(:trap_exit, true)
     cfg = config()
 
     state = %{cfg: cfg, info: nil, mtime: nil, task: nil, failures: 0, timer: nil, renew_at: nil}
@@ -526,6 +528,9 @@ defmodule Testor.Acme do
     do: {:noreply, failed(%{state | task: nil}, {:crashed, reason})}
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  @impl true
+  def terminate(_reason, %{task: task}), do: if(task, do: Task.shutdown(task, :brutal_kill))
 
   defp failed(state, reason) do
     backoff = min(60 * Integer.pow(2, state.failures), @max_backoff)

@@ -24,7 +24,7 @@ defmodule Testor.AcmeTest do
         _ -> File.rm(config)
       end
 
-      File.rm_rf!(Acme.dir())
+      rm_acme()
       :persistent_term.erase({Acme, :served})
       Application.delete_env(:testor, :acme_poll_ms)
     end)
@@ -36,6 +36,14 @@ defmodule Testor.AcmeTest do
 
     {:ok, {_, http_port}} = ThousandIsland.listener_info(http)
     %{dir: dir, config: config, http_port: http_port}
+  end
+
+  # A renewer stopped at the end of a test may have been writing: try again.
+  defp rm_acme(tries \\ 20) do
+    case File.rm_rf(Acme.dir()) do
+      {:ok, _} -> :ok
+      _ when tries > 0 -> Process.sleep(50) && rm_acme(tries - 1)
+    end
   end
 
   defp ca(ctx, opts \\ []), do: FakeAcme.start(ctx.dir, ctx.http_port, opts)
