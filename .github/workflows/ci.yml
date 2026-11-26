@@ -121,6 +121,55 @@ jobs:
         run: mix compile --warnings-as-errors
       - name: Tests with the job queue in PostgreSQL (100% coverage), in partitions at once
         run: ./test/partitions.ps1
+      - name: The lines not covered, when the gate fails
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import glob, html, re
+          for path in sorted(glob.glob("cover/*.html")):
+              text = open(path, encoding="utf-8", errors="replace").read()
+              for row in re.findall(r'<tr class="miss".*?</tr>', text, re.S):
+                  print(path, html.unescape(" ".join(re.sub(r"<[^>]+>", " ", row).split()))[:200])
+          PY
+
+  brokers:
+    name: Job queue and object storage on real servers (ElasticMQ, NATS JetStream, versitygw)
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      TESTOR_BROKERS: "1"
+      TESTOR_S3_ENDPOINT: http://127.0.0.1:7070
+      TESTOR_S3_ACCESS_KEY: ci-access
+      TESTOR_S3_SECRET_KEY: ci-secret-key-12345
+      VERSITYGW: versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
+      ELASTICMQ: softwaremill/elasticmq-native@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c # 1.7.1
+      NATS: nats@sha256:0764f1952d72e92e35ad8b152da0f9652a49cb1186b6445fdd45131d81ad6d7e # 2.12
+    defaults:
+      run:
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20"
+      - name: Start the brokers
+        run: |
+          docker run -d --name elasticmq -p 127.0.0.1:9324:9324 "$ELASTICMQ"
+          docker run -d --name nats -p 127.0.0.1:4222:4222 "$NATS" -js
+          # versitygw over a folder: the bucket is a folder of it.
+          mkdir -p "$RUNNER_TEMP/s3/testor-ci" && chmod -R 777 "$RUNNER_TEMP/s3"
+          docker run -d --name s3 -p 127.0.0.1:7070:7070 -v "$RUNNER_TEMP/s3:/data" "$VERSITYGW" \
+            --access "$TESTOR_S3_ACCESS_KEY" --secret "$TESTOR_S3_SECRET_KEY" posix /data
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:7070/ && break; sleep 1; done
+          for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:9324/ && break; sleep 1; done
+      - name: Dependencies
+        run: mix deps.get
+      - name: The queue contract on each broker, the object store's on S3
+        run: mix test --only brokers
 
   powershell:
     name: PowerShell scripts (${{ matrix.os }})

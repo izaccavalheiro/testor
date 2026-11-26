@@ -141,3 +141,11 @@ agents:
     maxReplicas: 5
     prometheusServer: http://prometheus-server.monitoring.svc
     queuedPerAgent: 1
+    # A KEDA trigger of your own instead of the Prometheus query, for a broker's queue length
+    # (execution.queue): the scaler's pod identity reads queue depth only. For example
+    #   trigger: { type: aws-sqs-queue, authenticationRef: { name: keda-sqs },
+    #              metadata: { queueURL: "https://sqs.eu-west-1.amazonaws.com/1234/jobs.fifo", queueLength: "1", awsRegion: eu-west-1 } }
+    #   trigger: { type: nats-jetstream, metadata: { natsServerMonitoringEndpoint: "nats.nats.svc:8222",
+    #              account: "$G", stream: TESTOR, consumer: testor-testor_jobs_default, lagThreshold: "1" } }
+    # A profile takes one in its own autoscaling.
+    trigger: {}

@@ -17,6 +17,8 @@ defmodule Testor.Metrics do
     * `testor_disk_free_bytes`, `testor_disk_size_bytes`: the volume of the testor home
     * `testor_stored_bytes{area}`: screenshots and artifacts kept
     * `testor_cpu_ratio`, `testor_memory_available_bytes`, `testor_memory_total_bytes`
+    * `testor_queue_depth{queue}`, `testor_queue_errors_total`: the broker's queues
+      (`execution.queue`) and its failed calls
   """
   alias Testor.{Device, Query, Stats, Store}
 
@@ -61,8 +63,30 @@ defmodule Testor.Metrics do
       ]),
       family("testor_memory_total_bytes", "gauge", "memory installed", [
         sample("testor_memory_total_bytes", %{}, get_in(static, ["memory", "total"]))
+      ]),
+      family(
+        "testor_queue_depth",
+        "gauge",
+        "messages waiting in each broker queue (execution.queue)",
+        queue_depths()
+      ),
+      family("testor_queue_errors_total", "counter", "broker calls that failed", [
+        sample("testor_queue_errors_total", %{}, Testor.Queue.error_count())
       ])
     ]
+  end
+
+  # Each queue's depth, asked of the broker (a failure leaves its sample out).
+  defp queue_depths do
+    case Testor.Queue.config() do
+      nil ->
+        []
+
+      cfg ->
+        for queue <- cfg.queues,
+            {:ok, n} <- [Testor.Queue.call(cfg, "depth", fn -> cfg.adapter.depth(cfg, queue) end)],
+            do: sample("testor_queue_depth", %{"queue" => queue.name}, n)
+    end
   end
 
   defp runs_by_status(runs) do

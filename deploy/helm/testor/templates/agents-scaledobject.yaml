@@ -16,11 +16,15 @@ spec:
   minReplicaCount: {{ $a.minReplicas }}
   maxReplicaCount: {{ $a.maxReplicas }}
   triggers:
+    {{- if $a.trigger }}
+    - {{- toYaml $a.trigger | nindent 6 }}
+    {{- else }}
     - type: prometheus
       metadata:
         serverAddress: {{ $a.prometheusServer }}
         query: sum(testor_jobs{status=~"queued|leased|running",{{ $sel }}}) or vector(0)
         threshold: {{ $a.queuedPerAgent | quote }}
+    {{- end }}
 {{- else if eq $g.mode "job" }}
 ---
 # A Kubernetes Job per run (the design's kubernetes executor): KEDA starts one per queued job;
@@ -45,11 +49,15 @@ spec:
         labels: {{- include "testor.agentGroupSelector" (dict "root" $ "group" $g) | nindent 10 }}
       spec: {{- include "testor.agentPodSpec" (dict "root" $ "group" $g) | nindent 8 }}
   triggers:
+    {{- if $a.trigger }}
+    - {{- toYaml $a.trigger | nindent 6 }}
+    {{- else }}
     - type: prometheus
       metadata:
         serverAddress: {{ $a.prometheusServer }}
         query: sum(testor_jobs{status="queued",{{ $sel }}}) or vector(0)
         threshold: {{ $a.queuedPerAgent | quote }}
+    {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
