@@ -373,10 +373,14 @@ defmodule Testor.Queue.NATS do
   # A request on a fresh inbox: the first message back, `%{reply, status, payload}`.
   defp raw_request(conn, subject, payload, headers) do
     inbox = "_INBOX." <> Base.encode16(:crypto.strong_rand_bytes(8))
+    # A subscription id of its own: a server keeps the first subscription of an id.
+    sid = Integer.to_string(System.unique_integer([:positive]))
 
-    with :ok <- send_line(conn, "SUB #{inbox} 1"),
-         :ok <- publish(conn, subject, inbox, payload, headers) do
-      message(conn)
+    with :ok <- send_line(conn, "SUB #{inbox} #{sid}"),
+         :ok <- publish(conn, subject, inbox, payload, headers),
+         {:ok, _} = answer <- message(conn),
+         :ok <- send_line(conn, "UNSUB #{sid}") do
+      answer
     end
   end
 
@@ -386,6 +390,10 @@ defmodule Testor.Queue.NATS do
         with :ok <- send_line(conn, "PONG"), do: message(conn)
 
       {:ok, "+OK", conn} ->
+        message(conn)
+
+      # The server's updates (cluster changes, lame duck mode) may come at any time.
+      {:ok, "INFO " <> _, conn} ->
         message(conn)
 
       {:ok, "-ERR " <> why, _conn} ->

@@ -53,7 +53,9 @@ defmodule Testor.BrokersTest do
       :httpc.request(
         :post,
         {String.to_charlist(endpoint <> "/"), headers, ~c"application/x-amz-json-1.0", body},
-        [], body_format: :binary)
+        [],
+        body_format: :binary
+      )
 
     url = JSON.decode!(answer)["QueueUrl"]
 

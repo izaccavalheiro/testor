@@ -293,7 +293,7 @@ defmodule Testor.Test.FakeNATS do
         reply(sock, conn, reply, nil, nil, JSON.encode!(%{"num_pending" => n}))
 
       {"API", ["CONSUMER", "MSG", "NEXT", stream, name]} ->
-        if Agent.get(@state, & &1.mode) == :chatty, do: tsend(sock, "PING\r\n+OK\r\n")
+        if Agent.get(@state, & &1.mode) == :chatty, do: tsend(sock, "PING\r\n+OK\r\nINFO {}\r\n")
 
         next =
           Agent.get_and_update(@state, fn s ->
