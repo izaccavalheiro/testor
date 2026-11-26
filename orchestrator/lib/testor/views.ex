@@ -19,7 +19,10 @@ defmodule Testor.Views do
         "elixir" => System.version(),
         "otp" => System.otp_release(),
         "uptimeMs" => :erlang.statistics(:wall_clock) |> elem(0),
-        "os_pid" => System.pid()
+        "os_pid" => System.pid(),
+        # The job queue's broker, when there is one: degraded (not down) when it failed lately,
+        # as queued jobs then wait.
+        "queue" => Testor.Queue.health()
       })
     else
       base
@@ -50,6 +53,8 @@ defmodule Testor.Views do
 
       run ->
         live = if run["status"] == "running", do: RunTracker.snapshot(id)
+        # A stored run's log, reports and attestations, fetched when this home lacks them.
+        if live == nil, do: Testor.Storage.local(id)
 
         {specs, log} =
           case live do

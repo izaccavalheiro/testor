@@ -387,6 +387,7 @@ function renderRuns() {
           <button class="small danger" data-cancel="${esc(r.id)}" title="Kill this run's process tree">Cancel</button></div>
         <div class="meta mono cmd" style="max-width:none" title="${esc(r.command)}">${esc(r.command)}</div>
         <div class="meta">${r.summary?.specs ? `${specCell(r.summary)}${r.currentSpec ? ` · last: <span class="mono">${esc(r.currentSpec)}</span>` : ""}` : "no spec results yet"}</div>
+        ${r.waiting ? `<div class="meta" style="color:var(--orange, #e65100)">⏳ waiting: ${esc(r.waiting)}</div>` : ""}
         ${mutationBar(r.mutationProgress)}
         ${runUsage(r)}
         ${r.warning ? `<div class="warn">⚠ ${esc(r.warning)}</div>` : ""}

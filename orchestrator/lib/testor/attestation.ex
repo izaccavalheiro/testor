@@ -28,7 +28,7 @@ defmodule Testor.Attestation do
   @predicate_type "https://github.com/izaccavalheiro/testor/blob/main/docs/attestation.md#run-v1"
   # DER of an Ed25519 SubjectPublicKeyInfo, before the 32 key bytes (RFC 8410).
   @spki_prefix <<0x30, 0x2A, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70, 0x03, 0x21, 0x00>>
-  @record ~w(id project kind command status exitCode error warning startedAt endedAt durationMs summary actor source job screenshots artifacts reports mutation coverage specsFrom)
+  @record ~w(id project kind command status exitCode error warning startedAt endedAt durationMs summary actor source job screenshots artifacts reports mutation coverage specsFrom reason)
 
   def predicate_type, do: @predicate_type
   def key_file, do: Path.join(Config.secrets_dir(), "signing.key")
@@ -88,11 +88,22 @@ defmodule Testor.Attestation do
 
   @doc "Attests run `id` in the background: hashing a run's artifacts can take a while."
   def attest_later(id) do
-    # Then copied to object storage, signed, when an archive is set up (Testor.Archive).
+    # Signed over every file of the run, some of which other testors may have taken in
+    # (Testor.Storage); then stored in the bucket, and archived when an archive is set up
+    # (Testor.Archive).
     Task.Supervisor.start_child(Testor.TaskSupervisor, fn ->
+      Testor.Storage.gather(id, :all)
       safe_attest(id)
+      store(id)
       Testor.Archive.maybe(id)
     end)
+  end
+
+  defp store(id) do
+    case Testor.Storage.publish(id) do
+      {:error, why} -> Logger.error("storage: #{id} could not be stored: #{why}")
+      _ -> :ok
+    end
   end
 
   @doc "`attest/1`, logging why it failed instead of raising."
