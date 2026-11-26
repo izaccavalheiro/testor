@@ -207,7 +207,11 @@ defmodule Testor.CommitStatusTest do
 
     log =
       capture_log(fn ->
-        run("web")
+        id = run("web")
+        # The store sends the status in a task of its own when it sees the run; this one's
+        # task exists once notify returns, so waiting for no task waits for a failed send.
+        wait_until(fn -> Store.get(id) end)
+        CommitStatus.notify(id)
         wait_until(fn -> Task.Supervisor.children(Testor.TaskSupervisor) == [] end)
       end)
 
