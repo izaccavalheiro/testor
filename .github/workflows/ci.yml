@@ -219,7 +219,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          lint() { docker run --rm -e GITHUB_TOKEN -v "$PWD/deploy/terraform:/data" -w /data "$TFLINT" "$@"; }
+          # The plugin --init installs must outlive its container.
+          mkdir -p "$RUNNER_TEMP/tflint"
+          lint() { docker run --rm -e GITHUB_TOKEN -e TFLINT_PLUGIN_DIR=/plugins -v "$RUNNER_TEMP/tflint:/plugins" -v "$PWD/deploy/terraform:/data" -w /data "$TFLINT" "$@"; }
           lint --init --config /data/.tflint.hcl
           lint --recursive --config /data/.tflint.hcl
       - name: Misconfigurations (trivy config)
