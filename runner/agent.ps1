@@ -520,7 +520,12 @@ function Sync-Snapshot($job, [string]$workspace) {
   if (Test-Path -LiteralPath $written) { try { $before = Get-Content -Raw -LiteralPath $written | ConvertFrom-Json -AsHashtable } catch { } }
   $files = @($manifest.files)
   $missing = @($files | ForEach-Object { $_.sha256 } | Sort-Object -Unique | Where-Object { -not (Test-Path -LiteralPath (Join-Path $cache $_)) })
-  $missing | ForEach-Object -ThrottleLimit 8 -Parallel {
+  # A large first snapshot takes longer than a lease: the lease is renewed every 10 s meanwhile.
+  $script:beatAt = Get-Date
+  $renew = { if (((Get-Date) - $script:beatAt).TotalSeconds -ge 10) { $script:beatAt = Get-Date; $null = Call "/agent/jobs/$($job.id)/heartbeat" @{} } }
+  for ($from = 0; $from -lt $missing.Count; $from += 400) {
+  & $renew
+  $missing[$from..([math]::Min($from + 400, $missing.Count) - 1)] | ForEach-Object -ThrottleLimit 8 -Parallel {
     $hex = $_
     $file = Join-Path $using:cache $hex
     $part = "$file.$([guid]::NewGuid().ToString('N')).part"
@@ -533,11 +538,13 @@ function Sync-Snapshot($job, [string]$workspace) {
     }
     Move-Item -Force -LiteralPath $part -Destination $file
   }
+  }
   $after = @{}
   $paths = [Collections.Generic.List[string]]::new()
   $folders = [Collections.Generic.HashSet[string]]::new()
   $count = 0
   foreach ($file in $files) {
+    & $renew
     $path = "$($file.path)"
     if ([IO.Path]::IsPathRooted($path) -or $path -match "[\\:]" -or ($path -split "/") -contains ".." -or ($path -split "/") -contains "") {
       throw "snapshot path $path is not inside the workspace"
