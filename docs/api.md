@@ -70,7 +70,7 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `GET /api/v1/gates` | read | `config.json`'s release gates, or the `error` that leaves one out |
 | `GET /api/v1/gates/:name?commit=` | read | whether a commit passes: `{gate, commit, pass, checks: [{kind, pass, reason, runId, attestation}]}` ([release gates](attestation.md#release-gates)) |
 | `GET /api/v1/schedules` | read | `config.json`'s schedules with their `next` time (UTC), or the `error` that leaves one out |
-| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref? or snapshot?, select?, workspace?, failFast?, cache?, shards?, order?, impact?, argv? (scope exec)}`: `201`, or `403` while `execution.enabled` is off |
+| `POST /api/v1/jobs` | execute | queue `{project, kind, labels?, ref? or snapshot?, select?, workspace?, failFast?, cache?, shards? (or "auto" with target), order?, impact?, profile?, argv? (scope exec)}`: `201`, or `403` while `execution.enabled` is off |
 | `GET /api/v1/runs/:id/digest?format=` | read | counts, failures with their messages, the project's stack frames; `text` for lines ([handoff](handoff.md#failure-digest)) |
 | `GET /api/v1/runs/:id/log?offset=` | read | the log from a byte offset, as it is (`X-Log-Size`) |
 | `GET /api/v1/runs/:id/streams?offset=` | read | one character per log line: `o` (stdout) or `e` (stderr) |
@@ -80,7 +80,7 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `PUT /api/v1/blobs/sha256:<hex>` | execute | one content, checked against its hash (`snapshots.maxFileMB`) |
 | `GET /api/v1/projects/:p/state/:name?branch=` | read | a state file of the branch, else the default branch's (`X-Testor-State-Branch`) |
 | `POST /api/v1/jobs/:id/cancel` | execute | cancel a queued or running job |
-| `POST /api/v1/agent/lease` | agent | `{labels, wait, instance?}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most); `instance` (its host) for the warm hint |
+| `POST /api/v1/agent/lease` | agent | `{labels, wait, instance?, slots?, busy?}`: the oldest job this agent can take (`200`), or `204` after `wait` seconds (25 at most); `instance` (its host) for the warm hint |
 | `GET /api/v1/agent/projects/:p/snapshots/:id` | agent | a snapshot's manifest |
 | `GET /api/v1/agent/jobs/:id/changes?after=&wait=` | agent | a watch session's next snapshot (`200`), or `204` |
 | `POST /api/v1/agent/jobs/:id/streams?offset=` | agent | append the run's stream marks (`o`/`e` per line) |

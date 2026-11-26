@@ -31,7 +31,7 @@ RUN case "${TARGETARCH}" in \
  && ln -s /opt/pwsh/pwsh /usr/local/bin/pwsh && rm /tmp/pwsh.tgz \
  && apt-get purge -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
  && useradd --uid 10001 --user-group --create-home --home-dir /home/agent --shell /usr/sbin/nologin agent
-COPY runner/run.ps1 runner/agent.ps1 runner/snapshot.ps1 runner/testor.ps1 /opt/testor-agent/
+COPY runner/run.ps1 runner/agent.ps1 runner/snapshot.ps1 runner/testor.ps1 runner/detect.ps1 /opt/testor-agent/
 USER 10001:10001
 ENV HOME=/home/agent \
     TESTOR_AGENT_CONFIG=/etc/testor-agent/agent.json \

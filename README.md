@@ -71,6 +71,14 @@ editor; or to give an idle machine a job.
   or in Kubernetes (agent pods scaled by KEDA on queued jobs), then sends it back. A job names a
   project and task; the agent's own configuration holds the commands. See
   [docs/jobs.md](docs/jobs.md).
+- **Handoff.** `testor run` sends your working tree (only what changed) to an agent and gives
+  back its output, stderr and exit code as if it ran here, scoped to files, test names or what
+  the change affects; results already known come back from a cache, watch mode runs as a
+  session, big runs split into shards merged into one signed result, and tests a change likely
+  breaks run first. See [docs/handoff.md](docs/handoff.md), [docs/sharding.md](docs/sharding.md),
+  [docs/impact.md](docs/impact.md).
+- **Object storage.** Runs kept in an S3-compatible bucket, the index and live events in
+  PostgreSQL: replicas without a shared volume. See [docs/storage.md](docs/storage.md).
 - **Evidence.** Every finished run signed as an in-toto attestation, runs from agents signed by
   the agent too, a chained and signed audit trail; Prometheus `/metrics` and signed webhooks.
   See [docs/attestation.md](docs/attestation.md).

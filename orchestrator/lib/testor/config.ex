@@ -15,7 +15,9 @@ defmodule Testor.Config do
       "leaseSeconds" => 30,
       "maxAttempts" => 3,
       "warmSeconds" => 2,
-      "watchIdleMinutes" => 15
+      "watchIdleMinutes" => 15,
+      # A job whose agent was evicted is queued again this many times without spending an attempt.
+      "maxPreemptions" => 5
     },
     # Content-addressed snapshots (Testor.Snapshots) and the incremental state (Testor.States).
     "snapshots" => %{"maxFiles" => 100_000, "maxFileMB" => 256, "maxMB" => 4096, "keepDays" => 14},

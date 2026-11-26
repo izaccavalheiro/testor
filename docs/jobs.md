@@ -342,6 +342,7 @@ role, and keep the `execute` scope (which queues jobs) to people who may use tho
 | `ref` | git branch, tag or commit to check out first |
 | `snapshot`, `branch`, `commit` | a snapshot to run instead of a ref, and what it was taken from ([snapshots](snapshots.md)) |
 | `shards`, `batch`, `children`, `shardJobs`, `plan`, `parent`, `shard` | a batch and its shards ([sharding](sharding.md)) |
+| `suggestedProfile`, `preemptions` | the profile sizing suggests, and how often the job was preempted ([zero-config](zero-config.md)) |
 | `changedFiles`, `order`, `testOrder`, `impact` | what changed, and the specs ranked for it ([impact](impact.md)) |
 | `select`, `workspace`, `failFast`, `cache`, `argv`, `claim`, `cached`, `watch` | scoped and affected runs, the worktree, the result cache, exec mode, watch sessions ([handoff](handoff.md)) |
 | `status` | `queued`, `leased`, `running`, `passed`, `failed`, `cancelled`, `expired` |

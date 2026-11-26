@@ -156,6 +156,14 @@ agents:
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { memory: 2Gi }
+  # Time a pod being stopped gives its job to end as preempted (state saved, run sent): it is
+  # queued again without spending an attempt. A PodDisruptionBudget per group keeps drains and
+  # spot consolidation to one agent at a time. A profile may set its own nodeSelector,
+  # tolerations and affinity (spot nodes: docs/zero-config.md).
+  terminationGracePeriodSeconds: 120
+  podDisruptionBudget:
+    enabled: false
+    maxUnavailable: 1
   # Jobs a pod runs at once (agent.json's slots, capped by its CPUs and memory); KEDA counts
   # queued jobs per slot. A profile may set its own.
   slots: 1

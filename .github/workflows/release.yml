@@ -120,7 +120,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: The runner's scripts, so an install never fetches them from a branch
-        run: cp runner/run.ps1 runner/agent.ps1 runner/install.ps1 runner/setup.ps1 dist/
+        run: cp runner/run.ps1 runner/agent.ps1 runner/install.ps1 runner/setup.ps1 runner/snapshot.ps1 runner/testor.ps1 runner/detect.ps1 dist/
       - name: Checksums
         working-directory: dist
         run: sha256sum *.tar.gz *.ps1 > SHA256SUMS

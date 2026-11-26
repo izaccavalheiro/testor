@@ -429,6 +429,14 @@ agent says otherwise, in a workspace copy of its own, and every exec job is audi
 ([handoff](handoff.md#exec-mode)). The result cache is per project and keyed by everything the
 owner declared as an input.
 
+MCP tools that queue work (`queue_job`, `offload_change`, `run_mutation_check`, `open_session`)
+need the `execute` scope on the project, never carry a command, and spend a per-caller budget
+(`mcp.jobBudget`), so a prompt-injected assistant cannot flood the queue; what they return from
+a run (digests, surviving mutants) is fenced as untrusted. The profiler (`agent.ps1 -Detect`)
+only reads files: it runs nothing from the project and applies nothing. A preempted job is
+queued again only by the agent holding its lease, which alone can finish it, and at most
+`execution.maxPreemptions` times.
+
 testor can also be that identity: with `jobTokens` in `auth.json`, the agent holding a job's
 lease gets an OpenID Connect token for it (RS256, `sub` = `project:<p>:kind:<k>`, 15 minutes by
 default, for a listed audience only), which clouds and Vault trade for credentials scoped to

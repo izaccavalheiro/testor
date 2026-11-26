@@ -42,6 +42,7 @@ const FILES = {
   "docs/handoff.md": ["reference/handoff.md", "Handing test runs off", 15],
   "docs/sharding.md": ["reference/sharding.md", "Sharding", 16],
   "docs/impact.md": ["reference/impact.md", "Impact analysis", 17],
+  "docs/zero-config.md": ["reference/zero-config.md", "Zero-config, sizing and spot agents", 18],
   "VERSIONING.md": ["project/versioning.md", "Versioning and releases", 1],
   "ROADMAP.md": ["project/roadmap.md", "Roadmap", 2],
   "CHANGELOG.md": ["project/changelog.md", "Changelog", 3],

@@ -97,9 +97,28 @@ param(
   [switch]$Once,
   [int]$Wait = 20,
   # One job, from a file, in a process of its own: how an agent with slots runs several.
-  [string]$JobFile
+  [string]$JobFile,
+  # Prints a proposed agent.json entry for a project folder, and nothing else (detect.ps1).
+  [string]$Detect
 )
+if ($Detect) { & (Join-Path $PSScriptRoot "detect.ps1") $Detect; exit $LASTEXITCODE }
 $ErrorActionPreference = "Stop"
+
+# SIGTERM (a Kubernetes eviction, a spot instance's notice): the job in progress ends as
+# preempted (its state saved, its run sent), testor queues it again without spending an attempt,
+# and the agent stops. A flag set on the signal; the loops below read it.
+try {
+  Add-Type -TypeDefinition @"
+using System.Runtime.InteropServices;
+public static class TestorSignals {
+  public static volatile bool Terminating;
+  static PosixSignalRegistration registration;
+  public static void Watch() { registration = PosixSignalRegistration.Create(PosixSignal.SIGTERM, c => { Terminating = true; c.Cancel = true; }); }
+}
+"@
+  [TestorSignals]::Watch()
+} catch { }
+function Test-Terminating { try { [TestorSignals]::Terminating } catch { $false } }
 
 function Log([string]$message) { "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))] agent: $message" }
 function Expand([string]$path) { if ($path -like "~*") { Join-Path $HOME $path.Substring(1).TrimStart("/", "\") } else { $path } }
@@ -904,6 +923,7 @@ function Invoke-Job($job) {
   $seq = [long]$(if ($job.seq) { $job.seq } else { 0 })
   $cancelledAt = $null
   $lost = $false
+  $preempted = $false
   $exitCode = 0
   $index = 0
   while ($index -lt $passes.Count) {
@@ -1025,6 +1045,11 @@ function Invoke-Job($job) {
       if ($cancelledAt -and ((Get-Date) - $cancelledAt).TotalSeconds -ge 10) {
         try { $process.Kill($true) } catch { }
       }
+      if (-not $preempted -and (Test-Terminating)) {
+        $preempted = $true
+        Log "$($job.id) the agent is being stopped (SIGTERM): ending the run, to be run again"
+        try { $process.Kill($true) } catch { }
+      }
     }
     $process.WaitForExit()
     $exitCode = $process.ExitCode
@@ -1035,7 +1060,7 @@ function Invoke-Job($job) {
     if ($upload -and -not $lost) {
       try { Complete-Run $job $state ($null -ne $cancelledAt -or $null -ne $restart) } catch { Log "$($job.id) could not send the run: $($_.Exception.Message)" }
     }
-    if ($cancelledAt -or $lost) { break }
+    if ($cancelledAt -or $lost -or $preempted) { break }
     if ($restart) { $passes[$index] = $restart; continue }
     # A watch session in native mode runs until it is ended; one that stopped on its own waits
     # for the next change.
@@ -1073,7 +1098,9 @@ function Invoke-Job($job) {
   }
   try {
     $finish = @{ exitCode = $exitCode }
-    if ($plan.cache -and -not $cancelledAt) { $finish.cache = $plan.cache }
+    if ($plan.cache -and -not $cancelledAt -and -not $preempted) { $finish.cache = $plan.cache }
+    # Queued again by testor, without spending an attempt; its state above was saved for the retry.
+    if ($preempted) { $finish.preempted = $true }
     $done = Call "/agent/jobs/$($job.id)/finish" $finish
     Log "$($job.id) $($done.status) (exit $exitCode)"
   } catch { Log "$($job.id) ended (exit $exitCode) but could not report it: $($_.Exception.Message)" }
@@ -1097,9 +1124,16 @@ if ($slots -gt 1) {
   $children = [Collections.Generic.List[object]]::new()
   while ($true) {
     foreach ($done in @($children | Where-Object { $_.HasExited })) { $null = $children.Remove($done) }
+    if (Test-Terminating) {
+      # Each slot's job ends as preempted too: they are told, then waited for.
+      if (-not $IsWindows) { foreach ($child in $children) { & /bin/kill -TERM $child.Id 2>$null } }
+      foreach ($child in $children) { $null = $child.WaitForExit(55000) }
+      Log "stopped (SIGTERM)"
+      exit 0
+    }
     if ($children.Count -ge $slots) { Start-Sleep -Milliseconds 500; continue }
     try {
-      $job = Call "/agent/lease" @{ labels = $labels; wait = $(if ($children.Count) { 2 } else { $Wait }); key = $publicKey; instance = [Environment]::MachineName.ToLower() }
+      $job = Call "/agent/lease" @{ labels = $labels; wait = $(if ($children.Count) { 2 } else { $Wait }); key = $publicKey; instance = [Environment]::MachineName.ToLower(); slots = $slots; busy = $children.Count }
     } catch { Log "testor did not answer: $($_.Exception.Message)"; Start-Sleep -Seconds 5; continue }
     if (-not $job) { continue }
     $plan = Resolve-Job $job
@@ -1121,11 +1155,12 @@ if ($slots -gt 1) {
 }
 do {
   try {
-    $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait; key = $publicKey; instance = [Environment]::MachineName.ToLower() }
+    $job = Call "/agent/lease" @{ labels = $labels; wait = $Wait; key = $publicKey; instance = [Environment]::MachineName.ToLower(); slots = 1; busy = 0 }
     if ($job) { Invoke-Job $job }
   } catch {
     Log "testor did not answer: $($_.Exception.Message)"
     if ($Once) { exit 1 }
     Start-Sleep -Seconds 5
   }
-} until ($Once)
+} until ($Once -or (Test-Terminating))
+if (Test-Terminating) { Log "stopped (SIGTERM)" }

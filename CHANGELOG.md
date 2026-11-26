@@ -44,6 +44,20 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   (`storage_s3`, `keys_secret`, `service_account_annotations`). `TESTOR_SIGNING_KEY` signs
   attestations in place of `signing.key`; agents' pinned keys are kept in PostgreSQL for
   testors that share no volume.
+- **AI-era verification** ([docs/mcp.md](docs/mcp.md)): MCP tools to offload work (`queue_job`,
+  `offload_change` with `testor run --snapshot-only`, `run_mutation_check` returning the
+  surviving mutants of the changed files, `open_session`, `push_change`,
+  `get_session_results`), read it (`get_run_digest`, `get_capacity`), all under a per-caller
+  budget (`mcp.jobBudget`) and never with a command; a verification loop in the docs.
+- **Zero-config, sizing and spot agents** ([docs/zero-config.md](docs/zero-config.md)):
+  `agent.ps1 -Detect <folder>` (`runner/detect.ps1`) proposes agent.json entries for Node
+  (Vitest, Jest, Playwright, Stryker), Python, Go, Rust and .NET projects and monorepos, reading
+  files only. Runs record `memory.peakMB`; `"shards": "auto"` with a `target` sizes a batch from
+  the p95 duration and the agents' slots, and `execution.profiles` give a `suggestedProfile`
+  (`"profile": "auto"` applies it). An agent stopped with SIGTERM ends its job as preempted,
+  its state saved: testor queues it again without spending an attempt
+  (`execution.maxPreemptions`). The chart takes `agents.terminationGracePeriodSeconds`,
+  `agents.podDisruptionBudget` and per-profile `nodeSelector`, `tolerations` and `affinity`.
 - **Sharding** ([docs/sharding.md](docs/sharding.md)): `"shards": N` makes a batch of N shard
   jobs leased at once (`TESTOR_SHARD_INDEX`, `TESTOR_SHARD_TOTAL`), planned for a snapshot by LPT
   over the tests' p75 durations or the files' mutants (`TESTOR_SHARD_FILES`), and merged when the
