@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.10.0 - 2026-11-26
+
 ### Added
 
 - **The job queue in PostgreSQL**: with `TESTOR_DATABASE_URL`, jobs are kept in PostgreSQL
