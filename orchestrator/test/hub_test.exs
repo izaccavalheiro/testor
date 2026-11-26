@@ -6,7 +6,7 @@ defmodule Testor.HubTest.Remote do
 
   get "/:kind/api/v1/health" do
     send(Application.fetch_env!(:testor, :hub_test), {:asked, kind, get_req_header(conn, "authorization")})
-    if kind == "slow", do: Process.sleep(400)
+    if kind == "slow", do: Process.sleep(1_500)
     send_resp(conn, 200, ~s({"ok": true, "version": "0.11.0"}))
   end
 
@@ -31,7 +31,7 @@ defmodule Testor.HubTest.Remote do
 
       # Each answer within its own time, both together not.
       "slow" ->
-        Process.sleep(400) && send_resp(conn, 200, ~s({"data": []}))
+        Process.sleep(1_500) && send_resp(conn, 200, ~s({"data": []}))
     end
   end
 end
@@ -52,9 +52,9 @@ defmodule Testor.HubTest do
     pid = start_supervised!({Bandit, plug: Testor.HubTest.Remote, ip: :loopback, port: 0, startup_log: false})
     {:ok, {_, port}} = ThousandIsland.listener_info(pid)
     Application.put_env(:testor, :hub_test, self())
-    # Each request has 600 ms, a testor 700 ms for both: the slow one (400 ms each) misses the
-    # second, with room for slow CI machines either way.
-    Application.put_env(:testor, :hub_timeout_ms, 600)
+    # Each request has 2 s, a testor 2.1 s for both: the slow one (1.5 s each) misses the
+    # second, and the others have room on a busy CI machine (600 ms was not enough on Windows).
+    Application.put_env(:testor, :hub_timeout_ms, 2_000)
     Guard.reset()
 
     on_exit(fn ->

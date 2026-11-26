@@ -180,7 +180,11 @@ jobs:
           mkdir -p "$RUNNER_TEMP/helm" dist
           helm() { docker run --rm -u "$(id -u):$(id -g)" -e HOME=/helm -v "$RUNNER_TEMP/helm:/helm" -v "$PWD:/w" -w /w "$HELM" "$@"; }
           helm package deploy/helm/testor --version "$version" --app-version "$version" -d dist
-          echo "$GH_TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          # The credentials as `helm registry login` would keep them: its login probe asks ghcr.io
+          # for a token of another scope, which the workflow's token is denied (403).
+          mkdir -p "$RUNNER_TEMP/helm/.config/helm/registry"
+          printf '{"auths": {"ghcr.io": {"auth": "%s"}}}' "$(printf '%s:%s' "$GITHUB_ACTOR" "$GH_TOKEN" | base64 -w0)" \
+            > "$RUNNER_TEMP/helm/.config/helm/registry/config.json"
           helm push "dist/testor-$version.tgz" "oci://ghcr.io/${OWNER,,}/charts" 2>&1 | tee push.log
           digest=$(grep -o 'sha256:[0-9a-f]\{64\}' push.log | head -1)
           test -n "$digest"

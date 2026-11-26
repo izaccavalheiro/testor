@@ -443,7 +443,7 @@ function renderRuns() {
       <tr class="click${flashIds.has(r.id) ? " flash" : ""}" data-run="${esc(r.id)}">
         <td title="${esc(r.startedAt)}">${when(r.startedAt)}</td>
         <td><b>${esc(r.project)}</b></td>
-        <td><span class="tag">${esc(r.kind)}</span></td>
+        <td><span class="tag">${esc(r.kind)}</span>${r.batch ? ` <span class="tag" title="a batch merged from its shards">${r.batch.shards.length} shards</span>` : r.shard ? ` <span class="tag muted">shard ${esc(r.shard.index)}/${esc(r.shard.total)}</span>` : ""}</td>
         <td class="hide-sm"><div class="cmd mono" title="${esc(r.command)}">${esc(r.command)}</div></td>
         <td title="${esc(r.error ?? r.warning ?? "")}">${badge(r.status)}${r.exitCode ? ` <span class="muted">exit ${esc(r.exitCode)}</span>` : ""}${r.warning ? " ⚠" : ""}</td>
         <td class="num">${dur(r.durationMs)}</td>
@@ -502,6 +502,19 @@ function appendLog(text, toEnd) {
   while (log.childElementCount > MAX_LOG_LINES) { log.firstElementChild.remove(); detail.trimmed = true; }
   if (stick) log.scrollTop = log.scrollHeight;
 }
+// A batch's shards (docs/sharding.md): one bar each, as long as it took, coloured by its status.
+const shardColor = (status) => ({ passed: "var(--green)", failed: "var(--red)", cancelled: "var(--gray)", expired: "var(--amber)" })[status] || "var(--blue)";
+function shardsSection(run) {
+  const shards = run.batch?.shards;
+  if (!shards?.length) return "";
+  const longest = Math.max(1, ...shards.map((s) => s.durationMs || 0));
+  return `<h2>Shards <span class="plain">· ${shards.length} · ${dur(run.durationMs)} wall clock, ${dur(run.batch.cpuMs)} in all</span></h2>
+  <div class="panel"><table><tbody>${shards.map((s) => `<tr>
+    <td class="mono" style="width:6em">${s.run ? `<a href="#/run/${encodeURIComponent(s.run)}">#${esc(s.index)}</a>` : `#${esc(s.index)}`}</td>
+    <td style="width:60%"><div title="${esc(s.status)}" style="height:10px;border-radius:5px;background:${shardColor(s.status)};width:${Math.max(2, Math.round(100 * (s.durationMs || 0) / longest))}%"></div></td>
+    <td class="num">${dur(s.durationMs)}</td><td>${badge(s.status)}</td>
+    <td class="muted">${s.attestation ? `<span title="sha256 of its attestation: ${esc(s.attestation)}">signed</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+}
 // The run's mutation summary (signed, in its record), its files and surviving mutants (all as text).
 function mutationSection(run, detail, artifacts) {
   const m = run.mutation;
@@ -552,9 +565,11 @@ function renderRun() {
     <dt>Run id</dt><dd class="mono">${esc(run.id)} · pid ${esc(run.pid)}</dd>
   </dl></div>
 
+  ${shardsSection(run)}
+
   ${mutationSection(run, detail.mutation, detail.artifacts || [])}
 
-  ${run.coverage ? `<h2>Coverage <span class="plain">· lines <b style="color:${scoreColor(run.coverage.lines ?? 0)}">${run.coverage.lines ?? "–"}%</b> · branches ${run.coverage.branches ?? "–"}% · functions ${run.coverage.functions ?? "–"}% <span class="muted">(${esc(run.coverage.source)})</span></span></h2>
+  ${run.coverage ? `<h2>Coverage <span class="plain">· lines <b style="color:${scoreColor(run.coverage.lines ?? 0)}">${run.coverage.lines ?? "–"}%</b> · branches ${run.coverage.branches ?? "–"}% · functions ${run.coverage.functions ?? "–"}% <span class="muted">(${esc(run.coverage.source ?? (run.coverage.approximate ? "merged from the shards, approximate" : ""))})</span></span></h2>
   ${detail.coverage?.length ? `<div class="panel"><table><thead><tr><th>File</th><th class="num">Lines</th><th class="num">Branches</th><th class="num">Functions</th></tr></thead>
     <tbody>${detail.coverage.slice(0, 50).map((f) => `<tr><td class="mono">${esc(f.file)}</td><td class="num" style="color:${scoreColor(f.lines ?? 0)}">${f.lines ?? "–"}</td><td class="num">${f.branches ?? "–"}</td><td class="num">${f.functions ?? "–"}</td></tr>`).join("")}</tbody></table></div>` : ""}` : ""}
 

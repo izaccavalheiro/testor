@@ -55,7 +55,13 @@ defmodule Testor.Jobs do
         Map.put(
           job,
           "shardJobs",
-          for(child <- ids, do: child |> get() |> Map.take(["id", "status", "shard", "runId", "agent"]))
+          for(
+            child <- ids,
+            do:
+              child
+              |> get()
+              |> Map.take(["id", "status", "shard", "runId", "agent", "attempts", "preemptions"])
+          )
         )
 
       job ->

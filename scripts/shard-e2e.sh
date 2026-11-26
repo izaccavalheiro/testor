@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Sharding end to end (docs/sharding.md): a batch of 4 shards of one snapshot, taken by two
-# agents with 2 slots each, each shard running its plan's files, merged into one signed run.
+# agents with 2 slots each, each shard running its plan's files, merged into one signed run. One
+# agent is stopped mid-shard (SIGTERM): its shards are preempted and run again on a third agent
+# alone, the others' are not.
 #
 #   scripts/shard-e2e.sh <testor image> <agent image>
 set -euo pipefail
@@ -13,7 +15,7 @@ NET=testor-shard-$$
 WORK=$(mktemp -d)
 PASS=e2e-password-1234
 cleanup() {
-  docker rm -f "$NET-testor" "$NET-agent1" "$NET-agent2" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true
+  docker rm -f "$NET-testor" "$NET-agent1" "$NET-agent2" "$NET-agent3" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true
   rm -rf "$WORK" 2>/dev/null || sudo rm -rf "$WORK" || true
 }
 trap cleanup EXIT
@@ -26,7 +28,7 @@ PORT=$(docker port "$NET-testor" 6767/tcp | head -1 | sed 's/.*://')
 BASE=http://127.0.0.1:$PORT
 docker exec "$NET-testor" sh -c 'echo "{\"execution\": {\"enabled\": true, \"warmSeconds\": 0}}" > /data/workspaces/.testor/config.json'
 docker exec -e TESTOR_PASSWORD=$PASS "$NET-testor" /app/bin/testor eval 'Testor.Auth.CLI.user ~s[admin], ~s[admin]' >/dev/null
-for a in agent1 agent2; do docker exec -e TESTOR_PASSWORD=$PASS "$NET-testor" /app/bin/testor eval "Testor.Auth.CLI.user ~s[$a], ~s[agent]" >/dev/null; done
+for a in agent1 agent2 agent3; do docker exec -e TESTOR_PASSWORD=$PASS "$NET-testor" /app/bin/testor eval "Testor.Auth.CLI.user ~s[$a], ~s[agent]" >/dev/null; done
 sleep 2
 USER_TOKEN=$(docker exec "$NET-testor" /app/bin/testor eval 'Testor.Auth.CLI.token ~s[admin], 1' | tail -1 | tr -d '\r\n ')
 
@@ -36,7 +38,7 @@ for i in 1 2 3 4 5 6 7 8; do echo "test $i" > "$WORK/shop/tests/t$i.test.ts"; do
 cat > "$WORK/shop/run.ps1" <<'PS'
 "shard $env:TESTOR_SHARD_INDEX/$env:TESTOR_SHARD_TOTAL files: $($args -join ' ')"
 foreach ($f in $args) { " ✓ $f (1 test) 1ms" }
-Start-Sleep -Seconds 2
+Start-Sleep -Seconds 20
 PS
 git -C "$WORK/shop" init -q -b main
 git -C "$WORK/shop" -c user.name=e2e -c user.email=e2e@example.com add -A
@@ -51,16 +53,28 @@ cat > "$WORK/agent.json" <<'JSON'
     "commands": { "test": { "argv": ["pwsh", "-NoProfile", "-File", "run.ps1"], "select": { "files": "append" } } } } } }
 JSON
 chmod 644 "$WORK/agent.json"
-for a in agent1 agent2; do
-  TOKEN=$(docker exec "$NET-testor" /app/bin/testor eval "Testor.Auth.CLI.token ~s[$a], 1" | tail -1 | tr -d '\r\n ')
-  docker run -d --name "$NET-$a" --network "$NET" --hostname "$a" -e TESTOR_AGENT_TOKEN="$TOKEN" -v "$WORK/agent.json:/etc/testor-agent/agent.json:ro" \
+agent() {
+  local a=$1 token
+  token=$(docker exec "$NET-testor" /app/bin/testor eval "Testor.Auth.CLI.token ~s[$a], 1" | tail -1 | tr -d '\r\n ')
+  docker run -d --name "$NET-$a" --network "$NET" --hostname "$a" -e TESTOR_AGENT_TOKEN="$token" -v "$WORK/agent.json:/etc/testor-agent/agent.json:ro" \
     --read-only --tmpfs /tmp --tmpfs /home/agent:uid=10001,gid=10001 --cap-drop ALL --security-opt no-new-privileges "$AGENT" >/dev/null
-done
+}
+agent agent1
+agent agent2
 
 PARENT=$(curl -fsS -u admin:$PASS -H 'content-type: application/json' \
   -d "{\"project\": \"shop\", \"kind\": \"test\", \"snapshot\": \"$SNAP\", \"shards\": 4, \"labels\": [\"linux\"]}" "$BASE/api/v1/jobs")
 ID=$(echo "$PARENT" | json id)
 echo "batch $ID"
+# Once agent2 runs both its shards, it is stopped: they are preempted, and agent3 runs them.
+for _ in $(seq 1 90); do
+  [ "$(docker logs "$NET-agent2" 2>&1 | grep -c 'running shop test')" -ge 2 ] && break
+  sleep 1
+done
+sleep 2
+docker stop -t 45 "$NET-agent2" >/dev/null
+echo "agent2 stopped:"; docker logs "$NET-agent2" 2>&1 | tail -8
+agent agent3
 for _ in $(seq 1 120); do
   STATUS=$(curl -fsS -u admin:$PASS "$BASE/api/v1/jobs/$ID" | json status)
   [ "$STATUS" != running ] && break
@@ -69,8 +83,17 @@ done
 JOB=$(curl -fsS -u admin:$PASS "$BASE/api/v1/jobs/$ID")
 echo "$JOB" | python3 -m json.tool | head -40
 [ "$STATUS" = passed ] || { for a in agent1 agent2; do docker logs "$NET-$a" | tail -10; done; echo "FAIL: the batch did not pass"; exit 1; }
-AGENTS=$(echo "$JOB" | python3 -c 'import json,sys; print(len({s.get("agent") for s in json.load(sys.stdin)["shardJobs"]}))')
-[ "$AGENTS" = 2 ] || { echo "FAIL: the shards did not spread over both agents"; exit 1; }
+# agent2's shards were preempted (and finished by agent3), the others ran once.
+echo "$JOB" | python3 -c '
+import json, sys
+shards = json.load(sys.stdin)["shardJobs"]
+moved = [s for s in shards if s.get("preemptions") == 1]
+kept = [s for s in shards if not s.get("preemptions")]
+assert moved and kept, f"expected some shards preempted and some not: {shards}"
+assert all(s["agent"] == "agent3" for s in moved), f"preempted shards did not finish on agent3: {shards}"
+assert all(s["agent"] == "agent1" and s["attempts"] == 1 for s in kept), f"the other shards ran again: {shards}"
+print(f"{len(moved)} shards preempted and run again on agent3, {len(kept)} ran once on agent1")
+' || { echo "FAIL: the stopped agent's shards were not retried alone"; exit 1; }
 RUN=$(echo "$JOB" | json runId)
 # The merged run's record reaches the store a moment after the batch ends.
 for _ in $(seq 1 30); do
@@ -87,4 +110,4 @@ if [ "$(echo "$REC" | json run.summary.specs)" != 8 ]; then
 fi
 [ "$(echo "$REC" | json run.attested)" = True ] || { echo "FAIL: the merged run is not signed"; exit 1; }
 curl -fsS -u admin:$PASS "$BASE/api/v1/runs/$RUN/attestation" >/dev/null || { echo "FAIL: no attestation for the merged run"; exit 1; }
-echo "ok: 4 shards on 2 agents with slots ran their planned files and merged into one signed run"
+echo "ok: 4 shards on agents with slots ran their planned files; a stopped agent's shards were retried alone; all merged into one signed run"
