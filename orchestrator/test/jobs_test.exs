@@ -18,14 +18,14 @@ defmodule Testor.JobsTest do
 
   setup do
     Guard.reset()
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
     File.rm_rf!(Jobs.dir())
     File.mkdir_p!(Jobs.dir())
     config(%{"enabled" => true, "leaseSeconds" => 30, "maxAttempts" => 2})
 
     on_exit(fn ->
       File.rm(Path.join(Config.data_dir(), "config.json"))
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
       Application.delete_env(:testor, :auth)
     end)
   end
@@ -189,8 +189,7 @@ defmodule Testor.JobsTest do
 
       log =
         capture_log(fn ->
-          jobs = Jobs.sweep(:sys.get_state(Jobs), later)
-          :sys.replace_state(Jobs, fn _ -> jobs end)
+          Jobs.sweep_now(later)
         end)
 
       assert log =~ "queued again"
@@ -198,14 +197,14 @@ defmodule Testor.JobsTest do
       refute Map.has_key?(Jobs.get(job["id"]), "agent")
 
       {:ok, %{"attempts" => 2}} = Jobs.lease("a2", [])
-      capture_log(fn -> :sys.replace_state(Jobs, &Jobs.sweep(&1, later)) end)
+      capture_log(fn -> Jobs.sweep_now(later) end)
       assert %{"status" => "expired", "endedAt" => _} = Jobs.get(job["id"])
 
       # A job being cancelled is not tried again.
       held = job!("lost-cancelled")
       {:ok, _} = Jobs.lease("a1", [])
       {:ok, _} = Jobs.cancel(held["id"])
-      capture_log(fn -> :sys.replace_state(Jobs, &Jobs.sweep(&1, later)) end)
+      capture_log(fn -> Jobs.sweep_now(later) end)
       assert %{"status" => "expired"} = Jobs.get(held["id"])
 
       # The timer sweeps too; a fresh lease is left alone.
@@ -215,10 +214,11 @@ defmodule Testor.JobsTest do
       assert %{"status" => "leased"} = Jobs.get(fresh["id"])
     end
 
+    @tag :files
     test "jobs survive a restart; a file that is not a job is left out" do
       job = job!("kept")
       File.write!(Path.join(Jobs.dir(), "broken.json"), "{nope")
-      assert {:ok, jobs} = Jobs.init(nil)
+      assert {:ok, {Testor.Jobs.FileStore, %{jobs: jobs}}} = Jobs.init(nil)
       assert jobs == %{job["id"] => job}
     end
   end

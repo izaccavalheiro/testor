@@ -16,7 +16,7 @@ defmodule Testor.AgentSigningTest do
 
   setup do
     Guard.reset()
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
     File.rm(AgentKeys.file())
 
     File.write!(
@@ -37,7 +37,7 @@ defmodule Testor.AgentSigningTest do
     on_exit(fn ->
       File.rm(Path.join(Config.data_dir(), "config.json"))
       File.rm(AgentKeys.file())
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
       Application.delete_env(:testor, :auth)
     end)
 

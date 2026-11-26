@@ -80,6 +80,46 @@ jobs:
           & (Join-Path $src "runner/install.ps1") -Port 6798
           & (Join-Path $src "runner/install.ps1") -Uninstall -Port 6798
 
+  postgres:
+    # The whole suite with the job queue in PostgreSQL (TESTOR_DATABASE_URL), its own tests
+    # included and the coverage gate on its code.
+    name: Orchestrator with PostgreSQL
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.11@sha256:ff87138949ad9a46f32ff23bd6852b52ce024a13dffe9b4087be98292cdd3b4f
+        env:
+          POSTGRES_USER: testor
+          POSTGRES_PASSWORD: testor-ci
+          POSTGRES_DB: testor
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U testor" --health-interval 2s --health-timeout 2s --health-retries 30
+    env:
+      TESTOR_DATABASE_URL: postgres://testor:testor-ci@localhost:5432/testor
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: orchestrator
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            orchestrator/deps
+            orchestrator/_build
+          key: mix-pg-${{ runner.os }}-29-1.20-${{ hashFiles('orchestrator/mix.lock') }}
+      - name: Dependencies
+        run: mix deps.get
+      - name: Compile (warnings are errors)
+        run: mix compile --warnings-as-errors
+      - name: Tests with the job queue in PostgreSQL (100% coverage)
+        run: mix test --cover
+
   powershell:
     name: PowerShell scripts (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

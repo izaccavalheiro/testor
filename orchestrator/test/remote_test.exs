@@ -14,7 +14,7 @@ defmodule Testor.RemoteTest do
 
   setup do
     Guard.reset()
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
     File.rm_rf!(Jobs.dir())
     File.mkdir_p!(Jobs.dir())
 
@@ -35,7 +35,7 @@ defmodule Testor.RemoteTest do
 
     on_exit(fn ->
       File.rm(Path.join(Config.data_dir(), "config.json"))
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
       Application.delete_env(:testor, :auth)
     end)
 
@@ -217,10 +217,10 @@ defmodule Testor.RemoteTest do
     assert {:ok, %{"cancel" => true}} = Jobs.heartbeat(job, "bot")
 
     # The agent stops answering: the job expires (or is tried again) and the run is aborted.
-    capture_log(fn -> :sys.replace_state(Jobs, &Jobs.sweep(&1, System.os_time(:second) + 3600)) end)
+    capture_log(fn -> Jobs.sweep_now(System.os_time(:second) + 3600) end)
     assert %{"status" => "aborted"} = Store.get(run)
     # The job no longer holds the run (a new attempt binds its own); reading it shows its last.
-    refute Map.has_key?(:sys.get_state(Jobs)[job], "runId")
+    refute Map.has_key?(Jobs.stored(job), "runId")
     assert %{"runId" => ^run} = Jobs.get(job)
   end
 

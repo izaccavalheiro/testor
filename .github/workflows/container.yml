@@ -161,6 +161,8 @@ jobs:
           helm template t testor -n ci --set ingress.enabled=true --set ingress.tlsSecret=web \
             --set tls.existingSecret=tls --set auth.existingSecret=admin \
             --set serviceMonitor.enabled=true --set 'trustedProxies={10.0.0.0/8}' > out/full.yaml
+          helm template t testor -n ci --set database.existingSecret=db > out/database.yaml
+          grep -q TESTOR_DATABASE_URL out/database.yaml
           helm template t testor -n ci --set persistence.existingClaim=data \
             --set networkPolicy.enabled=false > out/claim.yaml
           helm template t testor -n ci --set agents.enabled=true --set agents.tokenSecret=t \

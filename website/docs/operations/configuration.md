@@ -20,6 +20,7 @@ The installer sets the first three for the service; the rest are optional.
 | `TESTOR_PORT` | `6767` | the HTTP port |
 | `TESTOR_BIND` | `0.0.0.0` | the address to listen on; `127.0.0.1` behind a proxy ([how to set it](reverse-proxy-tls.md#listen-on-localhost-only)) |
 | `TESTOR_TOKEN_KEY` | `<home>/token-keys.json` | the tokens' Ed25519 key (a base64 seed of 32 bytes) instead of the key file, for replicas that share one |
+| `TESTOR_DATABASE_URL` | (none) | the job queue in PostgreSQL: `postgres://user:password@host:5432/db?sslmode=verify-full` ([jobs](../reference/jobs.md#the-queue-in-postgresql)) |
 | `TESTOR_OIDC_CLIENT_SECRET` | `oidc.clientSecret` | the identity provider's client secret, instead of `auth.json` ([single sign-on](../features/single-sign-on.md)) |
 | `TESTOR_JWT_SECRET` | `<home>/jwt.key` | the signed-link key (and that of HS256 tokens), 32 bytes or more, instead of the key file |
 | `TESTOR_ALLOWED_HOSTS` | (none) | host names answered besides IP addresses, `localhost` and the machine's name: `testor.example.com`, `.example.com` (subdomains), `*` (no check). See [network exposure](../reference/security.md#network-exposure) |

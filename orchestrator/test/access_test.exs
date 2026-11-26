@@ -31,7 +31,7 @@ defmodule Testor.AccessTest do
   setup %{users: users} do
     Guard.reset()
     Application.put_env(:testor, :auth, %{"users" => users})
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
 
     File.write!(
       Path.join(Config.data_dir(), "config.json"),
@@ -51,7 +51,7 @@ defmodule Testor.AccessTest do
       Store.delete(web)
       Store.delete(secret)
       File.rm(Path.join(Config.data_dir(), "config.json"))
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
       Application.delete_env(:testor, :auth)
     end)
 

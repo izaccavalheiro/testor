@@ -38,8 +38,9 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 - A **hub**: the board and history across several testors, filtered by runner label.
 - **Archive to object storage** (done, in the next release): signed runs copied to an
   S3-compatible bucket, encrypted (SSE-KMS) and optionally locked.
-- [Storage, queue and event ports](docs/design/ports.md): SQLite or PostgreSQL for the run
-  index, S3-compatible object storage as the primary store for logs and artifacts, RabbitMQ,
+- **The job queue in PostgreSQL** (done, in the next release).
+- [Storage, queue and event ports](docs/design/ports.md): PostgreSQL for the run index and
+  events, S3-compatible object storage as the primary store for logs and artifacts, RabbitMQ,
   NATS or SQS for jobs.
 - Signed links bound to the viewer and minutes long.
 
