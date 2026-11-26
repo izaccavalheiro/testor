@@ -21,6 +21,9 @@ spec:
       serviceAccountName: {{ . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.agents.serviceAccount.automountToken }}
+      # No Kubernetes service links: a Service named testor would set TESTOR_PORT and the like
+      # (tcp://...), which testor reads as its own settings.
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

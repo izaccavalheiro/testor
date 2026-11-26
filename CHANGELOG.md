@@ -17,6 +17,11 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   checked in CI and applied on kind; the chart is published with each release to
   `oci://ghcr.io/izaccavalheiro/charts/testor`, signed with cosign.
 
+### Fixed
+
+- The Helm chart turns Kubernetes service links off: a release named `testor` made a Service
+  whose variables (`TESTOR_PORT=tcp://...`) testor read as its own and failed to start.
+
 ### Security
 
 - **File links bound to the viewer and minutes long**: screenshot and artifact links are now
