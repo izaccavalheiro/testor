@@ -75,6 +75,14 @@ defmodule Testor.ArchiveTest do
     %{endpoint: "http://127.0.0.1:#{port}"}
   end
 
+  defp received_puts(acc) do
+    receive do
+      {:put, path, headers, body} -> received_puts([{path, headers, body} | acc])
+    after
+      200 -> acc
+    end
+  end
+
   defp archive(config),
     do: File.write!(Path.join(Config.data_dir(), "config.json"), JSON.encode!(%{"archive" => config}))
 
@@ -154,12 +162,10 @@ defmodule Testor.ArchiveTest do
     on_exit(fn -> Store.delete(id) end)
     capture_log(fn -> finish(id, "passed") end)
 
-    puts =
-      for _ <- 1..4 do
-        assert_receive {:put, path, headers, body}, 10_000
-        {path, headers, body}
-      end
-
+    # Once archived, every object it put has arrived (a run may be archived twice: once is
+    # enough, the same objects again).
+    wait_until(fn -> Archive.archived?(id) end)
+    puts = received_puts([])
     by_path = Map.new(puts, fn {path, headers, body} -> {path, {Map.new(headers), body}} end)
 
     assert Map.has_key?(by_path, "/evidence/runner-1/runs/#{id}.json")
@@ -177,10 +183,10 @@ defmodule Testor.ArchiveTest do
     assert log_headers["content-type"] =~ "text/plain"
     assert shot_headers["content-type"] == "image/png"
 
-    wait_until(fn -> Archive.archived?(id) end)
     assert %{"bucket" => "evidence", "keys" => keys} = JSON.decode!(File.read!(Archive.manifest(id)))
     assert length(keys) == 4
     assert Testor.Views.run_snapshot(id)["run"]["archived"]
+    assert Testor.Query.compact(Testor.Views.run_snapshot(id)["run"])["archived"]
   end
 
   test "virtual-hosted style, SSE-S3, credentials from a web identity", %{endpoint: endpoint} do

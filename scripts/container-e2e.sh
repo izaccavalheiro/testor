@@ -15,7 +15,7 @@ WORK=$(mktemp -d)
 PASS=e2e-password-1234
 # S3: versitygw over a folder (a bucket is a folder of it).
 S3_IMAGE=versity/versitygw:v1.10.0@sha256:89cad13cc981986ee284cbafea4613f9533ce6fd5f37a2c96c4c4fb8adb3a316
-cleanup() { docker rm -f "$NET-testor" "$NET-agent" "$NET-s3" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$WORK"; }
+cleanup() { docker rm -f "$NET-testor" "$NET-agent" "$NET-s3" >/dev/null 2>&1 || true; docker network rm "$NET" >/dev/null 2>&1 || true; rm -rf "$WORK" 2>/dev/null || sudo rm -rf "$WORK" || true; }
 trap cleanup EXIT
 
 docker network create "$NET" >/dev/null
