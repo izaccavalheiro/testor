@@ -25,6 +25,11 @@ $env:MIX_ENV = $mixEnv
 if ($code) { throw "mix compile failed" }
 
 $started = Get-Date
+# Without Mix's lock on the build directory: after the build above it has nothing left to guard,
+# yet every mix test takes it, compiling or not, and on Windows four at once can fail it (one
+# links lock_0 while another releases it: "could not create hard link ... permission denied").
+$mixLock = $env:MIX_OS_CONCURRENCY_LOCK
+$env:MIX_OS_CONCURRENCY_LOCK = "0"
 $runs = foreach ($i in 1..$Partitions) {
   # A child process takes the environment as it is when it starts.
   $env:MIX_TEST_PARTITION = "$i"
@@ -36,6 +41,7 @@ $runs = foreach ($i in 1..$Partitions) {
   @{ Index = $i; Process = $p }
 }
 Remove-Item Env:MIX_TEST_PARTITION
+$env:MIX_OS_CONCURRENCY_LOCK = $mixLock
 foreach ($run in $runs) { $run.Process.WaitForExit() }
 
 $failed = $false
