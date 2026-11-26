@@ -7,7 +7,7 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
-## 0.10.0 - 2026-11-26
+## 0.11.0 - 2026-11-26
 
 ### Added
 
@@ -16,6 +16,11 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   make one of them do what must happen once (a run's signature, archive, webhooks, statuses
   and trace; schedules; the janitor), approvals are shared, and each keeps its own audit trail
   (`audit.<instance>.jsonl`, `TESTOR_INSTANCE`). The Helm chart's `replicas`.
+
+## 0.10.0 - 2026-11-26
+
+### Added
+
 - **The job queue in PostgreSQL**: with `TESTOR_DATABASE_URL`, jobs are kept in PostgreSQL
   (TLS checked by default), each change a transaction with row locks and leases under an
   advisory lock, so testors sharing a database share one queue. The Helm chart's
