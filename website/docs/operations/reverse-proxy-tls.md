@@ -10,6 +10,28 @@ testor speaks plain HTTP. That is fine over Tailscale (WireGuard encrypts it) an
 only you use. Anywhere else, give testor a certificate, or put a TLS-terminating proxy in front
 and keep testor itself off the network.
 
+## Certificates from Let's Encrypt, built in
+
+testor can order and renew its own certificate from an ACME CA, with no proxy: put
+`tls.acme` in config.json in the testor home, and restart it.
+
+```json
+{"tls": {"acme": {"domains": ["testor.example.com"], "email": "ops@example.com", "httpPort": 80,
+  "directory": "https://acme-staging-v02.api.letsencrypt.org/directory"}}}
+```
+
+1. Point the name's DNS at the machine and open port 80 (the CA's HTTP-01 challenges; the rest
+   is redirected to HTTPS) and testor's port. Add the name to `TESTOR_ALLOWED_HOSTS`.
+2. Start with Let's Encrypt's **staging** directory as above: its certificates are not trusted
+   by browsers, but its rate limits are generous. The log says `acme: installed certificate`.
+3. Remove `directory` (production is the default), delete `<home>/acme/cert.pem` and
+   `key.pem`, and restart: testor orders a trusted certificate.
+
+Renewal is automatic, without a restart; `testor_tls_expiry_seconds` (`/metrics`) is the time
+left. Binding port 80 needs privileges: on Linux, `setcap cap_net_bind_service` on the release's
+`beam.smp`, or forward 80 to a high `httpPort`. Every setting is in the
+[security model](../reference/security.md#certificates-from-acme).
+
 ## Listen on localhost only
 
 Make testor listen on loopback only, so only the proxy reaches it, and tell it the proxy's

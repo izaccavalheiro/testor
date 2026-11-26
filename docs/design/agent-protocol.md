@@ -1,7 +1,9 @@
 # Agent protocol
 
 Status: steps 1 to 4 done ([jobs](../jobs.md): a local agent in 0.4, agents on other machines
-in 0.5, in containers and Kubernetes in 0.6, signing their runs in 0.7); step 5 proposed. Builds on: signed attestations, cooperative cancel, the actor record,
+in 0.5, in containers and Kubernetes in 0.6, signing their runs in 0.7); step 5 done (the hub,
+0.12). Next: `container` and `kubernetes` executors and a job's `timeout` (0.16), a snapshot
+digest as a job's source (0.18), agents registering their capacity (0.19). Builds on: signed attestations, cooperative cancel, the actor record,
 separate accounts (0.3).
 
 ## Problem
@@ -64,4 +66,4 @@ that need no file system.
    an in-toto statement of what it sends; testor checks it against the bytes it received.
 4. **Done.** Container and Kubernetes executors: the agent image, the Helm chart's agents and
    KEDA scaling on queued jobs.
-5. Hub view across controllers.
+5. **Done.** Hub view across controllers (0.12: `hub.json`, the Hub tab, `GET /api/v1/hub`).
