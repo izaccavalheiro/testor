@@ -1,7 +1,9 @@
 defmodule Testor.Sessions do
   @moduledoc """
   PowerShell sessions working in a project snapshot that do not go through run.ps1 (a task
-  without KIND, a Taskfile that is not wired, an interactive ssh). remote.yml sends scripts as
+  without KIND, a Taskfile that is not wired, an interactive ssh). Sessions in testor's own home
+  are left out: testor.yml's upload, deploy, status and logs maintain testor (its test and smoke
+  are recorded), and the home is no project. remote.yml sends scripts as
   `pwsh -Command '&([scriptblock]::Create(...FromBase64String("...")))'`, so the command line
   is decoded to find the project; older Taskfiles that send `Set-Location "...\\<project>"; ...`
   in clear are read as they are. Listing processes costs a PowerShell start on Windows, so this
@@ -73,13 +75,16 @@ defmodule Testor.Sessions do
         wrapped = String.contains?(text, "& $testorRun") or String.contains?(text, "run.ps1\" -Project")
         sysinfo = String.contains?(text, "sysinfo.ps1")
 
-        if wrapped or sysinfo do
+        if wrapped or sysinfo or home?(project) do
           []
         else
           [%{"pid" => pid, "startedAt" => started, "project" => project, "command" => command(script, cmd)}]
         end
     end
   end
+
+  # The home's folder name, as the workspaces folder holds it (<workspaces>/.testor by default).
+  defp home?(project), do: project == Path.basename(Config.data_dir())
 
   defp decode(cmd) do
     with [_, b64] <- Regex.run(~r/FromBase64String\("([A-Za-z0-9+\/=]+)"\)/, cmd),
@@ -95,7 +100,11 @@ defmodule Testor.Sessions do
     folder = Regex.escape(Config.workspaces_name())
 
     cond do
-      # remote.yml's prelude: Join-Path (Join-Path $HOME "<workspaces>") "<project>"
+      # remote.yml's prelude: Join-Path ([IO.Path]::Combine($HOME, "<workspaces>")) "<project>",
+      # the workspaces relative to the home folder or absolute. Its next line names the testor
+      # home ($testorRun), which the last pattern would take for the project.
+      m = Regex.run(~r/Combine\(\$HOME, "(?:[^"]*[\\\/])?#{folder}"\)\) "([^"]+)"/, text) -> Enum.at(m, 1)
+      # remote.yml's older prelude: Join-Path (Join-Path $HOME "<workspaces>") "<project>"
       m = Regex.run(~r/Join-Path \$HOME "#{folder}"\) "([^"]+)"/, text) -> Enum.at(m, 1)
       m = Regex.run(~r/#{folder}[\\\/]([^"\\\/;\s']+)/, text) -> Enum.at(m, 1)
       true -> nil

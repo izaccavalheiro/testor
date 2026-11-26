@@ -6,11 +6,11 @@ defmodule Testor.SessionsTest do
   defp ws, do: Testor.Config.workspaces_name()
 
   # A command line as remote.yml sends it: the prelude and the script, base64-encoded.
-  defp encoded(script) do
+  defp encoded(script, workspaces \\ ws()) do
     prelude = """
     $ErrorActionPreference = "Stop"
-    $workspace = Join-Path (Join-Path $HOME "#{ws()}") "demo"
-    $testorRun = Join-Path (Join-Path $HOME "#{ws()}/.testor") "run.ps1"
+    $workspace = Join-Path ([IO.Path]::Combine($HOME, "#{workspaces}")) "demo"
+    $testorRun = Join-Path ([IO.Path]::Combine($HOME, "#{workspaces}/.testor")) "run.ps1"
     """
 
     b64 = Base.encode64(prelude <> script)
@@ -25,11 +25,44 @@ defmodule Testor.SessionsTest do
              Sessions.describe({7, "t", cmd})
   end
 
+  test "describe/1 finds the project of an absolute workspaces folder, and of the older prelude" do
+    absolute = encoded("Set-Location $workspace\nnpm ci\n", "/srv/#{ws()}")
+    assert [%{"project" => "demo", "command" => "npm ci"}] = Sessions.describe({7, "t", absolute})
+
+    older = """
+    $workspace = Join-Path (Join-Path $HOME "#{ws()}") "legacy"
+    $testorRun = Join-Path (Join-Path $HOME "#{ws()}/.testor") "run.ps1"
+    Set-Location $workspace
+    npm ci
+    """
+
+    cmd =
+      ~s|pwsh -Command &([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("#{Base.encode64(older)}"))))|
+
+    assert [%{"project" => "legacy", "command" => "npm ci"}] = Sessions.describe({7, "t", cmd})
+  end
+
   test "describe/1 leaves out runs that run.ps1 records" do
     cmd =
       encoded(
         "Set-Location $workspace\n$body = {\nnpm test\n}\nif (Test-Path $testorRun) { & $testorRun -Project \"demo\" }\n"
       )
+
+    assert Sessions.describe({7, "t", cmd}) == []
+  end
+
+  test "describe/1 leaves out testor.yml's sessions in testor's own home" do
+    # testor.yml's prelude: Join-Path $HOME "<workspaces>/.testor", then its upload or deploy.
+    script = """
+    $testorHome = Join-Path $HOME "#{ws()}/#{Path.basename(Testor.Config.data_dir())}"
+    $src = Join-Path $testorHome "src"
+    tar -xzf - -C $src
+    """
+
+    b64 = Base.encode64(script)
+
+    cmd =
+      ~s|pwsh -NoProfile -Command &([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("#{b64}"))))|
 
     assert Sessions.describe({7, "t", cmd}) == []
   end

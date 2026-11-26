@@ -220,8 +220,9 @@ whole server on a free port, record runs as `run.ps1` does and use it over HTTP,
 events and MCP) with a **100% line coverage** gate. `task testor:smoke` builds a release and
 checks it end to end with `scripts/smoke.ps1` (runs through `run.ps1`, the dashboard's and the
 versioned API, MCP, cancelling a process tree, maintenance, device stats, authentication set
-up with the release's CLI); `task testor:ci` runs both; `task testor:format` formats the sources
-on the runner and copies them back. CI runs the same on Windows, Linux and macOS. The platform
+up with the release's CLI); `task testor:ci` runs both, each recorded as a run of the project
+`testor` by the runner's `run.ps1`; `task testor:format` formats the sources on the runner and
+copies them back. CI runs the same on Windows, Linux and macOS. The platform
 adapters (`Testor.OS`, `Testor.Device`, `Testor.Device.Unix`), whose Windows, Linux and macOS
 branches cannot all run on one machine, are left out of the coverage gate and checked end to
 end by the smoke test on each OS.

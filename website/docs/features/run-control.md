@@ -44,4 +44,6 @@ project at a time, or chain them (`task check` with `lint` then `test` uploads o
 `runner:exec` without `KIND`, or an interactive `ssh my-runner`, runs PowerShell in the workspace
 without a record. The dashboard lists these **sessions** (pid, start, project, command) so you
 know something is running that is not a recorded run. Maintenance refuses to clean while one
-runs.
+runs. PowerShell in testor's own home (`testor.yml`'s upload, deploy, status and logs) is
+testor's upkeep, not a project's, and is not listed; `task testor:test` and `task testor:smoke`
+are recorded runs of the project `testor`.

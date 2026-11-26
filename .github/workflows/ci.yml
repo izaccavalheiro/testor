@@ -190,7 +190,8 @@ jobs:
           EOF
           task --list
           # Every task's templates render (the remote commands are silent, so nothing is printed).
-          for t in check test deploy status logs uninstall; do task --dry testor:$t; done
+          for t in check test smoke ci deploy status logs uninstall; do task --dry testor:$t; done
+          task --dry testor:test -- test/sessions_test.exs
           cd examples/node-project
           TESTOR_RUNNER=ci-runner task --dry test
 
