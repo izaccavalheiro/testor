@@ -39,7 +39,7 @@ defmodule Testor.Storage do
 
   # --- configuration -------------------------------------------------------------------------
 
-  @doc "The storage config from config.json: `%{type: :files}` or an S3 bucket's (logged when not valid)."
+  @doc "The storage config from config.json: `%{type: :files}`, an S3 bucket's or an Azure container's (logged when not valid)."
   def read_config do
     case Config.user()["storage"] do
       nil ->
@@ -48,13 +48,15 @@ defmodule Testor.Storage do
       %{"type" => "files"} ->
         %{type: :files}
 
-      %{"type" => "s3"} = raw ->
-        case Blob.S3.config(raw) do
+      %{"type" => type} = raw when type in ["s3", "azure"] ->
+        adapter = if type == "azure", do: Blob.Azure, else: Blob.S3
+
+        case adapter.config(raw) do
           {:ok, s3} ->
             cache = raw["cacheMB"]
 
             Map.merge(s3, %{
-              type: :s3,
+              type: String.to_existing_atom(type),
               presign: raw["presign"] != false,
               cache_bytes: if(is_integer(cache) and cache > 0, do: cache, else: 2048) * 1_048_576
             })
@@ -64,7 +66,7 @@ defmodule Testor.Storage do
         end
 
       _ ->
-        invalid(~s(type is "files" or "s3"))
+        invalid(~s(type is "files", "s3" or "azure"))
     end
   end
 
@@ -79,7 +81,12 @@ defmodule Testor.Storage do
   @doc false
   def configure(cfg), do: :persistent_term.put(@key, cfg)
 
-  def s3?, do: config().type == :s3
+  @doc "Whether runs are kept in a bucket (S3-compatible, or an Azure Blob container)."
+  def s3?, do: config().type in [:s3, :azure]
+
+  @doc "The adapter of a bucket's config."
+  def adapter_for(%{type: :azure}), do: Blob.Azure
+  def adapter_for(_cfg), do: Blob.S3
 
   @doc "S3 with PostgreSQL: testors that share no volume (`Testor.Storage.Shared`)."
   def shared?,
@@ -88,7 +95,7 @@ defmodule Testor.Storage do
   @doc "The store's adapter and its config: the bucket, or the home as a folder."
   def blob, do: {adapter(), blob_cfg()}
 
-  defp adapter, do: if(s3?(), do: Blob.S3, else: Blob.Files)
+  defp adapter, do: if(s3?(), do: adapter_for(config()), else: Blob.Files)
   defp blob_cfg, do: if(s3?(), do: config(), else: %{root: Config.data_dir()})
 
   # --- the run's keys ------------------------------------------------------------------------
@@ -379,7 +386,7 @@ defmodule Testor.Storage do
     cfg = read_config()
     configure(cfg)
 
-    if cfg.type == :s3 do
+    if cfg.type in [:s3, :azure] do
       Logger.info("storage: runs are stored in #{cfg.bucket}")
       if not Testor.Jobs.Postgres.enabled?(), do: restore()
       Process.send_after(self(), :trim, @trim_ms)

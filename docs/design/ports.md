@@ -6,16 +6,16 @@ Status: in progress. Done (0.10): an archive of signed runs to S3-compatible sto
 testors on one shared home and one PostgreSQL (`Testor.Cluster`: claims for what must happen
 once, shared approvals, an audit trail per testor). SQLite and Redis are dropped ([decisions](README.md#decisions)).
 
-**Object storage (0.13):** `Testor.Blob` is the object store port (`Testor.Blob.Files`, a
+**Object storage (0.13; Azure Blob in 0.15):** `Testor.Blob` is the object store port (`Testor.Blob.Files`, a
 folder; `Testor.Blob.S3`, any S3-compatible bucket, SigV4 in `Testor.Aws`), and
 `Testor.Storage` keeps runs in a bucket with the home as a cache ([storage](../storage.md)).
 With PostgreSQL too, the run index is the table `testor_runs` instead of the scan of
 `runs/*.json`, and live events between testors go over `LISTEN`/`NOTIFY`
 (`Testor.Storage.Shared`, through Postgrex: no new dependency), so testors share no volume.
 The audit trail goes to the bucket in segments; attestations are made and checked as before,
-from the files fetched into the home. Azure Blob is not built yet (it would be `Blob.Azure`,
-SharedKey or Entra workload identity, tested against Azurite); Google Cloud Storage works
-through its S3-compatible XML API.
+from the files fetched into the home. Azure Blob Storage is `Testor.Blob.Azure` (Shared Key or
+Entra workload identity, tested against Azurite); Google Cloud Storage works through its
+S3-compatible XML API.
 
 Without `storage`, the run index is in ETS, filled by scanning `runs/*.json` every 300 ms, and
 logs, screenshots and artifacts are files: a single binary on one node with a local disk.

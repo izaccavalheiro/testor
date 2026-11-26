@@ -157,7 +157,7 @@ defmodule Testor.Storage.Shared do
         {:error, :too_large}
 
       true ->
-        with :ok <- Blob.S3.put(Storage.config(), segment_key(id, offset), data) do
+        with :ok <- Storage.adapter_for(Storage.config()).put(Storage.config(), segment_key(id, offset), data) do
           %{num_rows: moved} =
             Postgrex.query!(
               @pool,
@@ -272,7 +272,7 @@ defmodule Testor.Storage.Shared do
   defp send_segment(id, from, to) do
     with {:ok, io} <- File.open(Config.log_file(id), [:read, :binary]),
          {:ok, data} <- read_close(io, from, to - from),
-         :ok <- Blob.S3.put(Storage.config(), segment_key(id, from), data) do
+         :ok <- Storage.adapter_for(Storage.config()).put(Storage.config(), segment_key(id, from), data) do
       Postgrex.query!(@pool, "UPDATE testor_runs SET log_size = $2 WHERE id = $1", [id, to])
       announce(id, from, data)
       to
@@ -349,7 +349,7 @@ defmodule Testor.Storage.Shared do
   end
 
   defp fill(id) do
-    case Blob.S3.list(Storage.config(), "logs/#{id}/") do
+    case Storage.adapter_for(Storage.config()).list(Storage.config(), "logs/#{id}/") do
       {:ok, objects} ->
         Enum.reduce_while(objects, :ok, fn %{key: key}, :ok ->
           offset = key |> Path.basename(".log") |> String.to_integer()
@@ -360,7 +360,7 @@ defmodule Testor.Storage.Shared do
               {:cont, :ok}
 
             offset == size ->
-              case Blob.S3.get(Storage.config(), key, :binary) do
+              case Storage.adapter_for(Storage.config()).get(Storage.config(), key, :binary) do
                 {:ok, data} -> {:cont, append_local(id, data)}
                 _ -> {:halt, :ok}
               end

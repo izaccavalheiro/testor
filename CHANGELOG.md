@@ -7,6 +7,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **Runs in Azure Blob Storage** ([docs/storage.md](docs/storage.md#azure-blob-storage)):
+  `"type": "azure"` in config.json's `storage` keeps runs in a container (`Testor.Blob.Azure`,
+  the Blob REST API without an SDK): Shared Key (`AZURE_STORAGE_KEY`, with SAS links for
+  browsers) or Microsoft Entra workload identity, MD5-checked uploads in blocks past 64 MB, the
+  SHA-256 kept as metadata, protected blobs left alone. Everything S3 storage does works on it:
+  several testors without a shared volume, the migration CLI, the audit trail. Tested against
+  Azurite in CI.
+
 ## 0.14.0 - 2026-11-26
 
 ### Added
