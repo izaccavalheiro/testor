@@ -30,6 +30,7 @@ defmodule Testor.Application do
         Testor.Jobs,
         Testor.Schedules,
         Testor.Approvals,
+        Testor.Hub,
         Testor.Sessions,
         Testor.Stats,
         Testor.Janitor,

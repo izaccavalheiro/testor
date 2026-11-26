@@ -147,6 +147,7 @@ td.path { word-break: break-all; color: var(--muted); }
     <a href="#/shots" data-nav="shots">Screenshots</a>
     <a href="#/device" data-nav="device">Device</a>
     <a href="#/maintenance" data-nav="maintenance">Maintenance</a>
+    <a href="#/hub" data-nav="hub" id="hub-nav" hidden>Hub</a>
   </nav>
   <div class="right"><span id="who"></span><span id="usage"></span><span id="disk"></span><span><span class="dot" id="conn"></span> <span id="conn-text">connecting…</span></span></div>
 </header>
@@ -296,6 +297,7 @@ function parseRoute() {
   if (h.startsWith("artifacts")) return { name: "artifacts" };
   if (h.startsWith("maintenance")) return { name: "maintenance" };
   if (h.startsWith("device")) return { name: "device" };
+  if (h.startsWith("hub")) return { name: "hub" };
   return { name: "runs" };
 }
 function enter() {
@@ -310,6 +312,7 @@ function enter() {
   if (route.name === "artifacts") { app.innerHTML = `<div id="arts-view"></div>`; artsDirty = true; }
   if (route.name === "maintenance") { app.innerHTML = `<div id="maint-view"></div>`; loadMaint(); }
   if (route.name === "runs") app.innerHTML = `<div id="runs-view"></div>`;
+  if (route.name === "hub") { app.innerHTML = `<div id="hub-view"></div>`; loadHub(); }
   schedule();
 }
 window.addEventListener("hashchange", () => { route = parseRoute(); enter(); });
@@ -327,6 +330,7 @@ function render() {
   else if (route.name === "artifacts") renderArts();
   else if (route.name === "maintenance") renderMaint();
   else if (route.name === "device") renderDevice();
+  else if (route.name === "hub") { /* loadHub paints it */ }
   else renderRuns();
 }
 
@@ -823,9 +827,27 @@ async function loadApprovals() {
   } catch { el.hidden = true; }
 }
 
+// The hub (Testor.Hub): the board of other testors, when hub.json lists some.
+let hubTimer = null;
+async function loadHub() {
+  clearTimeout(hubTimer);
+  const el = $("#hub-view");
+  if (!el) return;
+  try {
+    const { data } = await (await api("/api/v1/hub")).json();
+    paint(el, `<div class="hub">${data.map((t) => `
+      <h3 class="group"><a href="${esc(t.url)}/#/" target="_blank" rel="noopener"><b>${esc(t.name)}</b></a>
+        ${t.labels.map((l) => `<span class="tag">${esc(l)}</span>`).join(" ")}
+        <span class="muted">${t.ok ? `testor ${esc(t.version)} · ${esc(when(t.checkedAt))}` : `<span style="color:var(--red)">${esc(t.error)}</span>`}</span></h3>
+      <div class="chips">${t.projects.map((p) => `<a class="chip" ${p.link ? `href="${esc(p.link)}" target="_blank" rel="noopener"` : ""} title="${esc(p.status ?? "")}"><i style="background:${color(p.status)}"></i>${esc(p.project)} · ${esc(p.kind)}</a>`).join("")}</div>`).join("")}</div>`);
+  } catch (e) { paint(el, `<p class="muted">${esc(e.message)}</p>`); }
+  if (route.name === "hub") hubTimer = setTimeout(loadHub, 15000);
+}
+
 connect();
 enter();
 loadApprovals();
+api("/api/v1/hub").then(() => { $("#hub-nav").hidden = false; }).catch(() => {});
 api("/api/v1/auth/me").then((r) => r.json()).then((me) => {
   if (me.via !== "session") return;
   viaSession = true;

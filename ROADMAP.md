@@ -37,7 +37,7 @@ Designs for the larger pieces are in [docs/design](docs/design/README.md).
 
 ### 0.12: many testors, other backends
 
-- A **hub**: the board and history across several testors, filtered by runner label.
+- **The hub** (done, in the next release): the board across several testors, filtered by label.
 - [Storage, queue and event ports](docs/design/ports.md): S3-compatible object storage as the
   primary store (no shared volume), RabbitMQ, NATS or SQS for jobs.
 - Signed links bound to the viewer and minutes long.

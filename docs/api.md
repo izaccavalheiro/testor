@@ -66,6 +66,7 @@ curl -s -H "authorization: Bearer $TOKEN" "http://my-runner:6767/api/v1/runs/$ID
 | `GET /api/v1/approvals?status=` | read | what AI agents asked to do and a person must approve ([approvals](mcp.md#approvals)) |
 | `GET /api/v1/approvals/:id` | read | one, with the tool's result once done |
 | `POST /api/v1/approvals/:id/approve`, `/deny` | the tool's scope on its project | decide; not by the user who asked |
+| `GET /api/v1/hub?label=` | read | the board of the testors `hub.json` lists: each one's latest result per project, with links ([hub](../website/docs/features/hub.md)) |
 | `GET /api/v1/gates` | read | `config.json`'s release gates, or the `error` that leaves one out |
 | `GET /api/v1/gates/:name?commit=` | read | whether a commit passes: `{gate, commit, pass, checks: [{kind, pass, reason, runId, attestation}]}` ([release gates](attestation.md#release-gates)) |
 | `GET /api/v1/schedules` | read | `config.json`'s schedules with their `next` time (UTC), or the `error` that leaves one out |
