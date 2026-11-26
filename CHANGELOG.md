@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.13.0 - 2026-11-26
+
 ### Added
 
 - **Mutation testing, first class** ([docs/mutation.md](docs/mutation.md)): a run hands over

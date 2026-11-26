@@ -26,7 +26,7 @@
 # changed travels: git hashes the tree into a throwaway index (no objects written), the runner
 # compares it with the manifest of its last sync (<HOME_DIR>/manifests/<PROJECT>.json) and the
 # files as they are there, and asks for the files it lacks; SYNC=full sends the whole tree, as
-# before 0.18. SYNC=cas sends it to testor instead (SERVER, a token in TESTOR_TOKEN), as a
+# before 0.13. SYNC=cas sends it to testor instead (SERVER, a token in TESTOR_TOKEN), as a
 # content-addressed snapshot an agent runs (runner/snapshot.ps1; needs pwsh here), and with KIND
 # queues that task (LABELS: an agent's labels). exec runs
 # CMD there in PowerShell 7, stopping at the first failing command, whatever the runner's

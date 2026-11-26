@@ -8,7 +8,7 @@ defmodule Testor.MixProject do
   def project do
     [
       app: :testor,
-      version: "0.12.2",
+      version: "0.13.0",
       source_url: "https://github.com/izaccavalheiro/testor",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
