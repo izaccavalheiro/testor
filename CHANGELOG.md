@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.12.0 - 2026-11-26
+
 ### Added
 
 - **The hub**: `hub.json` (in the secrets folder) lists other testors with a read token and
