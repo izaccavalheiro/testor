@@ -56,6 +56,11 @@ spec:
             - { name: TESTOR_ALLOWED_HOSTS, value: {{ include "testor.allowedHosts" . | quote }} }
             - { name: TESTOR_TRUSTED_PROXIES, value: {{ join "," .Values.trustedProxies | quote }} }
             - { name: TESTOR_ANONYMOUS, value: {{ .Values.anonymous | quote }} }
+            {{- with .Values.database.existingSecret }}
+            # The job queue in PostgreSQL (Testor.Jobs.Postgres).
+            - name: TESTOR_DATABASE_URL
+              valueFrom: { secretKeyRef: { name: {{ . }}, key: url } }
+            {{- end }}
             {{- if .Values.tls.existingSecret }}
             - { name: TESTOR_TLS_CERT, value: /tls/tls.crt }
             - { name: TESTOR_TLS_KEY, value: /tls/tls.key }

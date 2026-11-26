@@ -25,7 +25,7 @@ defmodule Testor.JobTokensTest do
 
   setup %{ring: ring} do
     Guard.reset()
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
 
     File.write!(
       Path.join(Config.data_dir(), "config.json"),
@@ -41,7 +41,7 @@ defmodule Testor.JobTokensTest do
       File.rm(Auth.auth_file())
       File.rm(Auth.key_file())
       File.rm(Testor.Auth.TokenKeys.file())
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
       Application.delete_env(:testor, :auth)
       Application.delete_env(:testor, :auth_job_token_keys)
       :persistent_term.erase({Auth, :settings})

@@ -151,6 +151,30 @@ cron expression matches the minute, as `POST /api/v1/jobs` would:
   `testor.log` says why. `GET /api/v1/schedules` lists them with their next time (or why not),
   for the projects one may see.
 
+## The queue in PostgreSQL
+
+Jobs are kept in `<home>/jobs` by default, for one testor. With `TESTOR_DATABASE_URL` they are
+kept in PostgreSQL instead (12 or later):
+
+```sh
+TESTOR_DATABASE_URL=postgres://testor:<password>@db.example.com:5432/testor?sslmode=verify-full
+```
+
+- The table `testor_jobs` is made at start; give the user rights on that database only.
+- `sslmode`: `verify-full` (TLS, the certificate checked against the system's roots and the
+  host name; the default for any host but this machine), `require` (TLS, not checked),
+  `disable` (the default for `localhost`).
+- Every change is a transaction that locks the rows it reads; leasing and expiring leases also
+  hold an advisory lock, so several testors on one database share one queue and still run one
+  job per project at a time. If the database is out of reach, the API answers that the queue
+  is unavailable, and nothing is lost.
+- The Helm chart takes it from a Secret (`database.existingSecret`, key `url`).
+
+This is the first step towards several testors serving one team: today the queue is shared,
+while runs, logs and files stay with the testor that recorded them (the run index and the
+files follow, see the [roadmap](../ROADMAP.md)). Use it so jobs outlive a testor's machine or
+volume, and for a standby that takes over the queue.
+
 ## Isolation
 
 By default a project's jobs run in its workspace, one at a time, so a run finds what the one

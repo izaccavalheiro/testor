@@ -9,6 +9,10 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ### Added
 
+- **The job queue in PostgreSQL**: with `TESTOR_DATABASE_URL`, jobs are kept in PostgreSQL
+  (TLS checked by default), each change a transaction with row locks and leases under an
+  advisory lock, so testors sharing a database share one queue. The Helm chart's
+  `database.existingSecret`. Files stay the default.
 - **Archive to object storage**: `archive` in `config.json` copies each finished, signed run
   (record, log, screenshots, artifacts, attestations) to an S3-compatible bucket (AWS S3,
   MinIO, R2, GCS, Ceph), with server-side encryption (`AES256`, or SSE-KMS with your key) and

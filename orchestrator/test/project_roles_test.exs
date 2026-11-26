@@ -15,7 +15,7 @@ defmodule Testor.ProjectRolesTest do
 
   setup do
     Guard.reset()
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
 
     File.write!(
       Path.join(Config.data_dir(), "config.json"),
@@ -49,7 +49,7 @@ defmodule Testor.ProjectRolesTest do
     on_exit(fn ->
       Enum.each(Map.values(runs), &Store.delete/1)
       File.rm(Path.join(Config.data_dir(), "config.json"))
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
       Application.delete_env(:testor, :auth)
     end)
 

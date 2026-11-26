@@ -67,11 +67,11 @@ defmodule Testor.SchedulesTest do
   describe "schedules" do
     setup do
       Guard.reset()
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
 
       on_exit(fn ->
         File.rm(Path.join(Config.data_dir(), "config.json"))
-        :sys.replace_state(Jobs, fn _ -> %{} end)
+        Jobs.reset()
         Application.delete_env(:testor, :auth)
       end)
     end

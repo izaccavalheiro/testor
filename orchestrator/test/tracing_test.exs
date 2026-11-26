@@ -31,7 +31,7 @@ defmodule Testor.TracingTest do
     {:ok, {_, port}} = ThousandIsland.listener_info(pid)
     Application.put_env(:testor, :collector_test, self())
     System.put_env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:#{port}/")
-    :sys.replace_state(Jobs, fn _ -> %{} end)
+    Jobs.reset()
 
     File.write!(
       Path.join(Config.data_dir(), "config.json"),
@@ -46,7 +46,7 @@ defmodule Testor.TracingTest do
       Application.delete_env(:testor, :collector_test)
       Application.delete_env(:testor, :collector_status)
       File.rm(Path.join(Config.data_dir(), "config.json"))
-      :sys.replace_state(Jobs, fn _ -> %{} end)
+      Jobs.reset()
     end)
 
     %{port: port}

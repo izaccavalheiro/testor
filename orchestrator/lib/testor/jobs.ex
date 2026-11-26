@@ -16,11 +16,12 @@ defmodule Testor.Jobs do
   An agent holds a job by its lease (`execution.leaseSeconds`, 30 by default) and renews it
   with heartbeats; a job whose lease runs out goes back to the queue. One job per project is
   leased at a time, so two runs never share a project's snapshot folder. Jobs are kept in
-  `<home>/jobs/<id>.json` and survive a restart.
+  `<home>/jobs/<id>.json` (`Testor.Jobs.FileStore`) and survive a restart; with
+  `TESTOR_DATABASE_URL`, in PostgreSQL (`Testor.Jobs.Postgres`), shared by several testors.
   """
   use GenServer
   require Logger
-  alias Testor.{Config, Files, Store}
+  alias Testor.{Config, Store}
 
   @sweep_ms 5_000
   @name ~r/^[A-Za-z0-9_.-]{1,100}$/
@@ -31,7 +32,7 @@ defmodule Testor.Jobs do
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
   def statuses, do: @statuses
-  def dir, do: Path.join(Config.data_dir(), "jobs")
+  def dir, do: Testor.Jobs.FileStore.dir()
 
   @doc "The execution settings: `enabled`, `leaseSeconds`, `maxAttempts`."
   def settings, do: Config.retention()["execution"]
@@ -93,179 +94,223 @@ defmodule Testor.Jobs do
   """
   def bind_run(id, agent, run), do: GenServer.call(__MODULE__, {:bind_run, id, agent, run})
 
+  @doc "Removes every job (tests)."
+  def reset, do: GenServer.call(__MODULE__, :reset)
+
+  @doc "Sweeps leases as at `now` (Unix seconds); the timer does it every few seconds."
+  def sweep_now(now), do: GenServer.call(__MODULE__, {:sweep, now})
+
+  @doc "Job `id` as stored, without the run reads link to it (tests)."
+  def stored(id), do: GenServer.call(__MODULE__, {:stored, id})
+
   # --- server -------------------------------------------------------------------------------
 
+  # The state is the backend and its own: files (one testor) or PostgreSQL (several).
   @impl true
   def init(nil) do
-    File.mkdir_p!(dir())
-
-    jobs =
-      for name <- Files.ls(dir()),
-          String.ends_with?(name, ".json"),
-          {:ok, job} <- [Files.read_json(Path.join(dir(), name))],
-          into: %{} do
-        {job["id"], job}
-      end
-
+    backend = if Testor.Jobs.Postgres.enabled?(), do: Testor.Jobs.Postgres, else: Testor.Jobs.FileStore
     Process.send_after(self(), :sweep, @sweep_ms)
-    {:ok, jobs}
+    {:ok, {backend, backend.init()}}
   end
 
   @impl true
-  def handle_call({:get, id}, _from, jobs), do: {:reply, jobs |> Map.get(id) |> with_run(runs_by_job()), jobs}
-
-  def handle_call({:list, status}, _from, jobs) do
-    list =
-      jobs
-      |> Map.values()
-      |> Enum.filter(&(status == nil or &1["status"] == status))
-      |> Enum.sort_by(&order/1, :desc)
-
-    index = runs_by_job()
-    {:reply, Enum.map(list, &with_run(&1, index)), jobs}
+  def handle_call({:get, id}, _from, state) do
+    transact(state, {:id, id}, fn jobs -> {jobs |> Map.get(id) |> with_run(runs_by_job()), []} end)
   end
 
-  def handle_call({:enqueue, params, who}, _from, jobs) do
+  def handle_call({:stored, id}, _from, state), do: transact(state, {:id, id}, &{Map.get(&1, id), []})
+
+  def handle_call({:list, status}, _from, state) do
+    transact(state, {:all, status}, fn jobs ->
+      index = runs_by_job()
+
+      list =
+        jobs
+        |> Map.values()
+        |> Enum.filter(&(status == nil or &1["status"] == status))
+        |> Enum.sort_by(&order/1, :desc)
+        |> Enum.map(&with_run(&1, index))
+
+      {list, []}
+    end)
+  end
+
+  def handle_call({:enqueue, params, who}, _from, state) do
     with true <- settings()["enabled"] == true || {:error, :disabled},
          {:ok, job} <- new_job(params, who) do
       Logger.info("jobs: #{job["id"]} queued (#{job["project"]} #{job["kind"]}) by #{who}")
-      {:reply, {:ok, job}, save(jobs, job)}
+      transact(state, :none, fn _ -> {{:ok, job}, [job]} end)
     else
-      error -> {:reply, error, jobs}
+      error -> {:reply, error, state}
     end
   end
 
-  def handle_call({:lease, agent, labels, allow}, _from, jobs) do
-    busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
+  def handle_call({:lease, agent, labels, allow}, _from, state) do
+    transact(state, :open, fn jobs ->
+      busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
 
-    candidate =
-      jobs
-      |> Map.values()
-      |> Enum.filter(
-        &(&1["status"] == "queued" and not MapSet.member?(busy, &1["project"]) and allow.(&1["project"]))
-      )
-      |> Enum.filter(&Enum.all?(&1["labels"], fn label -> label in labels end))
-      |> Enum.min_by(&order/1, fn -> nil end)
+      candidate =
+        jobs
+        |> Map.values()
+        |> Enum.filter(
+          &(&1["status"] == "queued" and not MapSet.member?(busy, &1["project"]) and allow.(&1["project"]))
+        )
+        |> Enum.filter(&Enum.all?(&1["labels"], fn label -> label in labels end))
+        |> Enum.min_by(&order/1, fn -> nil end)
 
-    case candidate do
-      nil ->
-        {:reply, :none, jobs}
+      case candidate do
+        nil ->
+          {:none, []}
 
-      job ->
-        job =
-          Map.merge(job, %{
-            "status" => "leased",
-            "agent" => agent,
-            "attempts" => job["attempts"] + 1,
-            "leasedAt" => now_iso(),
-            "leaseUntil" => lease_until()
-          })
+        job ->
+          job =
+            Map.merge(job, %{
+              "status" => "leased",
+              "agent" => agent,
+              "attempts" => job["attempts"] + 1,
+              "leasedAt" => now_iso(),
+              "leaseUntil" => lease_until()
+            })
 
-        Logger.info("jobs: #{job["id"]} leased to #{agent} (attempt #{job["attempts"]})")
-        {:reply, {:ok, job}, save(jobs, job)}
-    end
+          Logger.info("jobs: #{job["id"]} leased to #{agent} (attempt #{job["attempts"]})")
+          {{:ok, job}, [job]}
+      end
+    end)
   end
 
-  def handle_call({:heartbeat, id, agent}, _from, jobs) do
-    case held(jobs, id, agent) do
-      {:ok, job} ->
-        job = Map.merge(job, %{"status" => "running", "leaseUntil" => lease_until()})
-        job = Map.put_new(job, "startedAt", now_iso()) |> link_run()
-        {:reply, {:ok, %{"cancel" => job["cancelRequested"] == true}}, save(jobs, job)}
+  def handle_call({:heartbeat, id, agent}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      case held(jobs, id, agent) do
+        {:ok, job} ->
+          job = Map.merge(job, %{"status" => "running", "leaseUntil" => lease_until()})
+          job = Map.put_new(job, "startedAt", now_iso()) |> link_run()
+          {{:ok, %{"cancel" => job["cancelRequested"] == true}}, [job]}
 
-      error ->
-        {:reply, error, jobs}
-    end
+        error ->
+          {error, []}
+      end
+    end)
   end
 
-  def handle_call({:finish, id, agent, result}, _from, jobs) do
-    with {:ok, job} <- held(jobs, id, agent) do
-      exit_code = if is_integer(result["exitCode"]), do: result["exitCode"], else: nil
+  def handle_call({:finish, id, agent, result}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      with {:ok, job} <- held(jobs, id, agent) do
+        exit_code = if is_integer(result["exitCode"]), do: result["exitCode"], else: nil
 
-      status =
-        cond do
-          job["cancelRequested"] == true -> "cancelled"
-          exit_code == 0 and result["error"] == nil -> "passed"
-          true -> "failed"
-        end
-
-      job =
-        job
-        |> Map.merge(%{"status" => status, "exitCode" => exit_code, "endedAt" => now_iso()})
-        |> put_if("error", short(result["error"]))
-        |> Map.delete("leaseUntil")
-        |> link_run()
-
-      Logger.info("jobs: #{id} #{status} on #{agent}")
-      {:reply, {:ok, job}, save(jobs, job)}
-    else
-      error -> {:reply, error, jobs}
-    end
-  end
-
-  def handle_call({:held, id, agent}, _from, jobs), do: {:reply, held(jobs, id, agent), jobs}
-
-  def handle_call({:bind_run, id, agent, run}, _from, jobs) do
-    case held(jobs, id, agent) do
-      {:ok, %{"runId" => ^run} = job} -> {:reply, {:ok, job}, jobs}
-      {:ok, %{"runId" => _}} -> {:reply, {:error, :other_run}, jobs}
-      {:ok, job} -> job |> Map.put("runId", run) |> then(&{:reply, {:ok, &1}, save(jobs, &1)})
-      error -> {:reply, error, jobs}
-    end
-  end
-
-  def handle_call({:cancel, id}, _from, jobs) do
-    case Map.get(jobs, id) do
-      nil ->
-        {:reply, {:error, :not_found}, jobs}
-
-      %{"status" => "queued"} = job ->
-        job = Map.merge(job, %{"status" => "cancelled", "endedAt" => now_iso()})
-        {:reply, {:ok, job}, save(jobs, job)}
-
-      %{"status" => status} = job when status in @active ->
-        job = job |> Map.put("cancelRequested", true) |> link_run()
-        {:reply, {:ok, job}, save(jobs, job)}
-
-      _ ->
-        {:reply, {:error, :ended}, jobs}
-    end
-  end
-
-  @impl true
-  def handle_info(:sweep, jobs) do
-    Process.send_after(self(), :sweep, @sweep_ms)
-    {:noreply, sweep(jobs, System.os_time(:second))}
-  end
-
-  @doc false
-  # Jobs whose agent stopped renewing its lease go back to the queue, or expire after the
-  # last attempt.
-  def sweep(jobs, now) do
-    max = settings()["maxAttempts"]
-
-    Enum.reduce(jobs, jobs, fn
-      {_, %{"status" => s, "leaseUntil" => until} = job}, acc when s in @active and until < now ->
-        {status, note} =
-          if job["attempts"] < max and job["cancelRequested"] != true,
-            do: {"queued", "its agent stopped answering; queued again"},
-            else: {"expired", "its agent stopped answering"}
-
-        Logger.warning("jobs: #{job["id"]} #{note} (#{job["agent"]})")
-        # Its run (a remote one has no process here to watch) ended with its agent.
-        if is_binary(job["runId"]), do: Store.settle(job["runId"], "aborted")
+        status =
+          cond do
+            job["cancelRequested"] == true -> "cancelled"
+            exit_code == 0 and result["error"] == nil -> "passed"
+            true -> "failed"
+          end
 
         job =
           job
-          |> Map.merge(%{"status" => status, "error" => note})
-          |> Map.drop(["leaseUntil", "agent", "runId"])
-          |> then(&if(status == "expired", do: Map.put(&1, "endedAt", now_iso()), else: &1))
+          |> Map.merge(%{"status" => status, "exitCode" => exit_code, "endedAt" => now_iso()})
+          |> put_if("error", short(result["error"]))
+          |> Map.delete("leaseUntil")
+          |> link_run()
 
-        save(acc, job)
-
-      _, acc ->
-        acc
+        Logger.info("jobs: #{id} #{status} on #{agent}")
+        {{:ok, job}, [job]}
+      else
+        error -> {error, []}
+      end
     end)
+  end
+
+  def handle_call({:held, id, agent}, _from, state),
+    do: transact(state, {:id, id}, &{held(&1, id, agent), []})
+
+  def handle_call({:bind_run, id, agent, run}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      case held(jobs, id, agent) do
+        {:ok, %{"runId" => ^run} = job} -> {{:ok, job}, []}
+        {:ok, %{"runId" => _}} -> {{:error, :other_run}, []}
+        {:ok, job} -> job |> Map.put("runId", run) |> then(&{{:ok, &1}, [&1]})
+        error -> {error, []}
+      end
+    end)
+  end
+
+  def handle_call({:cancel, id}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      case Map.get(jobs, id) do
+        nil ->
+          {{:error, :not_found}, []}
+
+        %{"status" => "queued"} = job ->
+          job = Map.merge(job, %{"status" => "cancelled", "endedAt" => now_iso()})
+          {{:ok, job}, [job]}
+
+        %{"status" => status} = job when status in @active ->
+          job = job |> Map.put("cancelRequested", true) |> link_run()
+          {{:ok, job}, [job]}
+
+        _ ->
+          {{:error, :ended}, []}
+      end
+    end)
+  end
+
+  def handle_call(:reset, _from, {backend, state}), do: {:reply, :ok, {backend, backend.clear(state)}}
+
+  def handle_call({:sweep, now}, _from, state) do
+    {:reply, _, state} = sweep(state, now)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_info(:sweep, state) do
+    Process.send_after(self(), :sweep, @sweep_ms)
+    {:reply, _, state} = sweep(state, System.os_time(:second))
+    {:noreply, state}
+  end
+
+  # Jobs whose agent stopped renewing its lease go back to the queue, or expire after the
+  # last attempt; their runs (a remote one has no process here to watch) end with them.
+  defp sweep(state, now) do
+    max = settings()["maxAttempts"]
+
+    reply =
+      transact(state, :open, fn jobs ->
+        changed =
+          for {_, %{"status" => s, "leaseUntil" => until} = job} <- jobs, s in @active and until < now do
+            {status, note} =
+              if job["attempts"] < max and job["cancelRequested"] != true,
+                do: {"queued", "its agent stopped answering; queued again"},
+                else: {"expired", "its agent stopped answering"}
+
+            Logger.warning("jobs: #{job["id"]} #{note} (#{job["agent"]})")
+
+            job
+            |> Map.merge(%{"status" => status, "error" => note})
+            |> Map.drop(["leaseUntil", "agent", "runId"])
+            |> then(&if(status == "expired", do: Map.put(&1, "endedAt", now_iso()), else: &1))
+          end
+
+        runs = for job <- changed, run = get_in(jobs, [job["id"], "runId"]), is_binary(run), do: run
+        {runs, changed}
+      end)
+
+    {:reply, runs, _state} = reply
+    if is_list(runs), do: Enum.each(runs, &Store.settle(&1, "aborted"))
+    reply
+  end
+
+  # Runs `fun` on the jobs `scope` names in the backend, saves those it changed, and tells
+  # about them (the job event; the trace of one that ended).
+  defp transact({backend, state}, scope, fun) do
+    {reply, before, changed, state} = backend.transaction(state, scope, fun)
+
+    for job <- changed do
+      if job["status"] in @over and get_in(before, [job["id"], "status"]) not in @over,
+        do: Testor.Tracing.job_ended(job)
+
+      Testor.Events.broadcast("global", "job", job)
+    end
+
+    {:reply, reply, {backend, state}}
   end
 
   # --- helpers ------------------------------------------------------------------------------
@@ -354,15 +399,6 @@ defmodule Testor.Jobs do
       nil -> job
       run -> Map.put(job, "runId", run["id"])
     end
-  end
-
-  defp save(jobs, job) do
-    if job["status"] in @over and get_in(jobs, [job["id"], "status"]) not in @over,
-      do: Testor.Tracing.job_ended(job)
-
-    Files.write_json(Path.join(dir(), job["id"] <> ".json"), job)
-    Testor.Events.broadcast("global", "job", job)
-    Map.put(jobs, job["id"], job)
   end
 
   defp put_if(map, _key, nil), do: map

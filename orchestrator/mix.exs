@@ -20,7 +20,14 @@ defmodule Testor.MixProject do
       # each OS instead (device stats, process trees, PowerShell sessions).
       test_coverage: [
         summary: [threshold: 100],
-        ignore_modules: [Testor.OS, Testor.Device, Testor.Device.Unix, ~r/^Testor\.Test\./]
+        # The job queue's backend not in use: PostgreSQL's runs where TESTOR_DATABASE_URL is
+        # set (CI's PostgreSQL job), the files' everywhere else.
+        ignore_modules:
+          [Testor.OS, Testor.Device, Testor.Device.Unix, ~r/^Testor\.Test\./] ++
+            if(System.get_env("TESTOR_DATABASE_URL") in [nil, ""],
+              do: [Testor.Jobs.Postgres],
+              else: [Testor.Jobs.FileStore]
+            )
       ],
       releases: [
         testor: [include_executables_for: [:unix, :windows]]
@@ -39,7 +46,11 @@ defmodule Testor.MixProject do
   defp deps do
     [
       {:bandit, "~> 1.6"},
-      {:plug, "~> 1.16"}
+      {:plug, "~> 1.16"},
+      # The job queue in PostgreSQL (optional at run time: TESTOR_DATABASE_URL).
+      {:postgrex, "0.22.4"},
+      # 2.10.3 fixes EEF-CVE-2026-133555 (code execution through forged DBConnection.Stream).
+      {:db_connection, "2.10.3"}
     ]
   end
 end

@@ -22,6 +22,12 @@ auth:
   existingSecret: ""
   adminUser: admin
 
+# The job queue in PostgreSQL: a Secret with a key "url",
+# postgres://testor:<password>@<host>:5432/testor?sslmode=verify-full. Jobs then outlive the
+# pod and its volume, and testors sharing the database share the queue.
+database:
+  existingSecret: ""
+
 # Built-in TLS: a kubernetes.io/tls Secret (tls.crt, tls.key), e.g. from cert-manager.
 tls:
   existingSecret: ""

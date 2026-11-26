@@ -22,18 +22,21 @@ defmodule Testor.Application do
   def server do
     [
       {DynamicSupervisor, name: Testor.TrackerSupervisor, strategy: :one_for_one},
-      Testor.Store,
-      Testor.Jobs,
-      Testor.Schedules,
-      Testor.Approvals,
-      Testor.Sessions,
-      Testor.Stats,
-      Testor.Janitor,
-      Testor.Device,
-      Testor.Maintenance,
-      Testor.Audit,
-      {Bandit, bandit_options()}
-    ]
+      Testor.Store
+    ] ++
+      if(Testor.Jobs.Postgres.enabled?(), do: [Testor.Jobs.Postgres], else: []) ++
+      [
+        Testor.Jobs,
+        Testor.Schedules,
+        Testor.Approvals,
+        Testor.Sessions,
+        Testor.Stats,
+        Testor.Janitor,
+        Testor.Device,
+        Testor.Maintenance,
+        Testor.Audit,
+        {Bandit, bandit_options()}
+      ]
   end
 
   @doc """
