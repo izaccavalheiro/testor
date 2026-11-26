@@ -6,6 +6,7 @@
 #                         or .vitest-attachments, plus anything saved to $env:SCREENSHOT_DIR
 #   artifacts\<id>\       what -Artifacts names (reports, coverage, ...), videos from the same
 #                         folders as screenshots, plus anything saved to $env:TESTOR_ARTIFACT_DIR
+#   reports\<id>\         what -Reports names: result files testor reads (a mutation report)
 # The folders are next to this script (the testor home). Recording never fails a run: only
 # the command's own error is rethrown, so output, stderr and the exit code are unchanged.
 #
@@ -17,11 +18,30 @@
 # in order until artifacts.maxRunMB (config.json, default 256) is reached; the rest is skipped
 # with a warning. The command sees $env:TESTOR_RUN_ID, $env:SCREENSHOT_DIR and
 # $env:TESTOR_ARTIFACT_DIR (folders kept with the run).
+#
+# -TimeoutSeconds and -MemoryGuard (or $env:TESTOR_TIMEOUT_SECONDS, $env:TESTOR_MEMORY_GUARD):
+# past the time, or past the guard's "stop" share of memory, the command's process tree is
+# ended as a cancel ends it, and the run is recorded failed with reason "timeout" or "memory"
+# (exit code 124 or 137 when the command's own was 0). At "warn" a line goes to the log.
+#
+# $env:TESTOR_LOCK=1 (remote.yml's SSH runs): one run of the project at a time on this machine.
+# A second one is recorded "waiting" until the first ends; the lock is a file held open in
+# locks\, which the system releases however the holder ends.
+#
+# -Reports (and $env:TESTOR_REPORTS, ";"-separated): files relative to the working folder
+# (wildcards allowed) that testor reads when the run ends, such as Stryker's
+# reports/mutation/mutation.json. Only files the run wrote are kept, 20 at most, 50 MB each.
 param(
   [Parameter(Mandatory)][string]$Project,
   [Parameter(Mandatory)][string]$Kind,
   [Parameter(Mandatory)][scriptblock]$Body,
-  [string[]]$Artifacts = @()
+  [string[]]$Artifacts = @(),
+  [string[]]$Reports = @(),
+  # Ends the command's process tree after this many seconds (0: never); TESTOR_TIMEOUT_SECONDS.
+  [int]$TimeoutSeconds = 0,
+  # "warn,stop": percentages of the memory the run may use (its cgroup's limit on Linux, else
+  # the machine's) at which it warns in the log and ends the tree; TESTOR_MEMORY_GUARD.
+  [string]$MemoryGuard = ""
 )
 
 $root = $PSScriptRoot
@@ -123,6 +143,25 @@ function Copy-Artifact([object[]]$files, [string]$label) {
   $script:artBytes += $size
 }
 
+function Save-Reports {
+  $wanted = @($Reports) + @("$env:TESTOR_REPORTS" -split ";") | ForEach-Object { "$_".Trim() } | Where-Object { $_ }
+  $dir = Join-Path (Join-Path $root "reports") $id
+  $kept = @()
+  foreach ($pattern in $wanted) {
+    if ([IO.Path]::IsPathRooted($pattern)) { Write-Warning "testor: report '$pattern' is not relative to the working folder; skipped"; continue }
+    foreach ($file in @(Get-ChildItem -Path (Join-Path $workdir $pattern) -File -Force -ErrorAction SilentlyContinue | Where-Object { -not $_.LinkType })) {
+      if ($file.LastWriteTime -lt $since) { Write-Warning "testor: report $($file.Name) was not written by this run; not kept"; continue }
+      if ($file.Length -gt 50MB) { Write-Warning "testor: report $($file.Name) is over 50 MB; not kept"; continue }
+      if ($kept.Count -ge 20) { Write-Warning "testor: 20 reports at most; $($file.Name) not kept"; continue }
+      $name = $file.Name
+      for ($n = 2; $name -in $kept; $n++) { $name = "$n-$($file.Name)" }
+      $null = New-Item -ItemType Directory -Force -Path $dir
+      Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $dir $name)
+      $kept += $name
+    }
+  }
+}
+
 function Save-Artifacts {
   foreach ($pattern in $Artifacts) {
     if ([string]::IsNullOrWhiteSpace($pattern)) { continue }
@@ -146,9 +185,51 @@ try {
   $null = New-Item -ItemType Directory -Force -Path (Join-Path $root "runs"), (Join-Path $root "logs"), $shotDir, $artDir
 } catch { Write-Warning "testor: $_" }
 Save-Record
+# The project's lock: a run already holding it makes this one wait, shown as waiting.
+$lock = $null
+if ($env:TESTOR_LOCK -eq "1") {
+  $lockDir = Join-Path $root "locks"
+  $null = New-Item -ItemType Directory -Force -Path $lockDir
+  $lockFile = Join-Path $lockDir (($Project -replace "[^\w.-]", "_") + ".lock")
+  while (-not $lock) {
+    try {
+      $lock = [IO.File]::Open($lockFile, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    } catch [IO.IOException] {
+      if (-not $record.waiting) { $record.waiting = "another run of $Project holds its lock"; Save-Record; [Console]::Error.WriteLine("testor: waiting for the run of $Project in progress") }
+      Start-Sleep -Milliseconds 500
+    }
+  }
+  if ($record.waiting) { $record.Remove("waiting"); Save-Record }
+}
 $env:TESTOR_RUN_ID = $id
 $env:SCREENSHOT_DIR = $shotDir
 $env:TESTOR_ARTIFACT_DIR = $artDir
+
+# A deadline and a memory guard, given to the watcher below; what it saw, shared with it.
+if (-not $TimeoutSeconds -and "$env:TESTOR_TIMEOUT_SECONDS" -match "^\d+$") { $TimeoutSeconds = [int]$env:TESTOR_TIMEOUT_SECONDS }
+if (-not $MemoryGuard) { $MemoryGuard = "$env:TESTOR_MEMORY_GUARD" }
+$deadline = if ($TimeoutSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds($TimeoutSeconds).Ticks } else { [long]0 }
+$guard = $null
+if ($MemoryGuard -match "^\s*(\d{1,3})\s*,\s*(\d{1,3})\s*$" -and [int]$Matches[1] -le [int]$Matches[2] -and [int]$Matches[2] -le 100) {
+  $guard = @([int]$Matches[1], [int]$Matches[2])
+} elseif ($MemoryGuard) { Write-Warning "testor: memory guard '$MemoryGuard' is not 'warn,stop' (percentages); off" }
+# What this session had started before the run (run.ps1 called in a session that runs other
+# things: a test of testor itself) is not the run's: never ended, never counted. Taken now,
+# before the command starts.
+$before = [Collections.Generic.HashSet[int]]::new()
+if ($deadline -gt 0 -or $guard) {
+  try {
+    $parentOf = @{}
+    if ($IsWindows) { foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId) { $parentOf[[int]$p.ProcessId] = [int]$p.ParentProcessId } }
+    else { foreach ($line in (ps -A -o pid=,ppid=)) { $f = -split $line; if ($f.Count -eq 2) { $parentOf[[int]$f[0]] = [int]$f[1] } } }
+    $queue = [Collections.Generic.Queue[int]]::new(); $queue.Enqueue($PID)
+    while ($queue.Count) {
+      $p = $queue.Dequeue()
+      foreach ($k in @($parentOf.Keys | Where-Object { $parentOf[$_] -eq $p -and $_ -ne $p })) { if ($before.Add($k)) { $queue.Enqueue($k) } }
+    }
+  } catch { Write-Warning "testor: the processes before the run: $_" }
+}
+$shared = [hashtable]::Synchronized(@{ reason = $null; done = $false; record = $record; runFile = $runFile; notes = [Collections.Concurrent.ConcurrentQueue[string]]::new() })
 
 # Cancelling: the orchestrator writes cancel\<id>, and this session ends its own process tree
 # (this PowerShell included), so the orchestrator never kills processes of another account.
@@ -159,35 +240,89 @@ try {
   # ThreadJob module took seconds to load in a fresh PowerShell on macOS).
   $watcher = [powershell]::Create()
   $null = $watcher.AddScript({
-    param($file, $owner)
+    param($file, $owner, $deadline, $guard, $shared, $before)
     # Ending the watcher when the run ends stops this pipeline: that is not an error to report.
     trap {
       if ($_.Exception -isnot [Management.Automation.PipelineStoppedException]) { [Console]::Error.WriteLine("testor: cancel watcher: $_") }
       break
     }
-    while (-not (Test-Path -LiteralPath $file)) { Start-Sleep -Milliseconds 300 }
+    # The process tree under $root (this PowerShell's pid): pid -> parent, and memory.
+    function Get-Tree([int]$root) {
+      $parents = @{}; $memory = @{}
+      if ($IsWindows) {
+        foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, WorkingSetSize) {
+          $parents[[int]$p.ProcessId] = [int]$p.ParentProcessId; $memory[[int]$p.ProcessId] = [long]$p.WorkingSetSize
+        }
+      } else {
+        foreach ($line in (ps -A -o pid=,ppid=,rss=)) {
+          $f = -split $line
+          if ($f.Count -eq 3) { $parents[[int]$f[0]] = [int]$f[1]; $memory[[int]$f[0]] = [long]$f[2] * 1024 }
+        }
+      }
+      $children = @{}
+      foreach ($k in $parents.Keys) { if ($k -ne $parents[$k] -and -not $before.Contains($k)) { $children[$parents[$k]] += @($k) } }
+      $tree = [Collections.Generic.List[int]]::new()
+      $queue = [Collections.Generic.Queue[int]]::new()
+      $queue.Enqueue($root)
+      while ($queue.Count) {
+        $p = $queue.Dequeue()
+        if ($tree.Contains($p)) { continue }
+        $tree.Add($p)
+        foreach ($child in @($children[$p])) { if ($child) { $queue.Enqueue($child) } }
+      }
+      @{ pids = $tree; bytes = [long]($tree | ForEach-Object { $memory[$_] } | Measure-Object -Sum).Sum }
+    }
+    # The share of memory in use, in %: the cgroup's (Linux, with a limit), else the tree's.
+    function Get-MemoryShare {
+      if ($IsLinux) {
+        $limit = $null; $used = $null
+        if (Test-Path /sys/fs/cgroup/memory.max) {
+          $raw = (Get-Content -Raw /sys/fs/cgroup/memory.max).Trim()
+          if ($raw -ne "max") { $limit = [double]$raw; $used = [double](Get-Content -Raw /sys/fs/cgroup/memory.current).Trim() }
+        } elseif (Test-Path /sys/fs/cgroup/memory/memory.limit_in_bytes) {
+          $raw = [double](Get-Content -Raw /sys/fs/cgroup/memory/memory.limit_in_bytes).Trim()
+          if ($raw -lt 1PB) { $limit = $raw; $used = [double](Get-Content -Raw /sys/fs/cgroup/memory/memory.usage_in_bytes).Trim() }
+        }
+        if ($limit) { return 100 * $used / $limit }
+      }
+      $total = [GC]::GetGCMemoryInfo().TotalAvailableMemoryBytes
+      100 * (Get-Tree $owner).bytes / $total
+    }
+    # Every process of the tree but this PowerShell; then, if it is still not done, this one too
+    # (its record written first, as the run's end would write it).
+    function Stop-Run([string]$reason) {
+      $shared.reason = $reason
+      foreach ($p in @((Get-Tree $owner).pids | Where-Object { $_ -ne $owner })) {
+        try { [Diagnostics.Process]::GetProcessById($p).Kill() } catch { }
+      }
+      $until = (Get-Date).AddSeconds(5)
+      while ((Get-Date) -lt $until) { if ($shared.done) { return }; Start-Sleep -Milliseconds 200 }
+      $r = $shared.record
+      $r.status = "failed"; $r.reason = $reason; $r.exitCode = $(if ($reason -eq "timeout") { 124 } else { 137 })
+      $r.endedAt = (Get-Date).ToUniversalTime().ToString("o")
+      $r | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $shared.runFile -Encoding utf8NoBOM
+      [Diagnostics.Process]::GetCurrentProcess().Kill()
+    }
+    $warned = $false; $sampled = [DateTime]::MinValue
+    while (-not (Test-Path -LiteralPath $file)) {
+      if ($deadline -gt 0 -and [DateTime]::UtcNow.Ticks -ge $deadline) { Stop-Run "timeout"; return }
+      if ($guard -and ([DateTime]::UtcNow - $sampled).TotalSeconds -ge 1) {
+        $sampled = [DateTime]::UtcNow
+        $share = try { Get-MemoryShare } catch { 0 }
+        if ($share -ge $guard[1]) { $shared.notes.Enqueue("testor: memory at $([math]::Round($share))%, over the guard's $($guard[1])%: ending the run"); Stop-Run "memory"; return }
+        if ($share -ge $guard[0] -and -not $warned) { $warned = $true; $shared.notes.Enqueue("testor: memory at $([math]::Round($share))%, over the guard's warning at $($guard[0])%") }
+      }
+      Start-Sleep -Milliseconds 300
+    }
     if ($IsWindows) { taskkill /PID $owner /T /F | Out-Null; return }
-    $children = @{}
-    foreach ($line in (ps -A -o pid=,ppid=)) {
-      $pair = -split $line
-      if ($pair.Count -eq 2) { $children[[int]$pair[1]] += @([int]$pair[0]) }
-    }
-    $tree = [Collections.Generic.List[int]]::new()
-    $queue = [Collections.Generic.Queue[int]]::new()
-    $queue.Enqueue($owner)
-    while ($queue.Count) {
-      $p = $queue.Dequeue()
-      if ($tree.Contains($p)) { continue }
-      $tree.Add($p)
-      foreach ($child in @($children[$p])) { if ($child) { $queue.Enqueue($child) } }
-    }
+    $tree = (Get-Tree $owner).pids
     # Killed with system calls, no program started: on macOS a kill program started after the
     # tree was stopped never ran. Every other process first, this PowerShell last.
     foreach ($p in @($tree | Where-Object { $_ -ne $owner })) {
       try { [Diagnostics.Process]::GetProcessById($p).Kill() } catch { }
     }
     [Diagnostics.Process]::GetCurrentProcess().Kill()
-  }.ToString()).AddArgument((Join-Path (Join-Path $root "cancel") $id)).AddArgument($PID)
+  }.ToString()).AddArgument((Join-Path (Join-Path $root "cancel") $id)).AddArgument($PID).AddArgument($deadline).AddArgument($guard).AddArgument($shared).AddArgument($before)
   $null = $watcher.BeginInvoke()
 } catch { Write-Warning "testor: no cancel watcher: $_"; $watcher = $null }
 
@@ -225,6 +360,8 @@ try {
   # Every line goes to the log; stdout stays stdout and a native program's stderr goes back to
   # stderr as plain text, so callers that separate the two (rust:fmt | sed) are unaffected.
   & $Body 2>&1 | ForEach-Object {
+    $note = $null
+    while ($shared.notes.TryDequeue([ref]$note)) { [Console]::Error.WriteLine($note); if ($log) { $log.WriteLine($note) } }
     if ($_ -is [Management.Automation.ErrorRecord] -and $_.Exception -is [Management.Automation.RemoteException]) {
       $line = $_.ToString()
       [Console]::Error.WriteLine($line)
@@ -238,7 +375,11 @@ try {
   $failure = $_
   if ($log) { $log.WriteLine("`n" + (Hide-Secrets ($_ | Out-String).TrimEnd())) }
 } finally {
+  $shared.done = $true
+  if ($lock) { $lock.Dispose() }
   if ($watcher) { try { $watcher.Stop(); $watcher.Dispose() } catch { } }
+  $note = $null
+  while ($shared.notes.TryDequeue([ref]$note)) { [Console]::Error.WriteLine($note); if ($log) { $log.WriteLine($note) } }
   [Console]::OutputEncoding = $encoding
   if ($log) { $log.Dispose() }
   # Runs on success, on failure and on Ctrl+C; a killed session is marked aborted by the server.
@@ -247,9 +388,16 @@ try {
     $exit = if ($failure -and $failure.Exception.PSObject.Properties["ExitCode"]) { $failure.Exception.ExitCode }
             elseif ($failure) { if ($LASTEXITCODE) { $LASTEXITCODE } else { 1 } }
             else { $LASTEXITCODE }
+    # Ended by its timeout or memory guard: failed, whatever the command's own exit code.
+    if ($shared.reason -and -not $exit) { $exit = if ($shared.reason -eq "timeout") { 124 } else { 137 } }
     $record.status = if ($failure -or $exit) { "failed" } else { "passed" }
     $record.exitCode = $exit
+
     if ($failure) { $record.error = Hide-Secrets ($failure.Exception.Message -split "`n")[0] }
+    if ($shared.reason) {
+      $record.reason = $shared.reason
+      $record.error = if ($shared.reason -eq "timeout") { "timed out after $TimeoutSeconds s" } else { "stopped by the memory guard at $($guard[1])%" }
+    }
     $record.endedAt = $ended.ToUniversalTime().ToString("o")
     $record.durationMs = [int]($ended - $started).TotalMilliseconds
 
@@ -273,6 +421,7 @@ try {
       Write-Warning "testor: artifacts over the run's $([math]::Round($maxRunBytes / 1MB)) MB limit (artifacts.maxRunMB) were not kept: $($skipped -join ', ')"
     }
   } catch { Write-Warning "testor: artifacts: $_" }
+  try { Save-Reports } catch { Write-Warning "testor: reports: $_" }
   try {
     $kept = @(Get-ChildItem -LiteralPath $artDir -Recurse -File -Force -ErrorAction SilentlyContinue)
     $record.artifacts = $kept.Count

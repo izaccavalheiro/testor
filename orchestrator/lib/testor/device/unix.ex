@@ -8,6 +8,7 @@ defmodule Testor.Device.Unix do
   What a platform cannot tell is nil: macOS has no per-core load or split disk read/write
   without root, and GPU load is known only for NVIDIA GPUs on Linux.
   """
+  import Bitwise
   alias Testor.OS
 
   # --- static ------------------------------------------------------------------------------
@@ -59,6 +60,9 @@ defmodule Testor.Device.Unix do
         "l3KB" => cache_kb(3)
       },
       "memory" => %{"total" => meminfo["MemTotal"], "installed" => meminfo["MemTotal"], "modules" => []},
+      # In a container: its CPU quota and memory limit (cgroup v2, else v1), which are what runs
+      # get, not the host's.
+      "limits" => cgroup_limits(),
       "gpus" => linux_gpus(),
       "disks" => linux_disks()
     }
@@ -171,13 +175,15 @@ defmodule Testor.Device.Unix do
       "processes" => proc_count(),
       "threads" => threads && threads |> String.split("/") |> List.last() |> int(),
       "queue" => int(field(stat, "procs_running", " ")),
-      "memory" => %{
-        "available" => meminfo["MemAvailable"],
-        "committed" => meminfo["Committed_AS"],
-        "commitLimit" => meminfo["CommitLimit"],
-        "cache" => meminfo["Cached"],
-        "pagesPerSec" => pages
-      },
+      "memory" =>
+        %{
+          "available" => meminfo["MemAvailable"],
+          "committed" => meminfo["Committed_AS"],
+          "commitLimit" => meminfo["CommitLimit"],
+          "cache" => meminfo["Cached"],
+          "pagesPerSec" => pages
+        }
+        |> Map.merge(cgroup_usage()),
       "disk" => disk,
       "network" => network
     }
@@ -702,6 +708,64 @@ defmodule Testor.Device.Unix do
     {:ok, name} = :inet.gethostname()
     to_string(name)
   end
+
+  # --- cgroups ------------------------------------------------------------------------------
+
+  @doc false
+  # The CPU quota (CPUs, a float) and the memory limit (bytes) of this process's cgroup, or nil
+  # for each it does not have. `root` is the cgroup file system (tests give a folder of files).
+  def cgroup_limits(root \\ "/sys/fs/cgroup") do
+    v2 = File.exists?(Path.join(root, "cgroup.controllers"))
+
+    cpus =
+      if v2 do
+        case String.split(read(Path.join(root, "cpu.max"))) do
+          [quota, period] when quota != "max" -> ratio(int(quota), int(period))
+          _ -> nil
+        end
+      else
+        ratio(
+          int(read(Path.join(root, "cpu/cpu.cfs_quota_us"))),
+          int(read(Path.join(root, "cpu/cpu.cfs_period_us")))
+        )
+      end
+
+    memory =
+      if v2,
+        do: int(read(Path.join(root, "memory.max"))),
+        else: int(read(Path.join(root, "memory/memory.limit_in_bytes")))
+
+    # v1 says "no limit" with a page-rounded 2^63.
+    memory = if memory && memory < 1 <<< 60, do: memory
+
+    if cpus || memory, do: %{"cpus" => cpus, "memory" => memory}
+  end
+
+  @doc false
+  # The cgroup's memory in use, its peak and its OOM kills: `memoryCurrent`, `memoryPeak`, `oomKills`.
+  def cgroup_usage(root \\ "/sys/fs/cgroup") do
+    if File.exists?(Path.join(root, "cgroup.controllers")) do
+      events = kv(read(Path.join(root, "memory.events")), " ")
+
+      %{
+        "cgroupCurrent" => int(read(Path.join(root, "memory.current"))),
+        "cgroupPeak" => int(read(Path.join(root, "memory.peak"))),
+        "oomKills" => int(events["oom_kill"])
+      }
+    else
+      %{
+        "cgroupCurrent" => int(read(Path.join(root, "memory/memory.usage_in_bytes"))),
+        "cgroupPeak" => int(read(Path.join(root, "memory/memory.max_usage_in_bytes"))),
+        "oomKills" => nil
+      }
+    end
+    |> Map.reject(fn {_k, v} -> is_nil(v) end)
+  end
+
+  defp ratio(quota, period) when is_integer(quota) and is_integer(period) and quota > 0 and period > 0,
+    do: Float.round(quota / period, 2)
+
+  defp ratio(_quota, _period), do: nil
 
   defp read(path) do
     case File.read(path) do

@@ -74,7 +74,14 @@ An agent on testor's own machine writes its runs straight into testor's home. An
    ```
 
    `GET /api/v1/jobs/<id>` follows it: `queued`, `leased`, `running`, then `passed`, `failed`,
-   `cancelled` or `expired`, with `runId`, the run it produced.
+   `cancelled` or `expired`, with `runId`, the run it produced. `"clean": true` asks the agent
+   to drop the task's preserved caches first.
+
+   A command in `agent.json` may be an object: `{"command": "npx stryker run", "reports":
+   ["reports/mutation/mutation.json"], "artifacts": ["reports/mutation"], "preserve":
+   ["reports/stryker-incremental.json"]}`. `reports` are files testor reads when the run ends,
+   `artifacts` files kept with it, `preserve` paths kept between jobs, also in isolated
+   workspaces ([mutation testing](mutation.md)). Paths are inside the workspace.
 
 ## Agents on other machines
 

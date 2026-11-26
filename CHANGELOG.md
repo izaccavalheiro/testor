@@ -9,6 +9,42 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ### Added
 
+- **Mutation testing, first class** ([docs/mutation.md](docs/mutation.md)): a run hands over
+  report files (`run.ps1 -Reports`, `REPORTS` in `remote.yml`, `reports` in `agent.json`);
+  testor reads the mutation-testing-report schema (StrykerJS, Stryker.NET, Stryker4s), or a
+  Stryker log's summary, into a signed `mutation` summary, shows the score, a table per file
+  and the surviving mutants, a live bar while it runs, and a `?metric=mutation` badge; release
+  gates take `minMutationScore` and `maxSurvivors`.
+- **Universal result formats** ([docs/result-formats.md](docs/result-formats.md)): JUnit XML,
+  TRX, CTRF and TAP reports give the spec table (`specsFrom`), flaky detection and gates of any
+  framework; LCOV, Cobertura and Istanbul give `coverage`, a `minCoverage` gate and a coverage
+  badge; `report.junit.xml` and `report.ctrf.json` export a run's results; hotspots
+  (`/api/v1/projects/<p>/hotspots`, MCP `find_hotspots`) rank the costliest spec files. XML is
+  read with OTP's xmerl, entities refused.
+- **Job queues on a broker** ([docs/queues.md](docs/queues.md)): `execution.queue` dispatches
+  jobs through SQS FIFO queues or NATS JetStream (a client of NATS's protocol, no dependency),
+  chosen by labels, while records stay in the store and agents keep leasing through testor;
+  `queue` in `/api/health`, `testor_queue_depth` and `testor_queue_errors_total`, and a KEDA
+  trigger of your own for the chart's agents. RabbitMQ is not built (see the design).
+- **Runs in object storage** ([docs/storage.md](docs/storage.md)): `storage` in config.json
+  keeps runs in an S3-compatible bucket with the home as a cache (trimmed to `cacheMB`, records
+  restored on an empty home); stored runs' logs, reports and attestations fetched when read,
+  their images, videos and downloads served as presigned links after testor's access check,
+  HTML and text proxied in its sandbox; multipart uploads with per-part checksums, batch
+  deletes that leave Object Lock alone, and the audit trail sent to the bucket. With
+  PostgreSQL, testors share no volume: the run index is the table `testor_runs`, live logs go
+  as segments announced over `LISTEN`/`NOTIFY`, and so do runs' changes and the dashboard's
+  job and approval events. SigV4 and AWS credentials are `Testor.Aws` now.
+- **Heavy jobs** ([docs/heavy-jobs.md](docs/heavy-jobs.md)): timeouts (a command's, a job's
+  shorter one, `execution.defaultTimeout`, `run.ps1 -TimeoutSeconds`, `TIMEOUT`), a memory guard
+  that ends a run before the OOM killer does, `TESTOR_CPUS` and `TESTOR_MEMORY_MB` from the
+  cgroup (and `"limits": "auto"` for Go, Cargo, .NET, Node and pytest), cgroup limits in device
+  stats, agent profiles in the Helm chart (a Deployment each, or a KEDA ScaledJob per run) on
+  per-label queues (`testor_jobs{status,label}`), a per-project lock and `ISOLATE=copy`
+  workspaces for SSH runs, and a container executor.
+- **Commands as objects** in `agent.json` (`command`, `reports`, `artifacts`, `preserve`), a
+  plain string still working; preserved caches survive isolated workspaces; `KEEP` takes
+  paths, `PRESERVE` and `CLEAN=1` in `remote.yml`, and `"clean": true` on a job.
 - **Certificates from ACME** for the built-in TLS: `tls.acme` in config.json (or
   `TESTOR_ACME`) orders the certificate from Let's Encrypt or any RFC 8555 CA over HTTP-01,
   checks it, serves it without a restart, and renews it at two thirds of its lifetime or in the

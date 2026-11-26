@@ -120,6 +120,26 @@ agents:
   resources:
     requests: { cpu: 250m, memory: 512Mi }
     limits: { memory: 2Gi }
+  # Agent profiles: one Deployment (or, with mode: job, a KEDA ScaledJob: a Kubernetes Job per
+  # run) per profile, each with its own labels, resources, /dev/shm, workspace size and scaling
+  # on its own queue (testor_jobs{status="queued",label="<its last label>"}). They share the
+  # image, token, projects, secrets and env above. Heavy kinds ask for a profile's label.
+  #   - name: unit-light
+  #     labels: [linux, unit]
+  #     resources: { requests: { cpu: 500m, memory: 512Mi }, limits: { memory: 1Gi } }
+  #     autoscaling: { keda: true, minReplicas: 0, maxReplicas: 10 }
+  #   - name: e2e-browser
+  #     labels: [linux, browser]
+  #     shmSize: 1Gi
+  #     resources: { requests: { cpu: "2", memory: 4Gi, ephemeral-storage: 10Gi }, limits: { memory: 4Gi, ephemeral-storage: 20Gi } }
+  #     autoscaling: { keda: true, minReplicas: 0, maxReplicas: 4 }
+  #   - name: mutation-heavy
+  #     labels: [linux, mutation]
+  #     mode: job
+  #     workspaceSizeLimit: 20Gi
+  #     resources: { requests: { cpu: "4", memory: 8Gi }, limits: { memory: 8Gi } }
+  #     autoscaling: { maxReplicas: 3 }
+  profiles: []
   # KEDA scales agents on queued jobs (testor_jobs{status="queued"} from Prometheus).
   autoscaling:
     keda: false
@@ -127,3 +147,11 @@ agents:
     maxReplicas: 5
     prometheusServer: http://prometheus-server.monitoring.svc
     queuedPerAgent: 1
+    # A KEDA trigger of your own instead of the Prometheus query, for a broker's queue length
+    # (execution.queue): the scaler's pod identity reads queue depth only. For example
+    #   trigger: { type: aws-sqs-queue, authenticationRef: { name: keda-sqs },
+    #              metadata: { queueURL: "https://sqs.eu-west-1.amazonaws.com/1234/jobs.fifo", queueLength: "1", awsRegion: eu-west-1 } }
+    #   trigger: { type: nats-jetstream, metadata: { natsServerMonitoringEndpoint: "nats.nats.svc:8222",
+    #              account: "$G", stream: TESTOR, consumer: testor-testor_jobs_default, lagThreshold: "1" } }
+    # A profile takes one in its own autoscaling.
+    trigger: {}

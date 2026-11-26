@@ -18,7 +18,7 @@ defmodule Testor.Remote do
   separators), screenshots must be images, and a run's artifacts stay under
   `artifacts.maxRunMB`.
   """
-  alias Testor.{Config, Files, Jobs}
+  alias Testor.{Config, Files, Jobs, Storage, Store}
 
   @run_id ~r/^\d{8}-\d{6}-[0-9a-f]{6}$/
   @fields ~w(id command workdir startedAt endedAt durationMs status exitCode error actor source screenshots artifacts artifactsBytes artifactsSkipped)
@@ -46,28 +46,37 @@ defmodule Testor.Remote do
 
       File.mkdir_p!(Config.runs_dir())
       Files.write_json(Config.run_file(run_id), run)
+      # In the index before its log arrives, which may be through another testor.
+      if Storage.shared?(), do: Store.refresh(run_id)
       {:ok, run}
     end
   end
 
   @doc "Appends `data` to the log of job `id`'s run at `offset`: `{:ok, size}` or `{:error, reason}`."
   def append_log(id, agent, offset, data) do
+    max = Application.get_env(:testor, :remote_log_max, 256 * 1024 * 1024)
+
     with {:ok, run_id} <- bound_run(id, agent) do
-      path = Config.log_file(run_id)
-      size = Files.size(path)
+      append = if Storage.shared?(), do: &Storage.Shared.append/4, else: &append_local/4
+      append.(run_id, offset, data, max)
+    end
+  end
 
-      cond do
-        offset != size ->
-          {:error, {:offset, size}}
+  defp append_local(run_id, offset, data, max) do
+    path = Config.log_file(run_id)
+    size = Files.size(path)
 
-        size + byte_size(data) > Application.get_env(:testor, :remote_log_max, 256 * 1024 * 1024) ->
-          {:error, :too_large}
+    cond do
+      offset != size ->
+        {:error, {:offset, size}}
 
-        true ->
-          File.mkdir_p!(Config.logs_dir())
-          File.write!(path, data, [:append])
-          {:ok, size + byte_size(data)}
-      end
+      size + byte_size(data) > max ->
+        {:error, :too_large}
+
+      true ->
+        File.mkdir_p!(Config.logs_dir())
+        File.write!(path, data, [:append])
+        {:ok, size + byte_size(data)}
     end
   end
 
@@ -86,6 +95,7 @@ defmodule Testor.Remote do
   """
   def attest(id, agent, envelope) do
     with {:ok, run_id} <- bound_run(id, agent),
+         :ok <- Storage.gather(run_id, :all),
          {:ok, key} <- key_of(agent),
          {:ok, statement} <- verify(envelope, key),
          :ok <- about(statement, run_id, id),
@@ -160,7 +170,11 @@ defmodule Testor.Remote do
     log = if Files.entry(Config.log_file(run_id)) != :skip, do: [{"log", Config.log_file(run_id)}], else: []
 
     areas =
-      for {area, dir} <- [{"screenshots", Config.shots_dir()}, {"artifacts", Config.artifacts_dir()}],
+      for {area, dir} <- [
+            {"screenshots", Config.shots_dir()},
+            {"artifacts", Config.artifacts_dir()},
+            {"reports", Config.reports_dir()}
+          ],
           file <- Files.walk(Path.join(dir, run_id)),
           do: {area <> "/" <> String.replace(file.rel, "\\", "/"), file.full}
 
@@ -176,19 +190,24 @@ defmodule Testor.Remote do
   end
 
   @doc """
-  Writes a screenshot or artifact (`area`: `"screenshots"` or `"artifacts"`) of job `id`'s run
+  Writes a screenshot, artifact or report (`area`: `"screenshots"`, `"artifacts"` or
+  `"reports"`) of job `id`'s run
   at the path `segments`: `{:ok, bytes}` or `{:error, reason}`.
   """
   def put_file(id, agent, area, segments, data) do
     with {:ok, run_id} <- bound_run(id, agent),
          {:ok, root} <- area_root(area, run_id),
          true <- safe?(segments) || {:error, :bad_path},
+         # Reports are files of their own, no folders.
+         true <- (area != "reports" or length(segments) == 1) || {:error, :bad_path},
          path = Path.join([root | segments]),
          true <- (area != "screenshots" or Files.image_type(path) != nil) || {:error, :not_an_image},
          :ok <- fits(area, root, path, byte_size(data)) do
       File.mkdir_p!(Path.dirname(path))
       File.write!(path, data)
-      {:ok, byte_size(data)}
+      # In the bucket now: the testor that finishes the run may be another.
+      with :ok <- Storage.put_now(Path.relative_to(path, Config.data_dir()) |> String.replace("\\", "/")),
+           do: {:ok, byte_size(data)}
     end
   end
 
@@ -199,12 +218,16 @@ defmodule Testor.Remote do
   end
 
   # A run that is another job's, or that has ended, is not this agent's to write.
+  # The record in the home, or the index's when it has ended there (another testor's).
   defp open(run_id, job) do
-    case Files.read_json(Config.run_file(run_id)) do
+    stored = Store.get(run_id)
+    local = with {:ok, record} <- Files.read_json(Config.run_file(run_id)), do: record
+
+    case if(stored && stored["status"] != "running", do: stored, else: local) do
       :error -> :ok
-      {:ok, %{"job" => ^job, "status" => "running"}} -> :ok
-      {:ok, %{"job" => ^job}} -> {:error, :final}
-      {:ok, _} -> {:error, :other_run}
+      %{"job" => ^job, "status" => "running"} -> :ok
+      %{"job" => ^job} -> {:error, :final}
+      _ -> {:error, :other_run}
     end
   end
 
@@ -219,6 +242,7 @@ defmodule Testor.Remote do
 
   defp area_root("screenshots", run_id), do: {:ok, Path.join(Config.shots_dir(), run_id)}
   defp area_root("artifacts", run_id), do: {:ok, Path.join(Config.artifacts_dir(), run_id)}
+  defp area_root("reports", run_id), do: {:ok, Testor.Reports.dir(run_id)}
   defp area_root(_area, _run_id), do: {:error, :bad_path}
 
   defp safe?(segments) do
@@ -226,11 +250,21 @@ defmodule Testor.Remote do
       Enum.all?(segments, &(&1 not in ["", ".", ".."] and not String.contains?(&1, ["/", "\\", ":", <<0>>])))
   end
 
+  # The run's artifacts in the bucket count too, sent through other testors.
   defp fits("artifacts", root, path, bytes) do
     limit = Config.retention()["artifacts"]["maxRunMB"] * 1024 * 1024
-    used = root |> Files.usage() |> Map.fetch!("bytes")
+    used = Storage.listing(Path.basename(root), "artifacts") |> Enum.map(& &1.size) |> Enum.sum()
     if used - Files.size(path) + bytes > limit, do: {:error, :too_large}, else: :ok
   end
 
   defp fits("screenshots", _root, _path, _bytes), do: :ok
+
+  # Reports: #{Testor.Reports.max_files()} at most, each within the cap Testor.Reports reads.
+  defp fits("reports", root, path, bytes) do
+    cond do
+      bytes > Testor.Reports.max_bytes() -> {:error, :too_large}
+      not File.exists?(path) and length(Files.ls(root)) >= Testor.Reports.max_files() -> {:error, :too_many}
+      true -> :ok
+    end
+  end
 end

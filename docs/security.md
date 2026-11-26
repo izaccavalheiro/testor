@@ -486,6 +486,10 @@ Storage's interoperability API, Ceph, versitygw).
 - A run is archived once it ends and is signed; a failure is tried again three times, then
   logged. `archived` on the run says it is there (`<home>/archive/<id>.json` lists the keys).
   Deleting a run on the runner leaves its archive.
+- The archive is evidence kept apart; [runs in object storage](storage.md) (`storage`) is
+  where testor itself keeps runs instead of its home. Its presigned links last five minutes and
+  are made only after testor's own access check; HTML and text are never linked to the bucket,
+  only served by testor in its sandbox.
 
 ## Running tests in a separate account
 

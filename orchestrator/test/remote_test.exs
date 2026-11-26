@@ -96,6 +96,28 @@ defmodule Testor.RemoteTest do
     )
   end
 
+  test "reports: flat files, within their cap and count, signed with the run's files", %{job: job} do
+    run = run_id()
+    on_exit(fn -> cleanup(run) end)
+    assert %{status: 200} = put_run(job, record_of(run))
+    wait_until(fn -> Store.get(run) end)
+
+    assert %{status: 200} = file(job, "reports/mutation.json", ~s({"schemaVersion": "2", "files": {}}))
+    assert File.exists?(Path.join(Testor.Reports.dir(run), "mutation.json"))
+    assert %{status: 400} = file(job, "reports/a/b.json", "{}")
+
+    Application.put_env(:testor, :report_max_bytes, 10)
+    on_exit(fn -> Application.delete_env(:testor, :report_max_bytes) end)
+    assert %{status: 413} = file(job, "reports/big.json", String.duplicate("x", 11))
+    Application.delete_env(:testor, :report_max_bytes)
+
+    for n <- 2..20, do: assert(%{status: 200} = file(job, "reports/r#{n}.txt", "x"))
+    assert %{status: 409} = conn = file(job, "reports/r21.txt", "x")
+    assert body(conn)["error"]["code"] == "too_many"
+    # Writing one it already has again is not one more.
+    assert %{status: 200} = file(job, "reports/r2.txt", "y")
+  end
+
   test "a remote run is recorded with the job's project, task and job, and no pid", %{job: job} do
     run = run_id()
     on_exit(fn -> cleanup(run) end)

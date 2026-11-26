@@ -18,6 +18,10 @@ defmodule Testor.Jobs do
   leased at a time, so two runs never share a project's snapshot folder. Jobs are kept in
   `<home>/jobs/<id>.json` (`Testor.Jobs.FileStore`) and survive a restart; with
   `TESTOR_DATABASE_URL`, in PostgreSQL (`Testor.Jobs.Postgres`), shared by several testors.
+
+  With `execution.queue`, a broker (SQS, NATS JetStream) dispatches them instead
+  (`Testor.Queue`): the records stay here; the broker's message decides who takes a job, and
+  its visibility follows the lease.
   """
   use GenServer
   require Logger
@@ -39,10 +43,14 @@ defmodule Testor.Jobs do
 
   # --- reads --------------------------------------------------------------------------------
 
-  def get(id), do: GenServer.call(__MODULE__, {:get, id})
+  def get(id), do: __MODULE__ |> GenServer.call({:get, id}) |> public()
 
   @doc "Jobs, newest first, optionally with one status."
-  def list(status \\ nil), do: GenServer.call(__MODULE__, {:list, status})
+  def list(status \\ nil), do: __MODULE__ |> GenServer.call({:list, status}) |> Enum.map(&public/1)
+
+  # The broker's receipt stays inside testor.
+  defp public(nil), do: nil
+  defp public(job), do: Map.delete(job, "dispatch")
 
   # --- writes -------------------------------------------------------------------------------
 
@@ -50,20 +58,114 @@ defmodule Testor.Jobs do
   Queues a job from `params` (`project`, `kind`, optional `labels` and `ref`) asked for by
   `who`: `{:ok, job}` or `{:error, reason}` (`:disabled`, or a message for a bad request).
   """
-  def enqueue(params, who), do: GenServer.call(__MODULE__, {:enqueue, params, who})
+  def enqueue(params, who) do
+    cfg = Testor.Queue.config()
+    labels = params["labels"] || []
+    queue = cfg && is_list(labels) && Testor.Queue.queue_for(cfg, labels)
+
+    if cfg && is_list(labels) && queue == nil do
+      {:error, "no queue takes jobs with the labels #{Enum.join(labels, ", ")} (execution.queue.queues)"}
+    else
+      case GenServer.call(__MODULE__, {:enqueue, params, who}) do
+        {:ok, job} when cfg != nil -> dispatch(cfg, queue, job)
+        other -> other
+      end
+    end
+  end
+
+  # The broker's message for a new job; a job the broker refused is not left queued.
+  defp dispatch(cfg, queue, job) do
+    case Testor.Queue.call(cfg, "enqueue", fn -> cfg.adapter.enqueue(cfg, queue, job) end) do
+      :ok ->
+        {:ok, job}
+
+      {:error, _} ->
+        GenServer.call(__MODULE__, {:undispatched, job["id"]})
+        {:error, :queue_unavailable}
+    end
+  end
 
   @doc """
   The oldest queued job `agent` (with `labels`) can take, leased to it: `{:ok, job}` or `:none`.
   `allow` says which projects the agent may take (an agent user restricted to projects).
   """
-  def lease(agent, labels, allow \\ fn _project -> true end),
-    do: GenServer.call(__MODULE__, {:lease, agent, labels, allow})
+  def lease(agent, labels, allow \\ fn _project -> true end) do
+    case Testor.Queue.config() do
+      nil -> GenServer.call(__MODULE__, {:lease, agent, labels, allow})
+      cfg -> lease_from(cfg, Testor.Queue.queues_for(cfg, labels), agent, labels, allow, 10)
+    end
+  end
+
+  # A message from the agent's queues, in order. Its job is leased when it is still queued and
+  # this agent may take it; a job that is gone (cancelled, ended) has its message deleted; one
+  # whose project is busy or that this agent may not take is put back for another.
+  defp lease_from(_cfg, [], _agent, _labels, _allow, _tries), do: :none
+
+  defp lease_from(cfg, [_ | rest], agent, labels, allow, 0),
+    do: lease_from(cfg, rest, agent, labels, allow, 10)
+
+  defp lease_from(cfg, [queue | rest] = queues, agent, labels, allow, tries) do
+    seconds = settings()["leaseSeconds"]
+
+    case Testor.Queue.call(cfg, "receive", fn -> cfg.adapter.receive(cfg, queue, seconds) end) do
+      {:ok, %{id: id, receipt: receipt}} ->
+        dispatch = %{"queue" => queue.name, "receipt" => receipt}
+
+        case GenServer.call(__MODULE__, {:lease_id, agent, labels, allow, id, dispatch}) do
+          {:ok, job} ->
+            {:ok, public(job)}
+
+          :gone ->
+            Testor.Queue.call(cfg, "ack", fn -> cfg.adapter.ack(cfg, queue, receipt) end)
+            lease_from(cfg, queues, agent, labels, allow, tries - 1)
+
+          :later ->
+            Testor.Queue.call(cfg, "release", fn -> cfg.adapter.release(cfg, queue, receipt) end)
+            lease_from(cfg, rest, agent, labels, allow, 10)
+        end
+
+      _ ->
+        lease_from(cfg, rest, agent, labels, allow, 10)
+    end
+  end
 
   @doc "Renews `agent`'s lease on job `id`: `{:ok, %{\"cancel\" => bool}}` or `{:error, reason}`."
-  def heartbeat(id, agent), do: GenServer.call(__MODULE__, {:heartbeat, id, agent})
+  def heartbeat(id, agent) do
+    case GenServer.call(__MODULE__, {:heartbeat, id, agent}) do
+      {:ok, reply, dispatch} ->
+        broker(dispatch, fn cfg, queue, receipt ->
+          cfg.adapter.extend(cfg, queue, receipt, settings()["leaseSeconds"])
+        end)
+
+        {:ok, reply}
+
+      error ->
+        error
+    end
+  end
 
   @doc "Ends job `id` for `agent` with `result` (`exitCode`, optional `error`)."
-  def finish(id, agent, result), do: GenServer.call(__MODULE__, {:finish, id, agent, result})
+  def finish(id, agent, result) do
+    case GenServer.call(__MODULE__, {:finish, id, agent, result}) do
+      {:ok, job} ->
+        broker(job["dispatch"], fn cfg, queue, receipt -> cfg.adapter.ack(cfg, queue, receipt) end)
+        {:ok, public(job)}
+
+      error ->
+        error
+    end
+  end
+
+  # A broker call on the message a job was dispatched with, when there is a broker and the
+  # queue is still configured.
+  defp broker(%{"queue" => name, "receipt" => receipt}, fun) do
+    with %{} = cfg <- Testor.Queue.config(),
+         %{} = queue <- Enum.find(cfg.queues, &(&1.name == name)) do
+      Testor.Queue.call(cfg, "message", fn -> fun.(cfg, queue, receipt) end)
+    end
+  end
+
+  defp broker(_dispatch, _fun), do: nil
 
   @doc """
   Cancels job `id`: a queued job at once; a job an agent holds is marked, the agent hears it at
@@ -163,18 +265,44 @@ defmodule Testor.Jobs do
           {:none, []}
 
         job ->
-          job =
-            Map.merge(job, %{
-              "status" => "leased",
-              "agent" => agent,
-              "attempts" => job["attempts"] + 1,
-              "leasedAt" => now_iso(),
-              "leaseUntil" => lease_until()
-            })
-
-          Logger.info("jobs: #{job["id"]} leased to #{agent} (attempt #{job["attempts"]})")
+          job = take(job, agent)
           {{:ok, job}, [job]}
       end
+    end)
+  end
+
+  # A job a broker's message names: leased when it is still queued and this agent may take it.
+  def handle_call({:lease_id, agent, labels, allow, id, dispatch}, _from, state) do
+    transact(state, :open, fn jobs ->
+      busy = for {_, %{"status" => s, "project" => p}} <- jobs, s in @active, into: MapSet.new(), do: p
+
+      case Map.get(jobs, id) do
+        %{"status" => "queued"} = job ->
+          if allow.(job["project"]) and Enum.all?(job["labels"], &(&1 in labels)) and
+               not MapSet.member?(busy, job["project"]) do
+            job = take(job, agent) |> Map.put("dispatch", dispatch)
+            {{:ok, job}, [job]}
+          else
+            {:later, []}
+          end
+
+        _ ->
+          {:gone, []}
+      end
+    end)
+  end
+
+  # A job the broker would not take: ended, with why.
+  def handle_call({:undispatched, id}, _from, state) do
+    transact(state, {:id, id}, fn jobs ->
+      job =
+        Map.merge(jobs[id], %{
+          "status" => "cancelled",
+          "error" => "the queue did not take it",
+          "endedAt" => now_iso()
+        })
+
+      {:ok, [job]}
     end)
   end
 
@@ -184,7 +312,7 @@ defmodule Testor.Jobs do
         {:ok, job} ->
           job = Map.merge(job, %{"status" => "running", "leaseUntil" => lease_until()})
           job = Map.put_new(job, "startedAt", now_iso()) |> link_run()
-          {{:ok, %{"cancel" => job["cancelRequested"] == true}}, [job]}
+          {{:ok, %{"cancel" => job["cancelRequested"] == true}, job["dispatch"]}, [job]}
 
         error ->
           {error, []}
@@ -285,17 +413,32 @@ defmodule Testor.Jobs do
 
             job
             |> Map.merge(%{"status" => status, "error" => note})
-            |> Map.drop(["leaseUntil", "agent", "runId"])
+            |> Map.drop(["leaseUntil", "agent", "runId", "dispatch"])
             |> then(&if(status == "expired", do: Map.put(&1, "endedAt", now_iso()), else: &1))
           end
 
         runs = for job <- changed, run = get_in(jobs, [job["id"], "runId"]), is_binary(run), do: run
-        {runs, changed}
+        # An expired job's message goes; a requeued one's comes back on its own (its visibility
+        # was the lease).
+        gone =
+          for job <- changed,
+              job["status"] == "expired",
+              d = get_in(jobs, [job["id"], "dispatch"]),
+              d != nil,
+              do: d
+
+        {{runs, gone}, changed}
       end)
 
-    {:reply, runs, _state} = reply
-    if is_list(runs), do: Enum.each(runs, &Store.settle(&1, "aborted"))
-    reply
+    {:reply, result, state} = reply
+    # PostgreSQL out of reach answers {:error, :unavailable}: nothing to settle then.
+    {runs, gone} = if match?({runs, _} when is_list(runs), result), do: result, else: {[], []}
+    Enum.each(runs, &Store.settle(&1, "aborted"))
+
+    if gone != [],
+      do: Task.start(fn -> Enum.each(gone, &broker(&1, fn cfg, q, r -> cfg.adapter.ack(cfg, q, r) end)) end)
+
+    {:reply, runs, state}
   end
 
   # Runs `fun` on the jobs `scope` names in the backend, saves those it changed, and tells
@@ -314,6 +457,20 @@ defmodule Testor.Jobs do
   end
 
   # --- helpers ------------------------------------------------------------------------------
+
+  defp take(job, agent) do
+    job =
+      Map.merge(job, %{
+        "status" => "leased",
+        "agent" => agent,
+        "attempts" => job["attempts"] + 1,
+        "leasedAt" => now_iso(),
+        "leaseUntil" => lease_until()
+      })
+
+    Logger.info("jobs: #{job["id"]} leased to #{agent} (attempt #{job["attempts"]})")
+    job
+  end
 
   defp new_job(params, who) do
     labels = params["labels"] || []
@@ -335,8 +492,19 @@ defmodule Testor.Jobs do
       params["traceparent"] != nil and Testor.Tracing.parse(params["traceparent"]) == :error ->
         {:error, "traceparent is a W3C trace context (00-<trace id>-<span id>-<flags>)"}
 
+      params["clean"] not in [nil, true, false] ->
+        {:error, "clean is true or false"}
+
+      seconds(params["timeout"]) == :error ->
+        {:error, "timeout is seconds (1 to 86400) or 90s, 45m, 2h"}
+
       true ->
-        job = build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
+        job =
+          build(params["project"], params["kind"], Enum.uniq(labels), ref, who)
+          # The agent drops the project's preserved caches first (agent.json's "preserve").
+          |> then(&if(params["clean"] == true, do: Map.put(&1, "clean", true), else: &1))
+          |> put_timeout(params["timeout"] || settings()["defaultTimeout"])
+
         {:ok, Map.merge(job, Testor.Tracing.job_fields(params["traceparent"]))}
     end
   end
@@ -360,6 +528,32 @@ defmodule Testor.Jobs do
   end
 
   defp order(job), do: {job["createdAt"], job["id"]}
+
+  # The longest the run may take, as data: the agent's own timeout for the task caps it
+  # (execution.defaultTimeout when the job names none).
+  defp put_timeout(job, value) do
+    case seconds(value) do
+      n when is_integer(n) -> Map.put(job, "timeout", n)
+      _ -> job
+    end
+  end
+
+  @doc false
+  # A timeout: seconds (1 to a day), or "90s", "45m", "2h"; nil for none, :error otherwise.
+  def seconds(nil), do: nil
+  def seconds(n) when is_integer(n) and n >= 1 and n <= 86_400, do: n
+
+  def seconds(text) when is_binary(text) do
+    case Regex.run(~r/^(\d+)(s|m|h)?$/, text) do
+      [_, n | unit] ->
+        seconds(String.to_integer(n) * %{[] => 1, ["s"] => 1, ["m"] => 60, ["h"] => 3600}[unit])
+
+      nil ->
+        :error
+    end
+  end
+
+  def seconds(_), do: :error
 
   defp name?(value), do: is_binary(value) and Regex.match?(@name, value)
 

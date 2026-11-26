@@ -33,6 +33,8 @@ The tools listed are the ones the caller's scopes allow.
 | `get_run_log` | read | the end of the output (`tail_bytes`), or only lines containing `grep` with `context` lines around, numbered |
 | `wait_for_run` | read | waits up to `timeout_seconds` (600 at most) for a run to end and returns it |
 | `list_projects` | read | the latest run of every project and task, with the statuses before it |
+| `find_flaky_specs` | read | spec files that both passed and failed on one commit |
+| `find_hotspots` | read | spec files that fail, take and are retried most over recent runs ([result formats](result-formats.md#hotspots)) |
 | `get_device` | read | OS, CPU, memory, GPUs, disks and the latest load sample |
 | `cancel_run` | operate | kills a running run's process tree |
 | `delete_run` | operate | deletes a finished run with its log, screenshots and artifacts |

@@ -160,6 +160,7 @@ defmodule Testor.Web.Router do
           _ -> 512 * 1024
         end
 
+      Testor.Storage.local(id)
       log = Files.tail(Config.log_file(id), bytes)
 
       conn
@@ -245,23 +246,53 @@ defmodule Testor.Web.Router do
     if valid_id?(id), do: fun.(conn), else: error(conn, 400, "bad_request", "bad id")
   end
 
-  defp serve_shot(conn, segments) do
+  defp serve_shot(conn, segments, fetched \\ false) do
     full = inside(Config.shots_dir(), segments)
     type = full && Files.image_type(full)
+    key = not fetched && stored_key("screenshots", segments)
 
-    if type != nil and File.regular?(full) do
-      conn
-      |> put_resp_content_type(type, nil)
-      |> put_resp_header("cache-control", "max-age=3600")
-      |> put_resp_header("x-content-type-options", "nosniff")
-      |> send_file(200, full)
-    else
-      json(conn, 404, %{"error" => "not found"})
+    cond do
+      type != nil and File.regular?(full) ->
+        conn
+        |> put_resp_content_type(type, nil)
+        |> put_resp_header("cache-control", "max-age=3600")
+        |> put_resp_header("x-content-type-options", "nosniff")
+        |> send_file(200, full)
+
+      is_binary(key) and Files.image_type(key) != nil ->
+        from_store(conn, key, Files.image_type(key), &serve_shot(&1, segments, true))
+
+      true ->
+        json(conn, 404, %{"error" => "not found"})
     end
   end
 
-  defp serve_artifact(conn, segments) do
+  # A stored run's file this home lacks (Testor.Storage): a presigned link to it, or fetched
+  # and served from here.
+  defp from_store(conn, key, inline, serve) do
+    case Testor.Storage.serve(key, inline) do
+      {:redirect, url} ->
+        conn
+        |> put_resp_header("location", url)
+        |> put_resp_header("cache-control", "no-store")
+        |> send_resp(302, "")
+
+      {:file, _path} ->
+        serve.(conn)
+
+      :not_found ->
+        json(conn, 404, %{"error" => "not found"})
+    end
+  end
+
+  # The key of the file `segments` name in a bucket that keeps runs, or nil.
+  defp stored_key(area, segments) do
+    if Testor.Storage.s3?() and safe_segments?(segments), do: area <> "/" <> Enum.join(segments, "/")
+  end
+
+  defp serve_artifact(conn, segments, fetched \\ false) do
     full = inside(Config.artifacts_dir(), segments)
+    key = not fetched && stored_key("artifacts", segments)
 
     case full && File.stat(full) do
       {:ok, %{type: :regular, size: size}} ->
@@ -298,6 +329,9 @@ defmodule Testor.Web.Router do
             conn |> put_resp_header("content-range", "bytes */#{size}") |> send_resp(416, "")
         end
 
+      _ when is_binary(key) ->
+        from_store(conn, key, Files.served_type(key), &serve_artifact(&1, segments, true))
+
       _ ->
         json(conn, 404, %{"error" => "not found"})
     end
@@ -309,11 +343,13 @@ defmodule Testor.Web.Router do
     root = Path.expand(root)
     full = Path.expand(Path.join([root | segments]))
 
-    safe =
-      segments != [] and
-        Enum.all?(segments, &(&1 not in ["", ".", ".."] and not String.contains?(&1, ["/", "\\", ":"])))
+    safe = safe_segments?(segments) and String.starts_with?(full, root <> "/")
+    if safe and Files.no_links?(root, segments), do: full
+  end
 
-    if safe and String.starts_with?(full, root <> "/") and Files.no_links?(root, segments), do: full
+  defp safe_segments?(segments) do
+    segments != [] and
+      Enum.all?(segments, &(&1 not in ["", ".", ".."] and not String.contains?(&1, ["/", "\\", ":", <<0>>])))
   end
 
   defp download_name(path), do: path |> Path.basename() |> String.replace(~r/[^\w.-]/u, "_")

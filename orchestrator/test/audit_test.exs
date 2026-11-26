@@ -11,13 +11,13 @@ defmodule Testor.AuditTest do
   setup do
     Audit.flush()
     File.rm(Audit.file())
-    :sys.replace_state(Audit, fn _ -> %{prev: @genesis} end)
+    :sys.replace_state(Audit, fn _ -> %{prev: @genesis, sent: 0} end)
     {public, _} = Attestation.keypair()
 
     on_exit(fn ->
       Audit.flush()
       File.rm(Audit.file())
-      :sys.replace_state(Audit, fn _ -> %{prev: @genesis} end)
+      :sys.replace_state(Audit, fn _ -> %{prev: @genesis, sent: 0} end)
     end)
 
     %{public: public}
@@ -97,9 +97,9 @@ defmodule Testor.AuditTest do
     assert {:ok, %{prev: prev}} = Audit.init(nil)
     assert prev == :crypto.hash(:sha256, hd(lines())) |> Base.encode16(case: :lower)
     File.write!(Audit.file(), "")
-    assert {:ok, %{prev: @genesis}} = Audit.init(nil)
+    assert {:ok, %{prev: @genesis, sent: 0}} = Audit.init(nil)
     File.rm(Audit.file())
-    assert {:ok, %{prev: @genesis}} = Audit.init(nil)
+    assert {:ok, %{prev: @genesis, sent: 0}} = Audit.init(nil)
     assert Audit.verify(public) == {:ok, 0}
     assert Audit.tail(5) == []
   end

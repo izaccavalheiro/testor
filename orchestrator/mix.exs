@@ -25,7 +25,7 @@ defmodule Testor.MixProject do
         ignore_modules:
           [Testor.OS, Testor.Device, Testor.Device.Unix, ~r/^Testor\.Test\./] ++
             if(System.get_env("TESTOR_DATABASE_URL") in [nil, ""],
-              do: [Testor.Jobs.Postgres, Testor.Cluster.Postgres],
+              do: [Testor.Jobs.Postgres, Testor.Cluster.Postgres, Testor.Storage.Shared],
               else: [Testor.Jobs.FileStore, Testor.Cluster.Local]
             )
       ],
@@ -39,8 +39,9 @@ defmodule Testor.MixProject do
   defp elixirc_paths(_), do: ["lib"]
 
   def application do
-    # inets and ssl: webhooks (Testor.Webhooks) are sent with :httpc.
-    [extra_applications: [:logger, :inets, :ssl], mod: {Testor.Application, []}]
+    # inets and ssl: webhooks (Testor.Webhooks) are sent with :httpc. xmerl: JUnit, TRX and
+    # Cobertura reports (Testor.Reports.XML), OTP's own XML parser.
+    [extra_applications: [:logger, :inets, :ssl, :xmerl], mod: {Testor.Application, []}]
   end
 
   defp deps do

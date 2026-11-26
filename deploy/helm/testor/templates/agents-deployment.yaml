@@ -1,74 +1,25 @@
 {{- if .Values.agents.enabled }}
 {{- if not .Values.agents.tokenSecret }}{{ fail "agents.tokenSecret: a Secret with the agent's token" }}{{ end }}
+{{- range $g := (include "testor.agentGroups" . | fromJsonArray) }}
+{{- if eq $g.mode "deployment" }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "testor.fullname" . }}-agent
-  labels: {{- include "testor.labels" . | nindent 4 }}
+  name: {{ include "testor.fullname" $ }}-agent{{ $g.suffix }}
+  labels: {{- include "testor.labels" $ | nindent 4 }}
 spec:
-  {{- if not .Values.agents.autoscaling.keda }}
-  replicas: {{ .Values.agents.replicas }}
+  {{- if not $g.autoscaling.keda }}
+  replicas: {{ $g.replicas }}
   {{- end }}
   selector:
-    matchLabels: {{- include "testor.agentSelector" . | nindent 6 }}
+    matchLabels: {{- include "testor.agentGroupSelector" (dict "root" $ "group" $g) | nindent 6 }}
   template:
     metadata:
-      labels: {{- include "testor.agentSelector" . | nindent 8 }}
+      labels: {{- include "testor.agentGroupSelector" (dict "root" $ "group" $g) | nindent 8 }}
       annotations:
-        checksum/config: {{ include (print $.Template.BasePath "/agents-configmap.yaml") . | sha256sum }}
-    spec:
-      {{- with (include "testor.agentServiceAccount" .) }}
-      serviceAccountName: {{ . }}
-      {{- end }}
-      automountServiceAccountToken: {{ .Values.agents.serviceAccount.automountToken }}
-      # No Kubernetes service links: a Service named testor would set TESTOR_PORT and the like
-      # (tcp://...), which testor reads as its own settings.
-      enableServiceLinks: false
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
-        seccompProfile: { type: RuntimeDefault }
-      # A job in progress gets time to end and be sent before the pod goes.
-      terminationGracePeriodSeconds: 120
-      containers:
-        - name: agent
-          image: {{ include "testor.agentImage" . }}
-          imagePullPolicy: {{ .Values.agents.image.pullPolicy }}
-          env:
-            - name: TESTOR_AGENT_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ .Values.agents.tokenSecret }}, key: token } }
-            {{- with .Values.agents.env }}
-            {{- toYaml . | nindent 12 }}
-            {{- end }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: { drop: [ALL] }
-          resources: {{- toYaml .Values.agents.resources | nindent 12 }}
-          volumeMounts:
-            - { name: config, mountPath: /etc/testor-agent, readOnly: true }
-            - { name: home, mountPath: /home/agent }
-            - { name: tmp, mountPath: /tmp }
-            {{- range $i, $mount := .Values.agents.secretMounts }}
-            - { name: secret-{{ $i }}, mountPath: {{ $mount.mountPath }}, readOnly: true }
-            {{- end }}
-      volumes:
-        - name: config
-          configMap: { name: {{ include "testor.fullname" . }}-agent }
-        - name: home
-          emptyDir: {}
-        - name: tmp
-          emptyDir: {}
-        {{- range $i, $mount := .Values.agents.secretMounts }}
-        - name: secret-{{ $i }}
-          secret: { secretName: {{ $mount.secret }}, defaultMode: 0440 }
-        {{- end }}
-      {{- with .Values.nodeSelector }}
-      nodeSelector: {{- toYaml . | nindent 8 }}
-      {{- end }}
-      {{- with .Values.tolerations }}
-      tolerations: {{- toYaml . | nindent 8 }}
-      {{- end }}
+        checksum/config: {{ include (print $.Template.BasePath "/agents-configmap.yaml") $ | sha256sum }}
+    spec: {{- include "testor.agentPodSpec" (dict "root" $ "group" $g) | nindent 6 }}
+{{- end }}
+{{- end }}
 {{- end }}

@@ -29,11 +29,22 @@
 # ARTIFACTS (with KIND): space-separated files and folders, relative to the project, wildcards
 # allowed, unquoted (coverage playwright-report reports/*.md), that the run writes and the dashboard
 # keeps with it: HTML reports, coverage, Markdown, JUnit XML, ...
+# TIMEOUT (with KIND): the run's longest time (600, 90s, 45m, 2h): its process tree is then
+# ended and the run recorded failed, reason timeout. MEMORY_GUARD (with KIND): "80,92", the
+# shares of memory (the cgroup's limit on Linux) at which it warns, then ends the run.
+# LOCK (with KIND, 1 by default): one run of the project at a time on the runner, the next one
+# waiting (shown "waiting"); LOCK=0 lets them overlap in one folder. ISOLATE=copy: each run in a
+# copy of the snapshot of its own (KEEP folders linked, not copied), deleted when it ends, so
+# runs of one project overlap safely; the dependency install stays one at a time.
+# REPORTS (with KIND): files testor reads when the run ends, the same way (a mutation report:
+# reports/mutation/mutation.json); see docs/mutation.md.
 #
 # Vars: RUNNER (required, an SSH host), PROJECT (default: the git root's folder name),
 # ROOT (default: the git root of the directory `task` was called from), WORKSPACES
 # (test-run), HOME_DIR (<WORKSPACES>/.testor; both relative to the runner's home folder or
-# absolute), KEEP (node_modules .lockhash target .venv),
+# absolute), KEEP (node_modules .lockhash target .venv: names kept at any depth, or paths
+# from the project's root such as reports/stryker-incremental.json), PRESERVE (paths kept as
+# caches between syncs, which CLEAN=1 drops first: .stryker-tmp reports/stryker-incremental.json),
 # ACTOR (who the runs are recorded as started by; default <user>@<workstation>).
 #
 # The workstation needs ssh, git and tar (GNU tar, bsdtar or Windows' tar.exe). Scripts reach
@@ -62,6 +73,13 @@ vars:
   _COMMITTED:
     sh: 'git -C "{{._ROOT}}" log -1 --format=%cI 2>/dev/null || true'
   _KEEP: '{{range $i, $k := splitList " " (.KEEP | default "node_modules .lockhash target .venv")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
+  # TIMEOUT (with KIND): seconds, or 90s, 45m, 2h; MEMORY_GUARD: "warn,stop" percentages. Only
+  # digits and a comma reach the runner.
+  _TIMEOUT: '{{$t := (.TIMEOUT | default "" | trim)}}{{if regexMatch "^[0-9]+$" $t}}{{$t}}{{else if regexMatch "^[0-9]+s$" $t}}{{trimSuffix "s" $t}}{{else if regexMatch "^[0-9]+m$" $t}}{{mul (trimSuffix "m" $t | atoi) 60}}{{else if regexMatch "^[0-9]+h$" $t}}{{mul (trimSuffix "h" $t | atoi) 3600}}{{else}}0{{end}}'
+  _MEMORY_GUARD: '{{regexFind "^[0-9]{1,3},[0-9]{1,3}$" (.MEMORY_GUARD | default "" | replace " " "")}}'
+  # Caches a tool keeps between runs (Stryker's incremental file), paths relative to the project;
+  # CLEAN=1 drops them before the sync.
+  _PRESERVE: '{{range $i, $k := splitList " " (.PRESERVE | default "")}}{{if $i}}, {{end}}"{{$k}}"{{end}}'
   # Every remote script starts with this: stop on errors (native commands too), UTF-8 output,
   # and on Windows the PATH that sshd's sessions miss (programs installed after sshd started).
   _PRELUDE: |
@@ -91,12 +109,24 @@ tasks:
             git -C "{{._ROOT}}" ls-files -z --cached --others --exclude-standard |
             tar -czf - -C "{{._ROOT}}" --null -T -
           SCRIPT: |
-            function Clear-Snapshot($p) {
-              Get-ChildItem -LiteralPath $p -Force | Where-Object { $_.Name -notin {{._KEEP}} } | ForEach-Object {
-                if ($_.PSIsContainer) { Clear-Snapshot $_.FullName } else { Remove-Item -LiteralPath $_.FullName -Force }
+            # KEEP: names kept wherever they are (node_modules), or paths from the project's root
+            # (a/b); PRESERVE: such paths too, unless CLEAN=1.
+            $keep = @({{._KEEP}}) | Where-Object { $_ }
+            $preserve = @({{._PRESERVE}}) | Where-Object { $_ } | ForEach-Object { $_ -replace "\\", "/" }
+            $keepNames = @($keep | Where-Object { $_ -notmatch "/" })
+            $keepPaths = @($keep | Where-Object { $_ -match "/" }) + @($preserve)
+            if ("{{.CLEAN | default ""}}" -eq "1" -and (Test-Path $workspace)) {
+              foreach ($p in $preserve) { Remove-Item -LiteralPath (Join-Path $workspace $p) -Recurse -Force -ErrorAction SilentlyContinue }
+              $keepPaths = @($keep | Where-Object { $_ -match "/" })
+            }
+            function Clear-Snapshot($p, $rel) {
+              Get-ChildItem -LiteralPath $p -Force | ForEach-Object {
+                $r = if ($rel) { "$rel/$($_.Name)" } else { $_.Name }
+                if ($_.Name -in $keepNames -or $r -in $keepPaths) { return }
+                if ($_.PSIsContainer) { Clear-Snapshot $_.FullName $r } else { Remove-Item -LiteralPath $_.FullName -Force }
               }
             }
-            if (Test-Path $workspace) { Clear-Snapshot $workspace }
+            if (Test-Path $workspace) { Clear-Snapshot $workspace "" }
             $null = New-Item -ItemType Directory -Force -Path $workspace
             tar -xzf - -C $workspace
 
@@ -125,7 +155,39 @@ tasks:
             {{if .KIND}}$body = {
             {{.CMD}}
             }
-            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}"{{if .ARTIFACTS}} -Artifacts @({{range $i, $a := splitList " " (.ARTIFACTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}} -Body $body } else { & $body }
+            # One run of the project at a time (run.ps1's lock), unless LOCK=0; ISOLATE=copy runs
+            # in a copy of its own instead, so runs overlap: the snapshot copied, KEEP folders
+            # linked (a junction on Windows, a symbolic link elsewhere), deleted when it ends.
+            $isolated = $null
+            $env:TESTOR_LOCK = if ("{{.LOCK | default "1"}}" -eq "0" -or "{{.ISOLATE | default ""}}" -eq "copy") { "0" } else { "1" }
+            if ("{{.ISOLATE | default ""}}" -eq "copy") {
+              $isolatedRoot = Join-Path (Split-Path $testorRun) "isolated"
+              $null = New-Item -ItemType Directory -Force $isolatedRoot
+              # Left behind by a session that was killed: links first, never what they point to.
+              foreach ($old in @(Get-ChildItem -LiteralPath $isolatedRoot -Directory | Where-Object { $_.Name -like "ssh-*" -and $_.LastWriteTime -lt (Get-Date).AddDays(-1) })) {
+                Get-ChildItem -LiteralPath $old.FullName -Force | Where-Object LinkType | ForEach-Object { [IO.Directory]::Delete($_.FullName) }
+                Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction SilentlyContinue
+              }
+              $isolated = Join-Path $isolatedRoot ("ssh-{{._PROJECT}}-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+              $null = New-Item -ItemType Directory -Force $isolated
+              $keep = @({{._KEEP}}) | Where-Object { $_ -and $_ -notmatch "/" }
+              foreach ($item in Get-ChildItem -LiteralPath $workspace -Force) {
+                $to = Join-Path $isolated $item.Name
+                if ($item.PSIsContainer -and $item.Name -in $keep) {
+                  if ($IsWindows) { $null = New-Item -ItemType Junction -Path $to -Target $item.FullName } else { $null = New-Item -ItemType SymbolicLink -Path $to -Target $item.FullName }
+                } else { Copy-Item -LiteralPath $item.FullName -Destination $to -Recurse -Force }
+              }
+              Set-Location $isolated
+            }
+            try {
+            if (Test-Path $testorRun) { & $testorRun -Project "{{._PROJECT}}" -Kind "{{.KIND}}"{{if .ARTIFACTS}} -Artifacts @({{range $i, $a := splitList " " (.ARTIFACTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}}{{if .TIMEOUT}} -TimeoutSeconds {{._TIMEOUT}}{{end}}{{if .MEMORY_GUARD}} -MemoryGuard '{{._MEMORY_GUARD}}'{{end}}{{if .REPORTS}} -Reports @({{range $i, $a := splitList " " (.REPORTS | trim)}}{{if $a}}{{if $i}}, {{end}}'{{$a | replace "'" "''"}}'{{end}}{{end}}){{end}} -Body $body } else { & $body }
+            } finally {
+              if ($isolated) {
+                Set-Location $workspace
+                Get-ChildItem -LiteralPath $isolated -Force | Where-Object LinkType | ForEach-Object { [IO.Directory]::Delete($_.FullName) }
+                Remove-Item -LiteralPath $isolated -Recurse -Force -ErrorAction SilentlyContinue
+              }
+            }
             {{else}}{{.CMD}}
             {{end}}
 
