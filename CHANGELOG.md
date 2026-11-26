@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.15.0 - 2026-11-26
+
 ### Added
 
 - **Runs in Azure Blob Storage** ([docs/storage.md](docs/storage.md#azure-blob-storage)):
