@@ -34,6 +34,8 @@ defmodule Testor.Views do
 
     %{
       "host" => host(),
+      # The version this testor runs, shown beside its name.
+      "version" => to_string(Application.spec(:testor, :vsn)),
       "now" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "running" => Enum.map(running, &Store.with_live/1),
       "history" => Enum.take(history, 1000),

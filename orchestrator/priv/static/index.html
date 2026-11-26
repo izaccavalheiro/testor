@@ -25,6 +25,7 @@ a { color: var(--blue); text-decoration: none; }
 a:hover { text-decoration: underline; }
 header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
 header h1 { font-size: 16px; margin: 0; }
+header h1 .version { color: var(--muted); font-size: 12px; font-weight: normal; margin-left: 6px; }
 header nav { display: flex; gap: 4px; }
 header nav a { padding: 5px 10px; border-radius: 6px; color: var(--muted); }
 header nav a.active { background: var(--hover); color: var(--text); font-weight: 600; text-decoration: none; }
@@ -140,7 +141,7 @@ td.path { word-break: break-all; color: var(--muted); }
 </head>
 <body>
 <header>
-  <h1 id="title">testor</h1>
+  <h1><span id="title">testor</span><span class="version" id="version"></span></h1>
   <nav>
     <a href="#/" data-nav="runs">Runs</a>
     <a href="#/artifacts" data-nav="artifacts">Artifacts</a>
@@ -281,7 +282,7 @@ function connect() {
   const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
   on("snapshot", (d) => {
     S.runs = new Map([...d.running, ...d.history].map((r) => [r.id, r]));
-    Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, paths: d.paths, linkTtl: d.linkTtl, ready: true });
+    Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, version: d.version, paths: d.paths, linkTtl: d.linkTtl, ready: true });
     if (d.device) S.device = { static: d.device.static, sample: d.device.sample, history: d.device.history || [] };
     shotsDirty = artsDirty = true;
     setConn("live");
@@ -346,6 +347,8 @@ function render() {
   const running = [...S.runs.values()].filter((r) => r.status === "running").length;
   document.title = running ? `(${running}) testor` : "testor";
   if (S.host) $("#title").textContent = `testor · ${S.host}`;
+  // A reconnect after an upgrade brings the new version with its snapshot.
+  if (S.version) { $("#version").textContent = `v${S.version}`; $("#version").title = `testor ${S.version}`; }
   if (!S.ready) return;
   const smp = S.device.sample, memPct = S.device.history.at(-1)?.mem;
   $("#usage").textContent = smp ? `CPU ${Math.round(smp.cpu ?? 0)}% · RAM ${memPct != null ? Math.round(memPct) : "–"}%` : "";

@@ -432,7 +432,8 @@ defmodule Testor.WebTest do
       assert %{"via" => "none", "authEnabled" => false} = conn(:get, "/api/v1/auth/me") |> call() |> body()
       assert %{"data" => [_, _, _]} = conn(:get, "/api/v1/runs?q=webt-") |> call() |> body()
       assert Testor.Auth.file_prefix("x") == ""
-      assert %{"linkTtl" => nil} = conn(:get, "/api/state") |> call() |> body()
+      assert %{"linkTtl" => nil, "version" => version} = conn(:get, "/api/state") |> call() |> body()
+      assert version == to_string(Application.spec(:testor, :vsn))
     end
 
     test "the CSRF guard still applies" do

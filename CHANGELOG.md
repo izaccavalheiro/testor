@@ -45,6 +45,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 - **Commands as objects** in `agent.json` (`command`, `reports`, `artifacts`, `preserve`), a
   plain string still working; preserved caches survive isolated workspaces; `KEEP` takes
   paths, `PRESERVE` and `CLEAN=1` in `remote.yml`, and `"clean": true` on a job.
+- **The dashboard shows testor's version** beside its name (`version` in `/api/state` and the
+  event stream's snapshot), updated when a reconnect follows an upgrade.
 - **Certificates from ACME** for the built-in TLS: `tls.acme` in config.json (or
   `TESTOR_ACME`) orders the certificate from Let's Encrypt or any RFC 8555 CA over HTTP-01,
   checks it, serves it without a restart, and renews it at two thirds of its lifetime or in the
