@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.16.1 - 2026-11-27
+
 ### Fixed
 
 - **A shard run again after its agent stopped could fail its batch**: the job, queued again,
@@ -16,6 +18,13 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
   (`pastRuns`) and links only a run of its current agent. This was the intermittent failure
   of `scripts/shard-e2e.sh`.
 - The commit-subject check accepts Dependabot's subjects (`build(deps): Bump …`).
+- The dashboard's end-to-end job installs Chromium's libraries from Ubuntu's archive only (an
+  extra apt source answering 403 failed it before any test ran).
+
+### Changed
+
+- Postgrex 0.23.0 (the PostgreSQL driver), Playwright 1.65.1 for the dashboard's end-to-end
+  tests, and newer pinned GitHub Actions (scorecard, upload-sarif, sbom-action).
 
 ## 0.16.0 - 2026-11-27
 
