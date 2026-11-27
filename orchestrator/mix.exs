@@ -54,7 +54,7 @@ defmodule Testor.MixProject do
       {:bandit, "~> 1.6"},
       {:plug, "~> 1.16"},
       # The job queue in PostgreSQL (optional at run time: TESTOR_DATABASE_URL).
-      {:postgrex, "0.22.4"},
+      {:postgrex, "0.23.0"},
       # 2.10.3 fixes EEF-CVE-2026-133555 (code execution through forged DBConnection.Stream).
       {:db_connection, "2.10.3"}
     ]
