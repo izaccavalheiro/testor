@@ -177,6 +177,34 @@ defmodule Testor.RemoteTest do
     assert %{status: 409} = log(job, 0, "late")
   end
 
+  test "a job run again elsewhere takes its new run, never the one of its earlier attempt", %{job: job} do
+    first = run_id()
+    second = run_id()
+    on_exit(fn -> Enum.each([first, second], &cleanup/1) end)
+
+    # bot's attempt: its run starts, the agent is stopped (its run ends aborted), the job is
+    # queued again.
+    assert %{status: 200} = put_run(job, record_of(first))
+    wait_until(fn -> Store.get(first) != nil end)
+
+    assert %{status: 200} =
+             put_run(job, record_of(first, %{"status" => "aborted", "endedAt" => "2026-01-01T00:00:01Z"}))
+
+    wait_until(fn -> match?(%{"status" => "aborted"}, Store.get(first)) end)
+    assert {:ok, %{"status" => "queued"} = queued} = Jobs.finish(job, "bot", %{"preempted" => true})
+    refute Map.has_key?(queued, "runId")
+    # Read back, the queued job shows no run either.
+    refute Jobs.get(job)["runId"] == first
+
+    # bot2 takes it: its heartbeat does not link bot's run, and its own run is accepted.
+    assert {:ok, %{"id" => ^job}} = Jobs.lease("bot2", [])
+    assert {:ok, _} = Jobs.heartbeat(job, "bot2")
+    refute Jobs.get(job)["runId"] == first
+    assert %{status: 200} = put_run(job, record_of(second), "bot2")
+    assert Jobs.get(job)["runId"] == second
+    assert {:ok, %{"status" => "passed", "runId" => ^second}} = Jobs.finish(job, "bot2", %{"exitCode" => 0})
+  end
+
   test "records the agent cannot write", %{job: job} do
     run = run_id()
     on_exit(fn -> cleanup(run) end)

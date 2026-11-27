@@ -700,7 +700,8 @@ defmodule Testor.Jobs do
 
             job
             |> Map.merge(%{"status" => status, "error" => note})
-            |> Map.drop(["leaseUntil", "agent", "runId", "dispatch"])
+            |> then(&if(status == "queued", do: forget_run(&1), else: Map.delete(&1, "runId")))
+            |> Map.drop(["leaseUntil", "agent", "dispatch"])
             |> then(&if(status == "expired", do: Map.put(&1, "endedAt", now_iso()), else: &1))
           end
 
@@ -769,7 +770,8 @@ defmodule Testor.Jobs do
         Map.merge(job, %{"status" => "failed", "error" => "preempted #{count} times", "endedAt" => now_iso()})
       else
         Map.merge(job, %{"status" => "queued", "attempts" => job["attempts"] - 1})
-        |> Map.drop(["agent", "leaseUntil", "leasedAt", "runId", "dispatch"])
+        |> forget_run()
+        |> Map.drop(["agent", "leaseUntil", "leasedAt", "dispatch"])
       end
       |> Map.put("preemptions", count)
 
@@ -1063,19 +1065,32 @@ defmodule Testor.Jobs do
   defp with_run(job, index) do
     case Map.get(index, job["id"]) do
       nil -> job
-      run -> Map.put(job, "runId", run)
+      run -> if run in (job["pastRuns"] || []), do: job, else: Map.put(job, "runId", run)
     end
   end
 
-  # The run run.ps1 recorded for this job (it records the job's id from TESTOR_JOB_ID).
+  # The run run.ps1 recorded for this job (it records the job's id from TESTOR_JOB_ID): one of
+  # this attempt, never the run of an earlier one (`pastRuns`, an agent stopped mid-run) nor
+  # one another agent sent.
   defp link_run(%{"runId" => _} = job), do: job
 
   defp link_run(job) do
-    case Enum.find(Store.all(), &(&1["job"] == job["id"])) do
+    past = job["pastRuns"] || []
+
+    case Enum.find(
+           Store.all(),
+           &(&1["job"] == job["id"] and &1["id"] not in past and &1["remote"] in [nil, job["agent"]])
+         ) do
       nil -> job
       run -> Map.put(job, "runId", run["id"])
     end
   end
+
+  # A job queued again: its run so far belongs to the attempt that ended, never to the next.
+  defp forget_run(%{"runId" => run} = job) when is_binary(run),
+    do: job |> Map.delete("runId") |> Map.update("pastRuns", [run], &Enum.take([run | &1], 20))
+
+  defp forget_run(job), do: Map.delete(job, "runId")
 
   defp put_if(map, _key, nil), do: map
   defp put_if(map, key, value), do: Map.put(map, key, value)

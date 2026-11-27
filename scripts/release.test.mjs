@@ -38,10 +38,10 @@ test("bumped resets lower parts, and a pre-release becomes its release", () => {
 });
 
 test("lintSubject accepts Conventional Commits and refuses the rest", () => {
-  for (const ok of ["feat: versioned API, MCP server and authentication", "fix(runner): install.ps1 exits 0 when it succeeds", "feat(api)!: rename runs.kind", "docs: `run.ps1` parameters", "Merge pull request #3 from x/y", 'Revert "feat: x"']) {
+  for (const ok of ["feat: versioned API, MCP server and authentication", "fix(runner): install.ps1 exits 0 when it succeeds", "feat(api)!: rename runs.kind", "docs: `run.ps1` parameters", "Merge pull request #3 from x/y", 'Revert "feat: x"', "build(deps): Bump postgrex from 0.22.4 to 0.23.0 in /orchestrator", "ci(deps): Bump anchore/sbom-action from 0.24.3 to 0.24.4", "build(deps-dev): Bump vitest from 4.0.0 to 4.1.0"]) {
     assert.equal(lintSubject(ok), null, ok);
   }
-  for (const bad of ["Added stuff", "feat: Capitalized", "feat: ends with a period.", "feature: x", "fix(Runner): x", "feat:no space"]) {
+  for (const bad of ["Added stuff", "feat: Capitalized", "feat(deps): Bump x", "build(ui): Bump x", "feat: ends with a period.", "feature: x", "fix(Runner): x", "feat:no space"]) {
     assert.notEqual(lintSubject(bad), null, bad);
   }
 });
