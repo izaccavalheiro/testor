@@ -42,8 +42,9 @@ defmodule Testor.Web.SSE do
 
   @doc """
   Streams hold a process and a connection each for as long as the client wants: at most
-  `max_streams` (#{256}) at once, and `max_streams_per_client` (#{16}) per user, or per address
-  without authentication. Beyond that a stream is refused with `503` and `Retry-After`.
+  `max_streams` (#{256}) at once, and `max_streams_per_client` (#{16},
+  `TESTOR_MAX_STREAMS_PER_CLIENT`) per user, or per address without authentication. Beyond
+  that a stream is refused with `503` and `Retry-After`.
   """
   def admit(conn, fun) do
     client =

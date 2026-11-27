@@ -19,7 +19,8 @@ part you agree to the [code of conduct](CODE_OF_CONDUCT.md).
 | `orchestrator/` | the application (OTP, Bandit, Plug) and the dashboard (`priv/static/index.html`, one file, no build step) | Elixir, HTML/JS |
 | `runner/` | `run.ps1`, `install.ps1`, `setup.ps1` | PowerShell |
 | `taskfiles/` | the workstation's tasks | go-task YAML |
-| `scripts/` | `smoke.ps1` (end-to-end check of a release), `release.mjs` (versions) | PowerShell, Node.js |
+| `scripts/` | `smoke.ps1` (end-to-end check of a release), the container end-to-end checks (`*-e2e.sh`), `release.mjs` (versions) | PowerShell, Bash, Node.js |
+| `e2e/dashboard/` | the dashboard's end-to-end tests: a seeded testor, Playwright | Node.js |
 | `docs/` | reference pages, also published on the site | Markdown |
 | `website/` | the documentation site | Docusaurus |
 
@@ -34,6 +35,7 @@ let a runner do it: every check runs there.
 | format the sources | `mix format` | `task testor:format` (copies them back) |
 | release smoke test | `MIX_ENV=prod mix release && pwsh scripts/smoke.ps1 -Release orchestrator/_build/prod/rel/testor` | `task testor:smoke` |
 | everything CI runs on the orchestrator | | `task testor:ci` |
+| the dashboard end to end (Playwright, desktop and phone) | `docker build -t testor:ci orchestrator && scripts/dashboard-e2e.sh testor:ci` (`DOCS_SHOTS=1` also writes the [dashboard tour](website/docs/features/dashboard.md)'s images) | |
 | the release tool | `node --test scripts/release.test.mjs` | |
 | the site | `cd website && npm ci && npm run build` | |
 

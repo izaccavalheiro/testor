@@ -12,6 +12,10 @@ updates:
       docusaurus:
         patterns: ["@docusaurus/*", "react", "react-dom", "@mdx-js/*"]
   - package-ecosystem: npm
+    directory: /e2e/dashboard
+    schedule: { interval: weekly }
+    commit-message: { prefix: "build(deps)" }
+  - package-ecosystem: npm
     directory: /examples/node-project
     schedule: { interval: monthly }
     commit-message: { prefix: "build(deps)" }

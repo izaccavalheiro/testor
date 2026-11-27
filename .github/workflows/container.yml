@@ -13,7 +13,7 @@ name: Container
 
 on:
   pull_request:
-    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "scripts/handoff-e2e.sh", "scripts/shard-e2e.sh", "scripts/detect-e2e.sh", "scripts/preempt-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", ".github/workflows/container.yml"]
+    paths: ["orchestrator/**", "runner/**", "scripts/two-accounts/**", "scripts/container-e2e.sh", "scripts/cluster-e2e.sh", "scripts/storage-e2e.sh", "scripts/snapshot-e2e.sh", "scripts/handoff-e2e.sh", "scripts/shard-e2e.sh", "scripts/detect-e2e.sh", "scripts/preempt-e2e.sh", "deploy/helm/**", "deploy/terraform/**", "scripts/terraform-e2e.sh", "scripts/acme-e2e.sh", "scripts/dashboard-e2e.sh", "e2e/dashboard/**", ".github/workflows/container.yml"]
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+*"
@@ -27,6 +27,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The dashboard in Chromium (scripts/dashboard-e2e.sh): every page and feature against a seeded
+  # testor, at desktop and phone widths; each test's screenshot is kept as an artifact.
+  dashboard:
+    name: Dashboard end to end
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/dashboard/package-lock.json
+      - name: Build the image, install Playwright and Chromium
+        run: |
+          docker build -t testor:ci orchestrator
+          cd e2e/dashboard
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Every page and feature (scripts/dashboard-e2e.sh)
+        run: scripts/dashboard-e2e.sh testor:ci
+        env:
+          CI: "true"
+      - name: Keep the screenshots and the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dashboard-e2e
+          path: |
+            e2e/dashboard/test-results
+            e2e/dashboard/playwright-report
+          retention-days: 14
+
   # Every pull request, push and tag: the amd64 images, built and tested (no QEMU, no arm64:
   # arm64 is built natively, on tags only, below).
   image:

@@ -187,7 +187,22 @@ defmodule Testor.Hub do
         {:error, "#{path} answered #{status}"}
 
       {:error, reason} ->
-        {:error, "it cannot be reached (#{inspect(reason)})"}
+        {:error, "it cannot be reached (#{unreachable(reason)})"}
     end
   end
+
+  @doc false
+  # Why a testor did not answer, in words (the dashboard shows it).
+  def unreachable({:failed_connect, info}) when is_list(info) do
+    case List.keyfind(info, :inet, 0) || List.keyfind(info, :inet6, 0) do
+      {_, _, reason} -> unreachable(reason)
+      _ -> "the connection failed"
+    end
+  end
+
+  def unreachable(:econnrefused), do: "connection refused"
+  def unreachable(:timeout), do: "no answer in time"
+  def unreachable(:nxdomain), do: "unknown host"
+  def unreachable(:ehostunreach), do: "host unreachable"
+  def unreachable(reason), do: inspect(reason)
 end

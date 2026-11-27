@@ -107,6 +107,16 @@ defmodule Testor.HubTest do
     assert length(Hub.board("")) == 6
   end
 
+  test "why a testor cannot be reached, in words" do
+    refused = {:failed_connect, [{:to_address, {~c"127.0.0.1", 9}}, {:inet, [:inet], :econnrefused}]}
+    assert Hub.unreachable(refused) == "connection refused"
+    assert Hub.unreachable({:failed_connect, [{:inet6, [:inet6], :nxdomain}]}) == "unknown host"
+    assert Hub.unreachable({:failed_connect, []}) == "the connection failed"
+    assert Hub.unreachable(:timeout) == "no answer in time"
+    assert Hub.unreachable(:ehostunreach) == "host unreachable"
+    assert Hub.unreachable(:closed) == ":closed"
+  end
+
   test "testors that cannot be used are left out; no hub.json, no hub", %{base: base} do
     log =
       capture_log(fn ->

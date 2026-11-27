@@ -26,8 +26,8 @@ a:hover { text-decoration: underline; }
 header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
 header h1 { font-size: 16px; margin: 0; }
 header h1 .version { color: var(--muted); font-size: 12px; font-weight: normal; margin-left: 6px; }
-header nav { display: flex; gap: 4px; }
-header nav a { padding: 5px 10px; border-radius: 6px; color: var(--muted); }
+header nav { display: flex; gap: 4px; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+header nav a { padding: 5px 10px; border-radius: 6px; color: var(--muted); white-space: nowrap; }
 header nav a.active { background: var(--hover); color: var(--text); font-weight: 600; text-decoration: none; }
 header .right { margin-left: auto; color: var(--muted); font-size: 12px; display: flex; gap: 12px; align-items: center; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); display: inline-block; vertical-align: 0; }
@@ -41,13 +41,14 @@ h2 .plain { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .tile .label { color: var(--muted); font-size: 12px; }
 .tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
 .tile .sub { color: var(--muted); font-size: 12px; }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.panel > h3 { font-size: 13px; margin: 14px 14px 8px; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 10px; padding: 12px 14px; cursor: pointer; }
 .card:hover { background: var(--hover); }
 .card .top { display: flex; gap: 8px; align-items: center; }
 .card .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
-.card pre { margin: 8px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; max-height: 112px; overflow: hidden; white-space: pre-wrap; word-break: break-all; color: var(--muted); }
+.card pre { margin: 8px 0 0; padding: 8px; background: var(--bg); border-radius: 6px; max-height: 112px; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
 pre, code, .mono { font-family: var(--mono); font-size: 12px; }
 table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
@@ -96,7 +97,8 @@ td.path { word-break: break-all; color: var(--muted); }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; padding: 14px; margin: 0; }
 .kv dt { color: var(--muted); }
 .kv dd { margin: 0; word-break: break-all; }
-.log { margin: 0; padding: 12px; height: 60vh; overflow: auto; white-space: pre-wrap; word-break: break-all; background: var(--panel); }
+.log { margin: 0; padding: 12px; min-height: 3em; max-height: 70vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--panel); }
+.log:empty::before { content: "No output."; color: var(--muted); }
 .log div { min-height: 1.45em; }
 .log .fail { color: var(--red); }
 .log .ok { color: var(--green); }
@@ -136,7 +138,15 @@ td.path { word-break: break-all; color: var(--muted); }
 .res b { color: var(--text); font-weight: 600; }
 .th-sort { cursor: pointer; user-select: none; }
 .th-sort.on { color: var(--text); }
-@media (max-width: 700px) { main { padding: 12px; } .cards { grid-template-columns: 1fr; } .cmd { max-width: 160px; } .hide-sm { display: none; } .board { grid-template-columns: 1fr; } }
+@media (max-width: 700px) {
+  header { position: static; padding: 10px 12px; gap: 6px 12px; }
+  header nav { order: 3; width: 100%; flex-wrap: wrap; }
+  .dev-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  header .right { margin-left: 0; flex-wrap: wrap; gap: 4px 10px; }
+  .approvals { margin: 12px 12px 0; }
+  th, td { white-space: nowrap; }
+  td.path, .cmd { white-space: nowrap; }
+  main { padding: 12px; } .cards { grid-template-columns: 1fr; } .cmd { max-width: 160px; } .hide-sm { display: none; } .board { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -169,7 +179,7 @@ const filters = { project: "", kind: "", status: "", q: "" };
 const shotFilters = { project: "" };
 const artFilters = { project: "" };
 let route = parseRoute(), detail = null, runES = null, shots = null, shotsDirty = true, flashIds = new Set();
-let arts = null, artsDirty = true, maint = null;
+let arts = null, artsDirty = true, maint = null, maintSeq = 0;
 // Signed file links (screenshots, artifacts) last linkTtl seconds while authentication is on
 // (auth.json linkMinutes): those shown are fetched again before they expire. A video that is
 // playing keeps its link: it is renewed once it stops.
@@ -233,7 +243,7 @@ const scoreColor = (x) => x >= 80 ? "var(--green)" : x >= 60 ? "var(--orange, #e
 const scoreChip = (m) => m && m.score != null ? ` <span class="tag" title="mutation score${m.source === "log" ? " (from the log)" : ""}" style="color:${scoreColor(m.score)}">🧬 ${m.score}%</span>` : "";
 const coverageChip = (c) => c && c.lines != null ? ` <span class="tag" title="line coverage (${esc(c.source)})" style="color:${scoreColor(c.lines)}">☂ ${c.lines}%</span>` : "";
 const mutationBar = (p) => p ? `<div class="meta">mutants ${p.tested}/${p.total} · ${p.survived} survived · ${p.timedOut} timed out
-  <div style="height:4px;background:var(--border);border-radius:2px;margin-top:4px"><div style="height:4px;width:${Math.min(p.percent, 100)}%;background:var(--blue);border-radius:2px"></div></div></div>` : "";
+  <div style="height:4px;background:var(--gray-bg);border-radius:2px;margin-top:4px"><div style="height:4px;width:${Math.min(p.percent, 100)}%;background:var(--blue);border-radius:2px"></div></div></div>` : "";
 const shotCell = (n) => n ? `<span class="tag">📷 ${n}</span>` : `<span class="muted">–</span>`;
 // Signed in through an identity provider (a session cookie): an expired session signs in again.
 let viaSession = false;
@@ -277,10 +287,13 @@ function toast(run, text) {
 }
 
 // --- global stream ------------------------------------------------------------------------------
+// A stream the server refused (too many open, a restart) is opened again, a little later each time.
+let retryMs = 2000;
 function connect() {
   const es = new EventSource("/events");
   const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
   on("snapshot", (d) => {
+    if (!S.ready) setTimeout(loadApprovals);
     S.runs = new Map([...d.running, ...d.history].map((r) => [r.id, r]));
     Object.assign(S, { sessions: d.sessions, stats: d.stats, config: d.config, host: d.host, version: d.version, paths: d.paths, linkTtl: d.linkTtl, ready: true });
     if (d.device) S.device = { static: d.device.static, sample: d.device.sample, history: d.device.history || [] };
@@ -306,12 +319,17 @@ function connect() {
   on("run_removed", (d) => { S.runs.delete(d.id); shotsDirty = artsDirty = true; });
   on("sessions", (list) => { S.sessions = list; });
   on("stats", (stats) => { S.stats = stats; shotsDirty = artsDirty = true; });
-  on("maintenance", (m) => { maint = m; });
+  on("maintenance", (m) => { maint = m; maintSeq++; });
   on("approval", () => loadApprovals());
   on("device", (d) => { S.device.sample = d.sample; S.device.history = [...S.device.history, d.point].slice(-360); });
   on("device_static", (st) => { S.device.static = st; });
-  es.onopen = () => setConn("live");
-  es.onerror = () => setConn(es.readyState === EventSource.CLOSED ? "down" : "reconnecting");
+  es.onopen = () => { setConn("live"); retryMs = 2000; };
+  es.onerror = () => {
+    if (es.readyState !== EventSource.CLOSED) return setConn("reconnecting");
+    setConn("down");
+    setTimeout(connect, retryMs);
+    retryMs = Math.min(retryMs * 2, 30000);
+  };
 }
 
 // --- routing ------------------------------------------------------------------------------------
@@ -340,7 +358,22 @@ function enter() {
   if (route.name === "hub") { app.innerHTML = `<div id="hub-view"></div>`; loadHub(); }
   schedule();
 }
-window.addEventListener("hashchange", () => { route = parseRoute(); enter(); });
+// Each page comes back where it was left (the history after a run, say); a run opens at its top.
+const scrollAt = new Map();
+let lastHash = location.hash, restore = null;
+window.addEventListener("hashchange", () => {
+  scrollAt.set(lastHash, window.scrollY);
+  lastHash = location.hash;
+  route = parseRoute();
+  enter();
+  const y = route.name === "run" ? 0 : scrollAt.get(location.hash) || 0;
+  restore = y ? { y, until: Date.now() + 3000 } : null;
+});
+function restoreScroll() {
+  if (!restore) return;
+  if (document.documentElement.scrollHeight - window.innerHeight >= restore.y) { window.scrollTo(0, restore.y); restore = null; }
+  else if (Date.now() > restore.until) restore = null;
+}
 
 function render() {
   if (S.stats?.disk) $("#disk").textContent = `disk ${bytes(S.stats.disk.free)} free`;
@@ -359,6 +392,7 @@ function render() {
   else if (route.name === "device") renderDevice();
   else if (route.name === "hub") { /* loadHub paints it */ }
   else renderRuns();
+  restoreScroll();
 }
 
 // --- runs view ----------------------------------------------------------------------------------
@@ -471,6 +505,9 @@ const MAX_LOG_LINES = 5000;
 function openRun(id) {
   app.innerHTML = `<div id="run-top"><div class="panel empty">Loading…</div></div><div id="run-artifacts"></div>
     <h2 id="log-head">Output</h2><div class="panel"><pre class="log mono" id="log"></pre></div>`;
+  runStream(id, 2000);
+}
+function runStream(id, retry) {
   const es = runES = new EventSource(`/events/runs/${encodeURIComponent(id)}`);
   const on = (name, fn) => es.addEventListener(name, (e) => { fn(JSON.parse(e.data)); schedule(); });
   on("snapshot", (d) => {
@@ -484,8 +521,13 @@ function openRun(id) {
   on("screenshots", (list) => { if (detail) detail.screenshots = list; });
   on("artifacts", (list) => { if (detail) detail.artifacts = list; });
   on("removed", () => { location.hash = "#/"; });
+  es.onopen = () => { retry = 2000; };
+  // Closed: a run that is not there says so; otherwise (too many streams, a restart) it opens again.
   es.onerror = () => {
-    if (es.readyState === EventSource.CLOSED && !detail) paint($("#run-top"), `<div class="panel empty">No such run. <a href="#/">All runs</a></div>`);
+    if (es.readyState !== EventSource.CLOSED) return;
+    api(`/api/runs/${encodeURIComponent(id)}`).then(() => {
+      setTimeout(() => { if (runES === es) runStream(id, Math.min(retry * 2, 30000)); }, retry);
+    }, () => { if (runES === es && !detail) paint($("#run-top"), `<div class="panel empty">No such run. <a href="#/">All runs</a></div>`); });
   };
 }
 function colorLine(line) {
@@ -561,8 +603,8 @@ function renderRun() {
     ${run.error ? `<dt>Error</dt><dd style="color:var(--red)">${esc(run.error)}</dd>` : ""}
     ${run.actor ? `<dt>Started by</dt><dd>${esc(run.actor.declared ?? run.actor.user)}${run.actor.declared ? ` <span class="muted">(as ${esc(run.actor.user)})</span>` : ""}${run.actor.client ? ` <span class="muted">from ${esc(run.actor.client)}</span>` : ""}</dd>` : ""}
     ${run.attested ? `<dt>Attestation</dt><dd><a href="/api/v1/runs/${encodeURIComponent(run.id)}/attestation" target="_blank" rel="noopener">signed</a></dd>` : ""}
-    <dt>Folder</dt><dd class="mono">${esc(run.workdir)}</dd>
-    <dt>Run id</dt><dd class="mono">${esc(run.id)} · pid ${esc(run.pid)}</dd>
+    ${run.workdir ? `<dt>Folder</dt><dd class="mono">${esc(run.workdir)}</dd>` : ""}
+    <dt>Run id</dt><dd class="mono">${esc(run.id)}${run.pid != null ? ` · pid ${esc(run.pid)}` : ""}</dd>
   </dl></div>
 
   ${shardsSection(run)}
@@ -605,7 +647,7 @@ function renderRun() {
 // there, never with this page's access to the API.
 const sep = () => ((S.paths?.home ?? "").includes("\\") ? "\\" : "/");
 function artifactTable(list) {
-  return `<table><thead><tr><th>Artifact</th><th>Type</th><th class="num hide-sm">Files</th><th class="num">Size</th><th class="hide-sm">Modified</th></tr></thead>
+  return `<table><thead><tr><th>Artifact</th><th style="width:110px">Type</th><th class="num hide-sm" style="width:80px">Files</th><th class="num" style="width:90px">Size</th><th class="hide-sm" style="width:170px">Modified</th></tr></thead>
     <tbody>${list.map((a) => `<tr>
       <td class="mono"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.path)}</a></td><td><span class="tag">${esc(a.kind)}</span></td>
       <td class="num hide-sm">${a.files}</td><td class="num">${bytes(a.bytes)}</td><td class="hide-sm">${when(a.modifiedAt)}</td></tr>`).join("")}</tbody></table>`;
@@ -663,9 +705,15 @@ function renderArts() {
 }
 
 // --- maintenance --------------------------------------------------------------------------------
-async function loadMaint() {
-  try { maint = await (await api("/api/maintenance")).json(); } catch (e) { maint = { error: e.message }; }
+// A request's answer can arrive after the events it caused (a quick scan's end): those win.
+async function maintRequest(path, opts) {
+  const seq = maintSeq;
+  const state = await (await api(path, opts)).json();
+  if (maintSeq === seq) maint = state;
   schedule();
+}
+async function loadMaint() {
+  try { await maintRequest("/api/maintenance"); } catch (e) { maint = { error: e.message }; schedule(); }
 }
 function renderMaint() {
   if (!maint) { paint($("#maint-view"), `<div class="panel empty">Loading…</div>`); return; }
@@ -697,7 +745,7 @@ function renderMaint() {
     : `<div class="panel empty">Nothing to reclaim.</div>`)
     : `<div class="panel empty">${maint.scanning ? "Measuring… walking dependency folders can take a minute." : "Not scanned yet. A scan only measures; nothing is deleted until you choose targets and confirm."}</div>`}`, () => {
     $("#m-scan").addEventListener("click", async () => {
-      try { maint = await (await api("/api/maintenance/scan", { method: "POST" })).json(); schedule(); } catch (e) { alert(e.message); }
+      try { await maintRequest("/api/maintenance/scan", { method: "POST" }); } catch (e) { alert(e.message); }
     });
     app.querySelectorAll("[data-target]").forEach((el) => el.addEventListener("change", () => {
       if (el.checked) maintSel.ids.add(el.dataset.target); else maintSel.ids.delete(el.dataset.target);
@@ -707,9 +755,8 @@ function renderMaint() {
       const list = chosen.map((t) => `• ${t.label} (${bytes(t.bytes)}): ${t.path}`).join("\n");
       if (!confirm(`Delete ${chosen.length} target${chosen.length > 1 ? "s" : ""}, ${bytes(total)}? This cannot be undone.\n\n${list}`)) return;
       try {
-        maint = await (await api("/api/maintenance/clean", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scanId: scan.id, targets: chosen.map((t) => t.id) }) })).json();
-        schedule();
+        await maintRequest("/api/maintenance/clean", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scanId: scan.id, targets: chosen.map((t) => t.id) }) });
       } catch (e) { alert(e.message); loadMaint(); }
     });
   });
@@ -879,13 +926,20 @@ lb.addEventListener("click", (e) => { if (e.target.tagName !== "A") lb.classList
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") lb.classList.remove("open"); });
 
 // What AI agents asked to do and a person must approve (Testor.Approvals).
+function approvalTarget(a) {
+  const id = a.arguments?.id;
+  if (!id) return a.project ? `(${esc(a.project)})` : "";
+  const r = S.runs.get(id);
+  const name = r ? `${esc(r.project)} · ${esc(r.kind)} <span class="muted">${esc(when(r.startedAt))}</span>` : `<span class="mono">${esc(id)}</span>${a.project ? ` (${esc(a.project)})` : ""}`;
+  return `<a href="#/run/${encodeURIComponent(id)}" title="${esc(id)}">${name}</a>`;
+}
 async function loadApprovals() {
   const el = $("#approvals");
   try {
     const { data } = await (await api("/api/v1/approvals?status=pending")).json();
     el.hidden = data.length === 0;
     el.innerHTML = `<b>Waiting for approval</b>` + data.map((a) => `<div class="item">
-      <span><b>${esc(a.requestedBy)}</b> asks to <b>${esc(a.tool)}</b> ${a.arguments?.id ? `<a class="mono" href="#/run/${encodeURIComponent(a.arguments.id)}">${esc(a.arguments.id)}</a>` : ""}${a.project ? ` (${esc(a.project)})` : ""}</span>
+      <span><b>${esc(a.requestedBy)}</b> asks to <b>${esc(a.tool)}</b> ${approvalTarget(a)}</span>
       <span class="muted">until ${esc(when(a.expiresAt))}</span>
       <button class="small" data-approve="${esc(a.id)}">Approve</button> <button class="small danger" data-deny="${esc(a.id)}">Deny</button></div>`).join("");
     el.querySelectorAll("[data-approve],[data-deny]").forEach((b) => b.addEventListener("click", async () => {
@@ -905,7 +959,9 @@ async function loadHub() {
   if (!el) return;
   try {
     const { data } = await (await api("/api/v1/hub")).json();
-    paint(el, `<div class="hub">${data.map((t) => `
+    const up = data.filter((t) => t.ok).length;
+    paint(el, `<div class="panel" style="padding:14px"><b>Hub</b> <span class="muted">the latest result of each project and task on ${data.length} testor${data.length === 1 ? "" : "s"} (${up} answering), each linking back to its own dashboard</span></div>
+      <div class="hub">${data.map((t) => `
       <h3 class="group"><a href="${esc(t.url)}/#/" target="_blank" rel="noopener"><b>${esc(t.name)}</b></a>
         ${t.labels.map((l) => `<span class="tag">${esc(l)}</span>`).join(" ")}
         <span class="muted">${t.ok ? `testor ${esc(t.version)} · ${esc(when(t.checkedAt))}` : `<span style="color:var(--red)">${esc(t.error)}</span>`}</span></h3>

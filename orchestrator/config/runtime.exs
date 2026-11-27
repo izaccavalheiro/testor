@@ -41,6 +41,9 @@ config :testor,
   # TESTOR_TRUSTED_PROXIES: addresses or CIDR ranges of reverse proxies whose X-Forwarded-For
   # names the client (for rate limiting, audit and the anonymous-access check).
   trusted_proxies: System.get_env("TESTOR_TRUSTED_PROXIES"),
+  # TESTOR_MAX_STREAMS_PER_CLIENT: event streams one user (or address) may hold open at once:
+  # a dashboard tab holds one or two (Testor.Web.SSE).
+  max_streams_per_client: String.to_integer(System.get_env("TESTOR_MAX_STREAMS_PER_CLIENT", "16")),
   anonymous: anonymous,
   # TESTOR_TLS_CERT, TESTOR_TLS_KEY: PEM files of a certificate (with its chain) and its key;
   # with both, testor serves HTTPS only.

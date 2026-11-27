@@ -25,6 +25,7 @@ The installer sets the first three for the service; the rest are optional.
 | `TESTOR_JWT_SECRET` | `<home>/jwt.key` | the signed-link key (and that of HS256 tokens), 32 bytes or more, instead of the key file |
 | `TESTOR_ALLOWED_HOSTS` | (none) | host names answered besides IP addresses, `localhost` and the machine's name: `testor.example.com`, `.example.com` (subdomains), `*` (no check). See [network exposure](../reference/security.md#network-exposure) |
 | `TESTOR_TRUSTED_PROXIES` | (none) | addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the client |
+| `TESTOR_MAX_STREAMS_PER_CLIENT` | `16` | event streams one user (or, without authentication, one address) may hold open at once: a dashboard tab holds one or two; beyond it a stream is refused with `503` and the dashboard tries again |
 | `TESTOR_ANONYMOUS` | `private` | who is answered while authentication is off: `private` (loopback, private, link-local, Tailscale), `loopback`, or `any` |
 | `TESTOR_SECRETS_DIR` | `<home>` | where `auth.json`, `jwt.key`, `token-keys.json`, `signing.key`, `webhooks.json`, `statuses.json` and `hub.json` live |
 | `TESTOR_TLS_CERT`, `TESTOR_TLS_KEY` | (none) | PEM certificate (with its chain) and key: with both, HTTPS only |
