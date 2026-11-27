@@ -1,0 +1,12 @@
+{
+  "name": "testor-dashboard-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests of testor's dashboard against a seeded testor container (scripts/dashboard-e2e.sh).",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0"
+  }
+}

@@ -7,6 +7,35 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Added
+
+- **The dashboard's end-to-end tests** (`e2e/dashboard`, `scripts/dashboard-e2e.sh`, in CI):
+  Playwright drives every page and feature (runs, history filters, a run's specs, screenshots,
+  video, coverage, mutation score, shards, a live run, artifacts, screenshots, device,
+  maintenance, hub, approvals, cancelling and deleting) against a seeded testor container, at
+  desktop and phone widths, with a screenshot of every test.
+- **A dashboard tour** in the documentation ([Dashboard tour](website/docs/features/dashboard.md)):
+  each page and feature in screenshots, taken by those tests.
+- `TESTOR_MAX_STREAMS_PER_CLIENT`: the event streams one user may hold open (16 by default).
+
+### Fixed
+
+- **The dashboard on a phone**: the header and its links wrap instead of being cut off, wide
+  tables scroll inside their panel instead of the whole page scrolling sideways, the device
+  strip shows two tiles a row.
+- The dashboard connects again by itself when its event stream is refused or ends (a restart,
+  too many streams), instead of staying "disconnected"; a run's page says "No such run" only
+  for a run that is not there.
+- A maintenance scan that ended quickly stayed "Scanning…" on the dashboard.
+- Going back from a run returns to where the run list was left; a short log no longer sits in
+  a box of 60% of the window.
+- The hub says why a testor cannot be reached in words ("connection refused"), not as an
+  Erlang term; the approvals name the run (its project and task); a batch's page no longer
+  shows an empty pid; the artifacts' tables line up; the live mutation progress bar had no
+  track colour.
+- The screenshots' and artifacts' totals counted runs only once they were seen running: runs
+  that arrive finished (from agents) are counted too.
+
 ## 0.15.0 - 2026-11-26
 
 ### Added

@@ -293,6 +293,8 @@ defmodule Testor.Store do
     # Every run is finalized once, however it was seen: also one that started and ended between
     # two scans, which is never seen running. Signed once it is in the table.
     if finalizing, do: finished(id)
+    # A run seen only once it had ended (an agent's, one between two scans) brings its files too.
+    if finalizing, do: refresh_stats()
     # The others see a local run while it runs, and once it is stored (Testor.Storage.publish).
     indexed? = shared and (run["status"] == "running" or run["stored"] == true)
     state = if indexed?, do: %{state | versions: Shared.put_version(state.versions, run)}, else: state
@@ -326,6 +328,11 @@ defmodule Testor.Store do
       Testor.CommitStatus.notify(id)
       if run = get(id), do: Testor.Tracing.run_ended(run)
     end
+  end
+
+  defp refresh_stats do
+    Stats.refresh_screenshots()
+    Stats.refresh_artifacts()
   end
 
   defp keep_annotations(run, nil), do: run

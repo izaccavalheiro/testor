@@ -10,3 +10,5 @@ node_modules/
 .terraform/
 *.tfstate
 *.tfstate.*
+/e2e/dashboard/test-results/
+/e2e/dashboard/playwright-report/
