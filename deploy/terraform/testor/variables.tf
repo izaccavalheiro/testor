@@ -40,7 +40,7 @@ variable "chart_repository" {
 variable "chart_version" {
   description = "The chart's version: the module's own by default (scripts/release.mjs keeps them together)."
   type        = string
-  default     = "0.15.0"
+  default     = "0.16.0"
 }
 
 variable "image" {

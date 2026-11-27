@@ -7,6 +7,8 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+## 0.16.0 - 2026-11-27
+
 ### Added
 
 - **The dashboard's end-to-end tests** (`e2e/dashboard`, `scripts/dashboard-e2e.sh`, in CI):
@@ -20,6 +22,10 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ### Fixed
 
+- **Screenshots that were not images**: run.ps1 kept any file with an image name from the
+  screenshot folders (test-results, `__screenshots__`, `screenshots`, `.vitest-attachments`),
+  so the dashboard showed broken images. It now keeps only real images and videos (PNG, JPEG,
+  GIF, WebP, WebM, MP4, checked by their first bytes).
 - **The dashboard on a phone**: the header and its links wrap instead of being cut off, wide
   tables scroll inside their panel instead of the whole page scrolling sideways, the device
   strip shows two tiles a row.
