@@ -48,6 +48,9 @@ jobs:
           docker build -t testor:ci orchestrator
           cd e2e/dashboard
           npm ci --no-audit --no-fund
+          # Chromium's system libraries come from Ubuntu's archive: the runner image's extra
+          # sources (packages.microsoft.com) are not needed, and one answering 403 fails apt.
+          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list
           npx playwright install --with-deps chromium
       - name: Every page and feature (scripts/dashboard-e2e.sh)
         run: scripts/dashboard-e2e.sh testor:ci
