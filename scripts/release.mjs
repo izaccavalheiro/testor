@@ -42,7 +42,9 @@ export const TYPES = ["feat", "fix", "perf", "refactor", "docs", "test", "build"
 // type(scope)!: subject: the scope is lower-case words, the subject starts lower-case or with a
 // code span, and does not end with a period.
 const CONVENTIONAL = new RegExp(`^(${TYPES.join("|")})(\\([a-z0-9][a-z0-9 ,/_.-]*\\))?(!)?: [^\\sA-Z.](?:.*[^.])?$`);
-const ALLOWED_SUBJECTS = [/^Merge /, /^Revert "/, /^(fixup|squash|amend)! /];
+// Dependabot's own subjects ("build(deps): Bump x from 1 to 2") capitalise "Bump", which it
+// cannot be told not to do.
+const ALLOWED_SUBJECTS = [/^Merge /, /^Revert "/, /^(fixup|squash|amend)! /, /^(build|ci)\(deps(-dev)?\): Bump \S/];
 
 const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
 

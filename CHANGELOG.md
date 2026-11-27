@@ -7,6 +7,16 @@ for what a version number promises. Sections use **Breaking**, **Added**, **Chan
 
 ## Unreleased
 
+### Fixed
+
+- **A shard run again after its agent stopped could fail its batch**: the job, queued again,
+  linked the aborted run of its earlier attempt (it carries the same job id), so the run of the
+  agent that took it over was refused (`other_run`) and the batch ended failed. A job queued
+  again (preempted, or its agent stopped answering) now remembers its earlier runs
+  (`pastRuns`) and links only a run of its current agent. This was the intermittent failure
+  of `scripts/shard-e2e.sh`.
+- The commit-subject check accepts Dependabot's subjects (`build(deps): Bump …`).
+
 ## 0.16.0 - 2026-11-27
 
 ### Added

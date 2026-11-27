@@ -82,7 +82,11 @@ for _ in $(seq 1 120); do
 done
 JOB=$(curl -fsS -u admin:$PASS "$BASE/api/v1/jobs/$ID")
 echo "$JOB" | python3 -m json.tool | head -40
-[ "$STATUS" = passed ] || { for a in agent1 agent2 agent3; do echo "--- $a"; docker logs "$NET-$a" 2>&1 | tail -15; done; echo "FAIL: the batch did not pass"; exit 1; }
+[ "$STATUS" = passed ] || {
+  for a in agent1 agent2 agent3; do echo "--- $a"; docker logs "$NET-$a" 2>&1 | tail -15; done
+  echo "--- testor"; docker logs "$NET-testor" 2>&1 | grep -E 'jobs:|batch|store:' | tail -40
+  echo "$JOB" | python3 -c 'import json, sys; [print(s) for s in json.load(sys.stdin).get("shardJobs", [])]'
+  echo "FAIL: the batch did not pass"; exit 1; }
 # agent2's shards were preempted (and finished by agent3), the others ran once.
 echo "$JOB" | python3 -c '
 import json, sys
